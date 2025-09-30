@@ -51,7 +51,15 @@ def load_feeds():
         logger.error(f"Failed to load feeds.json: {e}")
         return []
 
-# Get feed configuration
+def reload_feeds():
+    """Reload feed configuration and update global FEED_MAP."""
+    global FEEDS, FEED_MAP
+    FEEDS = load_feeds()
+    FEED_MAP = {slugify(feed['out'].strip('/')): feed for feed in FEEDS}
+    logger.info(f"Reloaded feeds: {list(FEED_MAP.keys())}")
+    return FEED_MAP
+
+# Initial load of feed configuration
 FEEDS = load_feeds()
 FEED_MAP = {slugify(feed['out'].strip('/')): feed for feed in FEEDS}
 
@@ -88,6 +96,9 @@ def background_rss_refresh():
     while True:
         try:
             logger.info("Starting scheduled RSS refresh cycle")
+            # Reload feeds.json to pick up any changes
+            reload_feeds()
+
             for slug, feed_info in FEED_MAP.items():
                 refresh_rss_feed(slug, feed_info['in'])
             logger.info("RSS refresh cycle complete")
@@ -242,7 +253,14 @@ def process_episode(slug: str, episode_id: str, episode_url: str):
 def serve_rss(slug):
     """Serve modified RSS feed."""
     if slug not in FEED_MAP:
-        abort(404)
+        # Try reloading feeds in case new ones were added
+        logger.info(f"[{slug}] Not found in feeds, attempting reload")
+        reload_feeds()
+
+        # Check again after reload
+        if slug not in FEED_MAP:
+            logger.warning(f"[{slug}] Still not found after reload")
+            abort(404)
 
     # Check if RSS cache exists or is stale
     cached_rss = storage.get_rss(slug)
@@ -279,7 +297,14 @@ def serve_rss(slug):
 def serve_episode(slug, episode_id):
     """Serve processed episode audio (JIT processing)."""
     if slug not in FEED_MAP:
-        abort(404)
+        # Try reloading feeds in case new ones were added
+        logger.info(f"[{slug}] Not found in feeds for episode {episode_id}, attempting reload")
+        reload_feeds()
+
+        # Check again after reload
+        if slug not in FEED_MAP:
+            logger.warning(f"[{slug}] Still not found after reload for episode {episode_id}")
+            abort(404)
 
     # Validate episode ID (alphanumeric + dash/underscore)
     if not all(c.isalnum() or c in '-_' for c in episode_id):
