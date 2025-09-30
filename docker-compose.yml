@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  podcast-server:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./config/feeds.json:/app/config/feeds.json:ro
+      - ./assets:/app/assets:ro
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - WHISPER_MODEL=small
+    restart: unless-stopped

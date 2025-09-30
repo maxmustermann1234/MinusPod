@@ -1,0 +1,152 @@
+"""Audio processing with FFMPEG."""
+import logging
+import subprocess
+import tempfile
+import os
+import shutil
+from typing import List, Dict, Optional
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+class AudioProcessor:
+    def __init__(self, replace_audio_path: str = "./assets/replace.mp3"):
+        self.replace_audio_path = replace_audio_path
+
+    def check_ffmpeg(self) -> bool:
+        """Check if FFMPEG is available."""
+        try:
+            subprocess.run(['ffmpeg', '-version'],
+                         capture_output=True, check=True, timeout=5)
+            return True
+        except (subprocess.SubprocessError, FileNotFoundError):
+            logger.error("FFMPEG not found or not working")
+            return False
+
+    def get_audio_duration(self, audio_path: str) -> Optional[float]:
+        """Get duration of audio file in seconds."""
+        try:
+            cmd = [
+                'ffprobe', '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                audio_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                return float(result.stdout.strip())
+        except Exception as e:
+            logger.error(f"Failed to get audio duration: {e}")
+        return None
+
+    def remove_ads(self, input_path: str, ad_segments: List[Dict], output_path: str) -> bool:
+        """Remove ad segments from audio file."""
+        if not ad_segments:
+            # No ads to remove, just copy file
+            logger.info("No ads to remove, copying original file")
+            shutil.copy2(input_path, output_path)
+            return True
+
+        if not os.path.exists(self.replace_audio_path):
+            logger.error(f"Replace audio not found: {self.replace_audio_path}")
+            return False
+
+        try:
+            # Get total duration
+            total_duration = self.get_audio_duration(input_path)
+            if not total_duration:
+                logger.error("Could not get audio duration")
+                return False
+
+            logger.info(f"Processing audio: {total_duration:.1f}s total, {len(ad_segments)} ad segments")
+
+            # Sort ad segments by start time
+            ads = sorted(ad_segments, key=lambda x: x['start'])
+
+            # Build complex filter for FFMPEG
+            # Strategy: Split audio into segments, replace ad segments with beep
+            filter_parts = []
+            concat_parts = []
+            current_time = 0
+            segment_idx = 0
+
+            for ad in ads:
+                ad_start = ad['start']
+                ad_end = ad['end']
+
+                # Add content before ad
+                if ad_start > current_time:
+                    filter_parts.append(f"[0:a]atrim={current_time}:{ad_start}[s{segment_idx}]")
+                    concat_parts.append(f"[s{segment_idx}]")
+                    segment_idx += 1
+
+                # Add replacement audio (1 second beep)
+                concat_parts.append("[1:a]")
+
+                current_time = ad_end
+
+            # Add remaining content after last ad
+            if current_time < total_duration:
+                filter_parts.append(f"[0:a]atrim={current_time}:{total_duration}[s{segment_idx}]")
+                concat_parts.append(f"[s{segment_idx}]")
+
+            # Concatenate all parts
+            filter_str = ';'.join(filter_parts)
+            if filter_str:
+                filter_str += ';'
+            filter_str += ''.join(concat_parts) + f"concat=n={len(concat_parts)}:v=0:a=1[out]"
+
+            # Run FFMPEG
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', input_path,
+                '-i', self.replace_audio_path,
+                '-filter_complex', filter_str,
+                '-map', '[out]',
+                '-acodec', 'libmp3lame',
+                '-ab', '128k',
+                output_path
+            ]
+
+            logger.info(f"Running FFMPEG to remove ads")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+            if result.returncode != 0:
+                logger.error(f"FFMPEG failed: {result.stderr}")
+                return False
+
+            # Verify output
+            new_duration = self.get_audio_duration(output_path)
+            if new_duration:
+                removed_time = total_duration - new_duration
+                logger.info(f"FFMPEG processing complete: {total_duration:.1f}s → {new_duration:.1f}s (removed {removed_time:.1f}s)")
+                return True
+            else:
+                logger.error("Could not verify output file")
+                return False
+
+        except subprocess.TimeoutExpired:
+            logger.error("FFMPEG processing timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Audio processing failed: {e}")
+            return False
+
+    def process_episode(self, input_path: str, ad_segments: List[Dict]) -> Optional[str]:
+        """Process episode audio to remove ads."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp:
+            temp_output = tmp.name
+
+        try:
+            if self.remove_ads(input_path, ad_segments, temp_output):
+                return temp_output
+            else:
+                # Clean up on failure
+                if os.path.exists(temp_output):
+                    os.unlink(temp_output)
+                return None
+        except Exception as e:
+            logger.error(f"Episode processing failed: {e}")
+            if os.path.exists(temp_output):
+                os.unlink(temp_output)
+            return None

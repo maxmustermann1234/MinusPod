@@ -1,0 +1,195 @@
+"""Transcription using Faster Whisper."""
+import logging
+import tempfile
+import os
+import requests
+from typing import List, Dict, Optional, Tuple
+from pathlib import Path
+from faster_whisper import WhisperModel, BatchedInferencePipeline
+
+logger = logging.getLogger(__name__)
+
+class WhisperModelSingleton:
+    _instance = None
+    _base_model = None
+
+    @classmethod
+    def get_instance(cls) -> Tuple[WhisperModel, BatchedInferencePipeline]:
+        """
+        Get both the base model and batched pipeline instance
+        Returns:
+            Tuple[WhisperModel, BatchedInferencePipeline]: Base model for operations like language detection,
+                                                          and batched pipeline for transcription
+        """
+        if cls._instance is None:
+            model_size = os.getenv("WHISPER_MODEL", "small")
+            logger.info(f"Initializing Whisper model: {model_size}")
+
+            # Initialize base model
+            cls._base_model = WhisperModel(
+                model_size,
+                device="cpu",
+                compute_type="int8",
+            )
+
+            # Initialize batched pipeline
+            cls._instance = BatchedInferencePipeline(
+                cls._base_model
+            )
+            logger.info("Whisper model and batched pipeline initialized")
+
+        return cls._base_model, cls._instance
+
+    @classmethod
+    def get_base_model(cls) -> WhisperModel:
+        """
+        Get just the base model for operations like language detection
+        Returns:
+            WhisperModel: Base Whisper model
+        """
+        if cls._base_model is None:
+            cls.get_instance()
+        return cls._base_model
+
+    @classmethod
+    def get_batched_pipeline(cls) -> BatchedInferencePipeline:
+        """
+        Get just the batched pipeline for transcription
+        Returns:
+            BatchedInferencePipeline: Batched pipeline for efficient transcription
+        """
+        if cls._instance is None:
+            cls.get_instance()
+        return cls._instance
+
+class Transcriber:
+    def __init__(self):
+        # Model is now managed by singleton
+        pass
+
+    def download_audio(self, url: str, timeout: int = 600) -> Optional[str]:
+        """Download audio file from URL."""
+        try:
+            logger.info(f"Downloading audio from: {url}")
+            response = requests.get(url, stream=True, timeout=timeout)
+            response.raise_for_status()
+
+            # Check file size
+            content_length = response.headers.get('Content-Length')
+            if content_length:
+                size_mb = int(content_length) / (1024 * 1024)
+                if size_mb > 500:
+                    logger.error(f"Audio file too large: {size_mb:.1f}MB (max 500MB)")
+                    return None
+                logger.info(f"Audio file size: {size_mb:.1f}MB")
+
+            # Save to temp file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp:
+                for chunk in response.iter_content(chunk_size=8192):
+                    tmp.write(chunk)
+                temp_path = tmp.name
+
+            logger.info(f"Downloaded audio to: {temp_path}")
+            return temp_path
+        except Exception as e:
+            logger.error(f"Failed to download audio: {e}")
+            return None
+
+    def transcribe(self, audio_path: str) -> List[Dict]:
+        """Transcribe audio file using Faster Whisper with batched pipeline."""
+        try:
+            # Get the batched pipeline for efficient transcription
+            model = WhisperModelSingleton.get_batched_pipeline()
+
+            logger.info(f"Starting transcription of: {audio_path}")
+
+            # Create a simple prompt for podcast context
+            initial_prompt = "This is a podcast episode."
+
+            # Use the batched pipeline for transcription
+            segments_generator, info = model.transcribe(
+                audio_path,
+                language="en",
+                initial_prompt=initial_prompt
+            )
+
+            # Collect segments with real-time progress logging
+            result = []
+            segment_count = 0
+            last_log_time = 0
+
+            for segment in segments_generator:
+                segment_count += 1
+                segment_dict = {
+                    "start": segment.start,
+                    "end": segment.end,
+                    "text": segment.text.strip()
+                }
+                result.append(segment_dict)
+
+                # Log progress every 10 segments
+                if segment_count % 10 == 0:
+                    progress_min = segment.end / 60
+                    logger.info(f"Transcription progress: {segment_count} segments, {progress_min:.1f} minutes processed")
+
+                # Log every 30 seconds of audio processed
+                if segment.end - last_log_time > 30:
+                    last_log_time = segment.end
+                    # Log the last segment's text (truncated)
+                    text_preview = segment.text.strip()[:100] + "..." if len(segment.text.strip()) > 100 else segment.text.strip()
+                    logger.info(f"[{self.format_timestamp(segment.start)}] {text_preview}")
+
+            duration_min = result[-1]['end'] / 60 if result else 0
+            logger.info(f"Transcription completed: {len(result)} segments, {duration_min:.1f} minutes")
+            return result
+        except Exception as e:
+            logger.error(f"Transcription failed: {e}")
+            return None
+
+    def format_timestamp(self, seconds: float) -> str:
+        """Convert seconds to timestamp format."""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = seconds % 60
+        return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
+
+    def segments_to_text(self, segments: List[Dict]) -> str:
+        """Convert segments to readable text format."""
+        lines = []
+        for segment in segments:
+            start_ts = self.format_timestamp(segment['start'])
+            end_ts = self.format_timestamp(segment['end'])
+            lines.append(f"[{start_ts} --> {end_ts}] {segment['text']}")
+        return '\n'.join(lines)
+
+    def process_episode(self, episode_url: str) -> Optional[Dict]:
+        """Complete transcription pipeline for an episode."""
+        audio_path = None
+        try:
+            # Download audio
+            audio_path = self.download_audio(episode_url)
+            if not audio_path:
+                return None
+
+            # Transcribe
+            segments = self.transcribe(audio_path)
+            if not segments:
+                return None
+
+            # Format transcript
+            transcript_text = self.segments_to_text(segments)
+
+            return {
+                "segments": segments,
+                "transcript": transcript_text,
+                "segment_count": len(segments),
+                "duration": segments[-1]['end'] if segments else 0
+            }
+        finally:
+            # Clean up temp file
+            if audio_path and os.path.exists(audio_path):
+                try:
+                    os.unlink(audio_path)
+                    logger.info(f"Cleaned up temp file: {audio_path}")
+                except:
+                    pass
