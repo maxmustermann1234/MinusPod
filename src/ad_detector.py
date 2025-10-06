@@ -47,11 +47,14 @@ class AdDetector:
             # Call Claude API
             logger.info(f"Sending transcript to Claude for ad detection: {podcast_name} - {episode_title}")
 
-            prompt = f"""Context:
-Podcast: {podcast_name}
+            prompt = f"""Podcast: {podcast_name}
 Episode: {episode_title}
 
-Analyze this podcast transcript and identify advertisement segments. Look for:
+Transcript:
+{transcript}
+
+INSTRUCTIONS:
+Analyze this podcast transcript and identify ALL advertisement segments. Look for:
 - Product endorsements, sponsored content, or promotional messages
 - Promo codes, special offers, or calls to action
 - Clear transitions to/from ads (e.g., "This episode is brought to you by...")
@@ -60,23 +63,21 @@ Analyze this podcast transcript and identify advertisement segments. Look for:
 - Long intro sections filled with multiple ads before actual content begins
 - Mentions of other podcasts/shows from the network (cross-promotion)
 - Sponsor messages about credit cards, apps, products, or services
+- ANY podcast promos (e.g., "Listen to X on iHeart Radio app")
 
-CRITICAL RULES FOR MERGING:
+CRITICAL MERGING RULES:
 1. If there are multiple ads with NO ACTUAL SHOW CONTENT between them, treat them as ONE CONTINUOUS SEGMENT
 2. Brief transitions, silence, or gaps up to 10-15 seconds between ads do NOT count as content - they're part of the same ad block
 3. After detecting an ad, ALWAYS look ahead to check if another ad/promo follows within 15 seconds
 4. Only split ads if there's REAL SHOW CONTENT (actual discussion, interview, topic content) for at least 30 seconds between them
 5. When in doubt, merge the segments - better to remove too much than leave ads in
 
-Return ONLY a JSON array of ad segments with start/end times in seconds. Be aggressive.
+Return ONLY a JSON array of ad segments with start/end times in seconds. Be aggressive in detecting ads.
 
 Format:
 [{{"start": 0.0, "end": 240.0, "reason": "Continuous ad block: multiple sponsors"}}, ...]
 
-If no ads are found, return an empty array: []
-
-Transcript:
-""" + transcript
+If no ads are found, return an empty array: []"""
 
             # Save the prompt for debugging
             if slug and episode_id:
