@@ -71,7 +71,7 @@ CRITICAL RULES FOR MERGING:
 Return ONLY a JSON array of ad segments with start/end times in seconds. Be aggressive.
 
 Format:
-[{"start": 0.0, "end": 240.0, "reason": "Continuous ad block: multiple sponsors"}, ...]
+[{{"start": 0.0, "end": 240.0, "reason": "Continuous ad block: multiple sponsors"}}, ...]
 
 If no ads are found, return an empty array: []
 
