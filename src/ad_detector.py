@@ -66,11 +66,13 @@ Analyze this podcast transcript and identify ALL advertisement segments. Look fo
 - ANY podcast promos (e.g., "Listen to X on iHeart Radio app")
 
 CRITICAL MERGING RULES:
-1. If there are multiple ads with NO ACTUAL SHOW CONTENT between them, treat them as ONE CONTINUOUS SEGMENT
-2. Brief transitions, silence, or gaps up to 10-15 seconds between ads do NOT count as content - they're part of the same ad block
-3. After detecting an ad, ALWAYS look ahead to check if another ad/promo follows within 15 seconds
+1. Analyze the FULL transcript before deciding segment boundaries - don't stop at gaps
+2. Multiple ads separated by gaps of 15 seconds or less should be treated as ONE CONTINUOUS SEGMENT
+3. Brief transitions, silence, or gaps between ads do NOT count as content - they're part of the same ad block
 4. Only split ads if there's REAL SHOW CONTENT (actual discussion, interview, topic content) for at least 30 seconds between them
-5. When in doubt, merge the segments - better to remove too much than leave ads in
+5. Consider the entire context: if ads at 1500s, 1520s, 1540s are all promotional content, return ONE segment from 1500-1560, not three separate ones
+6. When in doubt, merge the segments - better to remove too much than leave ads in
+7. If there's a gap followed by content that doesn't continue the previous discussion but instead introduces a completely new topic/person/show, it's likely still part of the ad block
 
 Return ONLY a JSON array of ad segments with start/end times in seconds. Be aggressive in detecting ads.
 
