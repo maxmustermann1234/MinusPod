@@ -104,3 +104,10 @@ class Storage:
         with open(path, 'w') as f:
             json.dump(ads_data, f, indent=2)
         logger.info(f"[{slug}:{episode_id}] Saved ads detection data")
+
+    def save_prompt(self, slug: str, episode_id: str, prompt: str) -> None:
+        """Save Claude prompt for debugging."""
+        path = self.get_episode_path(slug, episode_id, "-prompt.txt")
+        with open(path, 'w') as f:
+            f.write(prompt)
+        logger.info(f"[{slug}:{episode_id}] Saved Claude prompt")

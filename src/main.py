@@ -199,7 +199,7 @@ def process_episode(slug: str, episode_id: str, episode_url: str, episode_title:
 
             # Step 2: Detect ads
             logger.info(f"[{slug}:{episode_id}] Sending to Claude API - Podcast: {podcast_name}, Episode: {episode_title}")
-            ad_result = ad_detector.process_transcript(segments, podcast_name, episode_title)
+            ad_result = ad_detector.process_transcript(segments, podcast_name, episode_title, slug, episode_id)
             storage.save_ads_json(slug, episode_id, ad_result)
 
             ads = ad_result.get('ads', [])

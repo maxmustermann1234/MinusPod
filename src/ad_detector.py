@@ -25,7 +25,7 @@ class AdDetector:
                 logger.error(f"Failed to initialize Anthropic client: {e}")
                 raise
 
-    def detect_ads(self, segments: List[Dict], podcast_name: str = "Unknown", episode_title: str = "Unknown") -> Optional[List[Dict]]:
+    def detect_ads(self, segments: List[Dict], podcast_name: str = "Unknown", episode_title: str = "Unknown", slug: str = None, episode_id: str = None) -> Optional[List[Dict]]:
         """Detect ad segments using Claude API."""
         if not self.api_key:
             logger.warning("Skipping ad detection - no API key")
@@ -77,6 +77,15 @@ If no ads are found, return an empty array: []
 
 Transcript:
 """ + transcript
+
+            # Save the prompt for debugging
+            if slug and episode_id:
+                try:
+                    from storage import Storage
+                    storage = Storage()
+                    storage.save_prompt(slug, episode_id, prompt)
+                except Exception as e:
+                    logger.warning(f"Could not save prompt: {e}")
 
             response = self.client.messages.create(
                 model="claude-sonnet-4-5-20250929",  # Use Claude Sonnet 4.5 for better ad detection
@@ -133,9 +142,9 @@ Transcript:
             logger.error(f"Ad detection failed: {e}")
             return {"ads": [], "error": str(e)}
 
-    def process_transcript(self, segments: List[Dict], podcast_name: str = "Unknown", episode_title: str = "Unknown") -> Dict:
+    def process_transcript(self, segments: List[Dict], podcast_name: str = "Unknown", episode_title: str = "Unknown", slug: str = None, episode_id: str = None) -> Dict:
         """Process transcript for ad detection."""
-        result = self.detect_ads(segments, podcast_name, episode_title)
+        result = self.detect_ads(segments, podcast_name, episode_title, slug, episode_id)
         if result is None:
             return {"ads": [], "error": "Detection failed"}
         return result
