@@ -87,7 +87,11 @@ function EpisodeDetail() {
             <h1 className="text-xl sm:text-2xl font-bold text-foreground">{episode.title}</h1>
             <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-sm text-muted-foreground">
               <span>{new Date(episode.published).toLocaleDateString()}</span>
-              {episode.duration && <span>{formatDuration(episode.duration)}</span>}
+              {episode.status === 'completed' && episode.newDuration ? (
+                <span>{formatDuration(episode.newDuration)}</span>
+              ) : episode.duration ? (
+                <span>{formatDuration(episode.duration)}</span>
+              ) : null}
               <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColors[episode.status]}`}>
                 {episode.status}
               </span>
@@ -119,6 +123,11 @@ function EpisodeDetail() {
         <div className="bg-card rounded-lg border border-border p-6 mb-6">
           <h2 className="text-xl font-semibold text-foreground mb-4">
             Detected Ads ({episode.ad_segments.length})
+            {episode.timeSaved && episode.timeSaved > 0 && (
+              <span className="ml-2 text-base font-normal text-muted-foreground">
+                - {formatDuration(episode.timeSaved)} removed
+              </span>
+            )}
           </h2>
           <div className="space-y-3">
             {episode.ad_segments.map((segment, index) => (

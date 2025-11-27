@@ -110,7 +110,7 @@ function Settings() {
             <div>
               <p className="text-sm text-muted-foreground">Version</p>
               <a
-                href={`https://github.com/ttlequals0/podcast-server/releases/tag/v${status.version}`}
+                href="https://github.com/ttlequals0/podcast-server"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="font-medium text-primary hover:underline"

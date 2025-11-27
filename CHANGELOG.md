@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.23] - 2025-11-27
+
+### Changed
+- Episode detail page now shows processed duration (time after ads removed) instead of original
+- Version link in Settings now goes to main repository instead of specific release tag
+
+### Added
+- Time saved display next to "Detected Ads" heading (e.g., "Detected Ads (5) - 3:54 removed")
+
+---
+
 ## [0.1.22] - 2025-11-27
 
 ### Added

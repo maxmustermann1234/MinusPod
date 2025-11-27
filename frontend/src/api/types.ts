@@ -26,6 +26,9 @@ export interface EpisodeDetail extends Episode {
   processed_url?: string;
   transcript?: string;
   ad_segments?: AdSegment[];
+  originalDuration?: number;
+  newDuration?: number;
+  timeSaved?: number;
 }
 
 export interface AdSegment {
