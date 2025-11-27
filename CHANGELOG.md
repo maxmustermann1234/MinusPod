@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.16] - 2025-11-27
+
+### Fixed
+- Container fails to start with "Permission denied: /app/entrypoint.sh"
+  - Changed entrypoint.sh permissions from 711 to 755 (readable by all users)
+- RETENTION_PERIOD documentation was misleading (said "days" but code uses minutes)
+  - Updated README, docker-compose, and Dockerfile to clarify it's in minutes
+  - Changed default from 30 to 1440 (24 hours) to match original intent
+
+---
+
 ## [0.1.15] - 2025-11-27
 
 ### Fixed

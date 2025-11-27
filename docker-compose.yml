@@ -13,7 +13,7 @@ services:
       - WHISPER_MODEL=${WHISPER_MODEL:-small}
       - BASE_URL=${BASE_URL:-http://localhost:8000}
       - WHISPER_DEVICE=${WHISPER_DEVICE:-cuda}
-      - RETENTION_PERIOD=${RETENTION_PERIOD:-30}
+      - RETENTION_PERIOD=${RETENTION_PERIOD:-1440}
     deploy:
       resources:
         reservations:

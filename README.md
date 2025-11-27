@@ -48,13 +48,25 @@ The server includes a web-based management UI at `/ui/`:
 
 ### Screenshots
 
-| Dashboard | Add Feed | Mobile |
-|-----------|----------|--------|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Add Feed](docs/screenshots/add-feed.png) | ![Mobile](docs/screenshots/mobile.png) |
+**Dashboard**
 
-| Settings | API Documentation |
-|----------|-------------------|
-| ![Settings](docs/screenshots/settings.png) | ![API Docs](docs/screenshots/api-docs.png) |
+![Dashboard](docs/screenshots/dashboard.png)
+
+**Add Feed**
+
+![Add Feed](docs/screenshots/add-feed.png)
+
+**Settings**
+
+![Settings](docs/screenshots/settings.png)
+
+**Mobile**
+
+![Mobile](docs/screenshots/mobile.png)
+
+**API Documentation**
+
+![API Docs](docs/screenshots/api-docs.png)
 
 ## Configuration
 
@@ -103,7 +115,7 @@ The feed URL is shown in the web UI and can be copied to clipboard.
 | `BASE_URL` | `http://localhost:8000` | Public URL for generated feed links |
 | `WHISPER_MODEL` | `small` | Whisper model size (tiny/base/small/medium/large) |
 | `WHISPER_DEVICE` | `cuda` | Device for Whisper (cuda/cpu) |
-| `RETENTION_PERIOD` | `30` | Days to keep processed episodes |
+| `RETENTION_PERIOD` | `1440` | Minutes to keep processed episodes (1440 = 24 hours) |
 | `TUNNEL_TOKEN` | optional | Cloudflare tunnel token for remote access |
 
 ## API

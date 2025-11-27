@@ -60,15 +60,15 @@ COPY openapi.yaml ./
 COPY --from=frontend-builder /app/static/ui ./static/ui/
 RUN chmod -R 644 ./static/ui/* && chmod 755 ./static/ui ./static/ui/assets
 
-# Copy entrypoint script
+# Copy entrypoint script (755 = rwxr-xr-x, readable and executable by all)
 COPY entrypoint.sh /app/
-RUN chmod +x /app/entrypoint.sh
+RUN chmod 755 /app/entrypoint.sh
 
 # Create data directory (will be overwritten by volume mount in most cases)
 RUN mkdir -p /app/data
 
-# Environment variables
-ENV RETENTION_PERIOD=30
+# Environment variables (RETENTION_PERIOD is in minutes, 1440 = 24 hours)
+ENV RETENTION_PERIOD=1440
 
 # Expose port
 EXPOSE 8000
