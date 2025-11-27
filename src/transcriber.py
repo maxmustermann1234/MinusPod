@@ -5,6 +5,11 @@ import os
 import requests
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
+
+# Suppress ONNX Runtime warnings before importing faster_whisper
+os.environ.setdefault('ORT_LOG_LEVEL', 'ERROR')
+
+import torch
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 
 logger = logging.getLogger(__name__)
@@ -25,10 +30,19 @@ class WhisperModelSingleton:
             model_size = os.getenv("WHISPER_MODEL", "small")
             device = os.getenv("WHISPER_DEVICE", "cpu")
 
-            # Set compute type based on device
+            # Check CUDA availability and set compute type
             if device == "cuda":
-                compute_type = "float16"  # Use FP16 for GPU
-                logger.info(f"Initializing Whisper model: {model_size} on CUDA with float16")
+                if torch.cuda.is_available():
+                    gpu_name = torch.cuda.get_device_name(0)
+                    gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                    logger.info(f"CUDA available: {gpu_name} ({gpu_memory:.1f} GB)")
+                    compute_type = "float16"  # Use FP16 for GPU
+                    logger.info(f"Initializing Whisper model: {model_size} on CUDA with float16")
+                else:
+                    logger.warning("CUDA requested but not available, falling back to CPU")
+                    device = "cpu"
+                    compute_type = "int8"
+                    logger.info(f"Initializing Whisper model: {model_size} on CPU with int8")
             else:
                 compute_type = "int8"  # Use INT8 for CPU
                 logger.info(f"Initializing Whisper model: {model_size} on CPU with int8")

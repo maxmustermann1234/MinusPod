@@ -87,7 +87,13 @@ class AdDetector:
                 if model in VALID_MODELS:
                     return model
                 else:
-                    logger.warning(f"Invalid model '{model}' in database, using default")
+                    logger.warning(f"Invalid model '{model}' in database, clearing and using default")
+                    # Clear invalid model from database
+                    try:
+                        self.db.save_setting('claude_model', DEFAULT_MODEL)
+                        logger.info(f"Saved default model '{DEFAULT_MODEL}' to database")
+                    except Exception as clear_err:
+                        logger.warning(f"Could not clear invalid model from DB: {clear_err}")
         except Exception as e:
             logger.warning(f"Could not load model from DB: {e}")
 
@@ -216,6 +222,7 @@ class AdDetector:
 
             except json.JSONDecodeError as e:
                 logger.error(f"[{slug}:{episode_id}] Failed to parse JSON: {e}")
+                logger.error(f"[{slug}:{episode_id}] Raw response (first 500 chars): {response_text[:500]}")
                 return {"ads": [], "raw_response": response_text, "error": str(e)}
 
         except Exception as e:

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2025-11-27
+
+### Fixed
+- Podcast files now saved in correct location: `/app/data/podcasts/{slug}/` instead of `/app/data/{slug}/`
+
+---
+
+## [0.1.8] - 2025-11-27
+
+### Fixed
+- Auto-clear invalid Claude model IDs from database instead of just warning
+- Fixed invalid model ID examples in openapi.yaml
+
+---
+
 ## [0.1.7] - 2025-11-27
 
 ### Fixed
@@ -30,6 +45,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Slug generation now fetches RSS feed to get podcast name (e.g., "tosh-show" instead of "rss")
 - Added Claude Opus 4.5 to available models list
 - Model validation now checks against VALID_MODELS list
+
+---
+
+## [0.1.10] - 2025-11-27
+
+### Added
+- Mobile navigation hamburger menu - Settings now accessible on mobile devices
+- Podcast Index link on Dashboard - helps users find podcast RSS feeds at podcastindex.org
+- Version logging on startup - logs app version when server starts
+- GPU discovery logging - logs CUDA GPU name and memory when available
+
+### Fixed
+- Suppressed noisy ONNX Runtime GPU discovery warnings in logs
+- Better Claude JSON parsing error logging - logs raw response for debugging
 
 ---
 

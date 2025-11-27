@@ -543,6 +543,14 @@ def health_check():
 
 
 if __name__ == '__main__':
+    # Import and log version
+    try:
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from version import __version__
+        logger.info(f"Podcast Server v{__version__} starting...")
+    except ImportError:
+        logger.warning("Could not import version")
+
     base_url = os.getenv('BASE_URL', 'http://localhost:8000')
     logger.info(f"BASE_URL: {base_url}")
 

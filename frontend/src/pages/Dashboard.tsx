@@ -91,6 +91,17 @@ function Dashboard() {
           >
             Add Your First Feed
           </Link>
+          <p className="text-sm text-muted-foreground mt-4">
+            Find podcast RSS feeds at{' '}
+            <a
+              href="https://podcastindex.org/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline"
+            >
+              podcastindex.org
+            </a>
+          </p>
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

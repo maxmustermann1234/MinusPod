@@ -18,6 +18,10 @@ class Storage:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(exist_ok=True)
 
+        # Create podcasts subdirectory
+        self.podcasts_dir = self.data_dir / "podcasts"
+        self.podcasts_dir.mkdir(exist_ok=True)
+
         # Initialize database
         from database import Database
         self.db = Database(str(self.data_dir))
@@ -26,7 +30,7 @@ class Storage:
 
     def get_podcast_dir(self, slug: str) -> Path:
         """Get podcast directory, creating if necessary."""
-        podcast_dir = self.data_dir / slug
+        podcast_dir = self.podcasts_dir / slug
         podcast_dir.mkdir(exist_ok=True)
 
         # Ensure episodes directory exists
@@ -308,7 +312,7 @@ class Storage:
 
     def cleanup_podcast_dir(self, slug: str) -> bool:
         """Delete podcast directory and all files."""
-        podcast_dir = self.data_dir / slug
+        podcast_dir = self.podcasts_dir / slug
 
         if podcast_dir.exists():
             try:
@@ -326,7 +330,7 @@ class Storage:
         total_size = 0
         file_count = 0
 
-        for podcast_dir in self.data_dir.iterdir():
+        for podcast_dir in self.podcasts_dir.iterdir():
             if podcast_dir.is_dir():
                 for f in podcast_dir.rglob('*'):
                     if f.is_file():
