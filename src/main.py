@@ -12,8 +12,15 @@ from slugify import slugify
 import shutil
 
 # Configure structured logging
+_logging_configured = False
+
 def setup_logging():
     """Configure application logging."""
+    global _logging_configured
+    if _logging_configured:
+        return
+    _logging_configured = True
+
     log_level = os.environ.get('LOG_LEVEL', 'INFO').upper()
 
     # Create formatters
@@ -34,8 +41,9 @@ def setup_logging():
         file_handler.setFormatter(formatter)
         handlers.append(file_handler)
 
-    # Configure root logger
+    # Configure root logger - clear existing handlers first to prevent duplicates
     root = logging.getLogger()
+    root.handlers.clear()
     root.setLevel(getattr(logging, log_level, logging.INFO))
     for handler in handlers:
         root.addHandler(handler)

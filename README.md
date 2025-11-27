@@ -46,6 +46,16 @@ The server includes a web-based management UI at `/ui/`:
 - **Settings** - Configure ad detection prompts and Claude model
 - **System Status** - View statistics and run cleanup
 
+### Screenshots
+
+| Dashboard | Add Feed | Mobile |
+|-----------|----------|--------|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Add Feed](docs/screenshots/add-feed.png) | ![Mobile](docs/screenshots/mobile.png) |
+
+| Settings | API Documentation |
+|----------|-------------------|
+| ![Settings](docs/screenshots/settings.png) | ![API Docs](docs/screenshots/api-docs.png) |
+
 ## Configuration
 
 All configuration is managed through the web UI or REST API. No config files needed.

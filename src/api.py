@@ -93,25 +93,44 @@ def add_feed():
     """Add a new podcast feed."""
     data = request.get_json()
 
+    # Debug logging for request data
+    logger.debug(f"Add feed request data: {data}")
+
     if not data or 'sourceUrl' not in data:
+        logger.warning(f"Missing sourceUrl in request. Data received: {data}")
         return error_response('sourceUrl is required', 400)
 
     source_url = data['sourceUrl'].strip()
     if not source_url:
         return error_response('sourceUrl cannot be empty', 400)
 
-    # Generate slug from URL or use provided slug
+    # Generate slug from podcast name or use provided slug
     slug = data.get('slug', '').strip()
     if not slug:
-        # Generate slug from URL
         from slugify import slugify as make_slug
-        from urllib.parse import urlparse
+        from rss_parser import RSSParser
 
-        parsed = urlparse(source_url)
-        # Use path or hostname as base for slug
-        slug_base = parsed.path.strip('/').split('/')[-1] or parsed.netloc
-        slug_base = slug_base.replace('.xml', '').replace('.rss', '')
-        slug = make_slug(slug_base)
+        # Fetch RSS to get podcast name for slug
+        rss_parser = RSSParser()
+        feed_content = rss_parser.fetch_feed(source_url)
+        if feed_content:
+            parsed_feed = rss_parser.parse_feed(feed_content)
+            if parsed_feed and parsed_feed.feed:
+                title = parsed_feed.feed.get('title', '')
+                if title:
+                    slug = make_slug(title)
+
+        # Fallback to URL-based slug if name not available
+        if not slug:
+            from urllib.parse import urlparse
+            parsed = urlparse(source_url)
+            slug_base = parsed.path.strip('/').split('/')[-1] or parsed.netloc
+            slug_base = slug_base.replace('.xml', '').replace('.rss', '')
+            # Skip common generic path segments
+            if slug_base.lower() in ('rss', 'feed', 'podcast', 'audio'):
+                parts = parsed.path.strip('/').split('/')
+                slug_base = parts[-2] if len(parts) > 1 else parsed.netloc
+            slug = make_slug(slug_base)
 
     if not slug:
         return error_response('Could not generate valid slug', 400)

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2025-11-27
+
+### Fixed
+- Claude API 404 error - corrected model IDs (claude-sonnet-4-5-20250929, not 20250514)
+- Duplicate log entries - clear existing handlers before adding new ones
+- Feed slugs defaulting to "rss" - now generates slug from podcast title
+
+### Changed
+- Slug generation now fetches RSS feed to get podcast name (e.g., "tosh-show" instead of "rss")
+- Added Claude Opus 4.5 to available models list
+- Model validation now checks against VALID_MODELS list
+
+---
+
 ## [0.1.3] - 2025-11-27
 
 ### Fixed

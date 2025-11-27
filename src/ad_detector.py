@@ -8,7 +8,16 @@ from anthropic import Anthropic
 logger = logging.getLogger('podcast.claude')
 
 # Default model - Claude Sonnet 4.5
-DEFAULT_MODEL = "claude-sonnet-4-5-20250514"
+DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
+
+# Valid model IDs - used to validate saved settings
+VALID_MODELS = [
+    'claude-sonnet-4-5-20250929',
+    'claude-opus-4-5-20251101',
+    'claude-sonnet-4-20250514',
+    'claude-opus-4-1-20250414',
+    'claude-3-5-sonnet-20241022',
+]
 
 
 class AdDetector:
@@ -62,7 +71,8 @@ class AdDetector:
             logger.warning(f"Could not fetch models from API: {e}")
             # Return known models as fallback
             return [
-                {'id': 'claude-sonnet-4-5-20250514', 'name': 'Claude Sonnet 4.5'},
+                {'id': 'claude-sonnet-4-5-20250929', 'name': 'Claude Sonnet 4.5'},
+                {'id': 'claude-opus-4-5-20251101', 'name': 'Claude Opus 4.5'},
                 {'id': 'claude-sonnet-4-20250514', 'name': 'Claude Sonnet 4'},
                 {'id': 'claude-opus-4-1-20250414', 'name': 'Claude Opus 4.1'},
                 {'id': 'claude-3-5-sonnet-20241022', 'name': 'Claude 3.5 Sonnet'},
@@ -73,7 +83,11 @@ class AdDetector:
         try:
             model = self.db.get_setting('claude_model')
             if model:
-                return model
+                # Validate that model is in the list of known valid models
+                if model in VALID_MODELS:
+                    return model
+                else:
+                    logger.warning(f"Invalid model '{model}' in database, using default")
         except Exception as e:
             logger.warning(f"Could not load model from DB: {e}")
 
