@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.32] - 2025-11-28
+
+### Fixed
+- `claudePrompt` field always null in episode API response
+  - `save_ads_json()` in storage.py was not extracting `prompt` from ad_detector result
+  - Now correctly saves prompt to database alongside raw_response and ad_markers
+  - Note: Existing episodes will still have null prompt; only newly processed episodes will have it
+
+---
+
+## [0.1.31] - 2025-11-28
+
+### Fixed
+- `claudePrompt` and `claudeRawResponse` fields missing from episode detail API response
+  - Fields were documented in v0.1.26 CHANGELOG but never added to the API response
+  - Data was stored correctly in database, just not returned to clients
+
+---
+
 ## [0.1.30] - 2025-11-28
 
 ### Fixed

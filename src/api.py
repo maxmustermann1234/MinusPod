@@ -409,7 +409,9 @@ def get_episode(slug, episode_id):
         'timeSaved': time_saved,
         'adMarkers': ad_markers,
         'transcriptAvailable': bool(episode.get('transcript_text')),
-        'error': episode.get('error_message')
+        'error': episode.get('error_message'),
+        'claudePrompt': episode.get('claude_prompt'),
+        'claudeRawResponse': episode.get('claude_raw_response')
     })
 
 

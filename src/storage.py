@@ -177,11 +177,13 @@ class Storage:
         try:
             ad_markers = ads_data.get('ads', []) if isinstance(ads_data, dict) else []
             raw_response = ads_data.get('raw_response') if isinstance(ads_data, dict) else None
+            prompt = ads_data.get('prompt') if isinstance(ads_data, dict) else None
 
             self.db.save_episode_details(
                 slug, episode_id,
                 ad_markers=ad_markers,
-                claude_raw_response=raw_response
+                claude_raw_response=raw_response,
+                claude_prompt=prompt
             )
         except ValueError:
             logger.debug(f"[{slug}:{episode_id}] Episode not in DB, ads saved to file only")
