@@ -495,7 +495,7 @@ def reprocess_episode(slug, episode_id):
 def get_settings():
     """Get all settings."""
     db = get_database()
-    from database import DEFAULT_SYSTEM_PROMPT, DEFAULT_USER_PROMPT_TEMPLATE
+    from database import DEFAULT_SYSTEM_PROMPT
     from ad_detector import AdDetector, DEFAULT_MODEL
 
     settings = db.get_all_settings()
