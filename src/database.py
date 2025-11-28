@@ -787,7 +787,7 @@ class Database:
             episode_id = row['episode_id']
 
             # Delete files
-            podcast_dir = self.data_dir / slug / "episodes"
+            podcast_dir = self.data_dir / "podcasts" / slug / "episodes"
 
             for ext in ['.mp3', '-transcript.txt', '-ads.json', '-prompt.txt']:
                 file_path = podcast_dir / f"{episode_id}{ext}"

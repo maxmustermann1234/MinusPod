@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.25] - 2025-11-28
+
+### Fixed
+- Episode cleanup not deleting files from correct path
+  - Files were not being removed during retention cleanup due to incorrect directory path
+  - Storage usage now properly decreases after cleanup
+
+---
+
 ## [0.1.24] - 2025-11-27
 
 ### Added
