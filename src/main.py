@@ -138,9 +138,7 @@ def refresh_rss_feed(slug: str, feed_url: str):
         storage.save_rss(slug, modified_rss)
 
         # Update last_checked timestamp
-        data = storage.load_data_json(slug)
-        data['last_checked'] = datetime.utcnow().isoformat() + 'Z'
-        storage.save_data_json(slug, data)
+        db.update_podcast(slug, last_checked_at=datetime.utcnow().isoformat() + 'Z')
 
         refresh_logger.info(f"[{slug}] RSS refresh complete")
         return True
@@ -192,14 +190,10 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
         audio_logger.info(f"[{slug}:{episode_id}] Starting: \"{episode_title}\"")
 
         # Update status to processing
-        data = storage.load_data_json(slug)
-        data['episodes'][episode_id] = {
-            'status': 'processing',
-            'original_url': episode_url,
-            'title': episode_title,
-            'processed_at': datetime.utcnow().isoformat() + 'Z'
-        }
-        storage.save_data_json(slug, data)
+        db.upsert_episode(slug, episode_id,
+            original_url=episode_url,
+            title=episode_title,
+            status='processing')
 
         # Step 1: Check if transcript exists in database
         segments = None
@@ -283,18 +277,12 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             shutil.move(processed_path, final_path)
 
             # Update status to processed
-            data = storage.load_data_json(slug)
-            data['episodes'][episode_id] = {
-                'status': 'processed',
-                'original_url': episode_url,
-                'title': episode_title,
-                'processed_file': f"episodes/{episode_id}.mp3",
-                'processed_at': datetime.utcnow().isoformat() + 'Z',
-                'original_duration': original_duration,
-                'new_duration': new_duration,
-                'ads_removed': len(ads)
-            }
-            storage.save_data_json(slug, data)
+            db.upsert_episode(slug, episode_id,
+                status='processed',
+                processed_file=f"episodes/{episode_id}.mp3",
+                original_duration=original_duration,
+                new_duration=new_duration,
+                ads_removed=len(ads))
 
             processing_time = time.time() - start_time
 
@@ -323,15 +311,9 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
         audio_logger.error(f"[{slug}:{episode_id}] Failed: {e} ({processing_time:.1f}s)")
 
         # Update status to failed
-        data = storage.load_data_json(slug)
-        data['episodes'][episode_id] = {
-            'status': 'failed',
-            'original_url': episode_url,
-            'title': episode_title,
-            'error': str(e),
-            'failed_at': datetime.utcnow().isoformat() + 'Z'
-        }
-        storage.save_data_json(slug, data)
+        db.upsert_episode(slug, episode_id,
+            status='failed',
+            error_message=str(e))
         return False
 
 
@@ -463,9 +445,8 @@ def serve_episode(slug, episode_id):
         abort(400)
 
     # Check episode status
-    data = storage.load_data_json(slug)
-    episode_info = data['episodes'].get(episode_id, {})
-    status = episode_info.get('status')
+    episode = db.get_episode(slug, episode_id)
+    status = episode['status'] if episode else None
 
     if status == 'processed':
         file_path = storage.get_episode_path(slug, episode_id)

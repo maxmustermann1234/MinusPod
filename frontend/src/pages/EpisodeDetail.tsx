@@ -43,6 +43,12 @@ function EpisodeDetail() {
     return `${minutes}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes) return '';
+    const mb = bytes / (1024 * 1024);
+    return `${mb.toFixed(1)} MB`;
+  };
+
   if (isLoading) {
     return <LoadingSpinner className="py-12" />;
   }
@@ -92,6 +98,9 @@ function EpisodeDetail() {
               ) : episode.duration ? (
                 <span>{formatDuration(episode.duration)}</span>
               ) : null}
+              {episode.fileSize && (
+                <span>{formatFileSize(episode.fileSize)}</span>
+              )}
               <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColors[episode.status]}`}>
                 {episode.status}
               </span>

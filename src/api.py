@@ -385,6 +385,14 @@ def get_episode(slug, episode_id):
     if status == 'processed':
         status = 'completed'
 
+    # Get file size if processed
+    file_size = None
+    if status == 'completed':
+        storage = get_storage()
+        file_path = storage.get_episode_path(slug, episode_id)
+        if file_path.exists():
+            file_size = file_path.stat().st_size
+
     return json_response({
         'id': episode['episode_id'],
         'episodeId': episode['episode_id'],
@@ -400,6 +408,7 @@ def get_episode(slug, episode_id):
         'processedUrl': f"{base_url}/episodes/{slug}/{episode_id}.mp3",
         'adsRemoved': episode['ads_removed'],
         'timeSaved': time_saved,
+        'fileSize': file_size,
         'adMarkers': ad_markers,
         'transcript': episode.get('transcript_text'),
         'transcriptAvailable': bool(episode.get('transcript_text')),

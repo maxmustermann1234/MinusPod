@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.47] - 2025-11-29
+
+### Changed
+- Replaced load_data_json/save_data_json patterns with direct database calls in main.py
+  - Eliminates race conditions during concurrent episode processing
+  - More efficient single-episode updates (no longer loads/saves all episodes)
+  - Affected: refresh_rss_feed, process_episode (start/complete/fail), serve_episode
+
+### Added
+- File size display in episode detail UI
+  - Shows processed file size in MB next to duration
+  - Added fileSize to API response and TypeScript types
+
+---
+
 ## [0.1.46] - 2025-11-29
 
 ### Fixed

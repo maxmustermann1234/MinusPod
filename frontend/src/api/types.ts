@@ -29,6 +29,7 @@ export interface EpisodeDetail extends Episode {
   originalDuration?: number;
   newDuration?: number;
   timeSaved?: number;
+  fileSize?: number;
 }
 
 export interface AdSegment {
