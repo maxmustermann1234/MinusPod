@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.38] - 2025-11-29
+
+### Changed
+- Improved ad boundary precision in DEFAULT_SYSTEM_PROMPT
+  - Added required "end_text" field to output format (last 3-5 words of ad)
+  - Added concrete MID-BLOCK BOUNDARY example with calculation walkthrough
+  - Helps Claude identify exact ad ending points within timestamp blocks
+  - Note: Users with custom prompts should reset to default in Settings
+
+---
+
 ## [0.1.37] - 2025-11-29
 
 ### Changed
