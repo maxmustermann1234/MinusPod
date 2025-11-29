@@ -6,5 +6,7 @@ set -e
 mkdir -p /app/data/.cache
 mkdir -p /app/data/podcasts
 
-# Run the main application
-exec python src/main.py
+# Run the application with gunicorn (production WSGI server)
+# cd to src directory so relative imports work correctly
+cd /app/src
+exec gunicorn --bind 0.0.0.0:8000 --workers 1 --threads 4 --access-logfile - main:app

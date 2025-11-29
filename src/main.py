@@ -543,7 +543,9 @@ def health_check():
     return {'status': 'ok', 'feeds': len(feed_map), 'version': version}
 
 
-if __name__ == '__main__':
+# Startup initialization (runs when module is imported by gunicorn)
+def _startup():
+    """Initialize the application on startup."""
     # Import and log version
     try:
         sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -567,7 +569,7 @@ if __name__ == '__main__':
         refresh_rss_feed(slug, feed_info['in'])
         logger.info(f"Feed: {base_url}/{slug}")
 
-    # Start Flask server
-    logger.info("Starting Flask server on port 8000")
     logger.info(f"Web UI available at: {base_url}/ui/")
-    app.run(host='0.0.0.0', port=8000, debug=False, threaded=True)
+
+
+_startup()

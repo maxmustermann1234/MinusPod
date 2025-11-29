@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.34] - 2025-11-28
+
+### Changed
+- Use Gunicorn production WSGI server instead of Flask development server
+  - Removes "WARNING: This is a development server" message from logs
+  - 1 worker with 4 threads for concurrent request handling
+
+---
+
+## [0.1.33] - 2025-11-28
+
+### Fixed
+- Redundant file storage not actually removed in v0.1.26
+  - `save_transcript()` and `save_ads_json()` were still writing `-transcript.txt` and `-ads.json` files
+  - Now stores transcript and ad data exclusively in database (no more duplicate files)
+  - Removed dead `save_prompt()` function (unused since v0.1.32)
+
+---
+
 ## [0.1.32] - 2025-11-28
 
 ### Fixed
