@@ -56,31 +56,20 @@ MERGING RULES:
 
 MID-BLOCK BOUNDARIES:
 When a timestamp block contains BOTH ad content AND show content (e.g., ad ends mid-block):
-- Identify the exact text where the ad ends (use this for end_text)
-- Calculate proportional end time based on text position in the block
+- Identify the text where the ad ends
+- Estimate proportional end time based on text position in the block
 - Err toward ending earlier rather than including show content
-
-EXAMPLE - MID-BLOCK BOUNDARY:
-Block [120.0s - 150.0s] contains:
-"Visit example.com/podcast for your free trial. That's example.com/podcast. Alright, so back to our discussion about..."
-
-- Ad ends at: "That's example.com/podcast." (~65% into block text)
-- Show content starts: "Alright, so back to our discussion..."
-- Block duration: 30 seconds
-- Calculated end: 120.0 + (0.65 x 30) = 139.5s
-- end_text: "example.com/podcast"
 
 OUTPUT FORMAT:
 Return ONLY a valid JSON array. No explanation, no analysis, no markdown formatting.
 
 Each ad segment must include:
 - "start": Start time in seconds
-- "end": End time in seconds (use mid-block calculation if ad ends before block ends)
+- "end": End time in seconds
 - "confidence": Confidence score from 0.0 to 1.0 (1.0 = certain it's an ad)
 - "reason": Brief description of why this is an ad
-- "end_text": The last 3-5 words of the ad (final URL, promo code, or call-to-action)
 
-Format: [{{"start": 0.0, "end": 60.0, "confidence": 0.95, "reason": "Sponsor read for BetterHelp", "end_text": "betterhelp.com/podcast"}}]
+Format: [{{"start": 0.0, "end": 60.0, "confidence": 0.95, "reason": "Sponsor read for BetterHelp"}}]
 If no ads found: []
 
 REMINDER: Include ALL sponsor reads, even if the host reads them naturally or integrates them conversationally. "Brought to you by" segments are ads. Do not skip ads because show content appears in the same timestamp block - just adjust the end time.
@@ -98,7 +87,7 @@ Given transcript excerpt:
 [82.5s - 86.0s] Now, back to our conversation with Dr. Smith.
 
 Output:
-[{{"start": 48.5, "end": 82.0, "confidence": 0.98, "reason": "Athletic Greens sponsor read with promo URL", "end_text": "athleticgreens.com/podcast"}}]"""
+[{{"start": 48.5, "end": 82.0, "confidence": 0.98, "reason": "Athletic Greens sponsor read with promo URL"}}]"""
 
 
 SCHEMA_SQL = """

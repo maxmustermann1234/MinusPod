@@ -115,13 +115,30 @@ class AudioProcessor:
             current_time = 0
             segment_idx = 0
 
-            for ad in ads:
+            # Fade duration in seconds for smooth ad transitions
+            fade_duration = 0.5
+
+            for i, ad in enumerate(ads):
                 ad_start = ad['start']
                 ad_end = ad['end']
 
-                # Add content before ad
+                # Add content before ad (with fades at boundaries)
                 if ad_start > current_time:
-                    filter_parts.append(f"[0:a]atrim={current_time}:{ad_start}[s{segment_idx}]")
+                    content_duration = ad_start - current_time
+                    # First segment: only fade-out at end
+                    # Subsequent segments: fade-in at start, fade-out at end
+                    if i == 0:
+                        # First content segment - just fade out before ad
+                        if content_duration > fade_duration:
+                            filter_parts.append(f"[0:a]atrim={current_time}:{ad_start},afade=t=out:st={ad_start - fade_duration}:d={fade_duration}[s{segment_idx}]")
+                        else:
+                            filter_parts.append(f"[0:a]atrim={current_time}:{ad_start}[s{segment_idx}]")
+                    else:
+                        # Content between ads - fade in at start, fade out at end
+                        if content_duration > fade_duration * 2:
+                            filter_parts.append(f"[0:a]atrim={current_time}:{ad_start},afade=t=in:d={fade_duration},afade=t=out:st={ad_start - fade_duration}:d={fade_duration}[s{segment_idx}]")
+                        else:
+                            filter_parts.append(f"[0:a]atrim={current_time}:{ad_start}[s{segment_idx}]")
                     concat_parts.append(f"[s{segment_idx}]")
                     segment_idx += 1
 
@@ -131,9 +148,13 @@ class AudioProcessor:
 
                 current_time = ad_end
 
-            # Add remaining content after last ad
+            # Add remaining content after last ad (with fade-in)
             if current_time < total_duration:
-                filter_parts.append(f"[0:a]atrim={current_time}:{total_duration}[s{segment_idx}]")
+                content_duration = total_duration - current_time
+                if content_duration > fade_duration:
+                    filter_parts.append(f"[0:a]atrim={current_time}:{total_duration},afade=t=in:d={fade_duration}[s{segment_idx}]")
+                else:
+                    filter_parts.append(f"[0:a]atrim={current_time}:{total_duration}[s{segment_idx}]")
                 concat_parts.append(f"[s{segment_idx}]")
 
             # Concatenate all parts

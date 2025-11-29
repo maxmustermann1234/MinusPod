@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.40] - 2025-11-29
+
+### Fixed
+- Ad detection regression from v0.1.38 (5 ads -> 3 ads)
+  - Removed complex MID-BLOCK BOUNDARY example that overwhelmed Claude
+  - Removed end_text field requirement from output format
+  - Simplified prompt restores ad detection accuracy
+
+### Added
+- Audio fading at ad boundaries (0.5s fade-in/fade-out)
+  - Smooths transitions when ad boundaries are imprecise
+  - Follows podly_pure_podcasts approach for handling boundary imprecision
+  - Note: Users with custom prompts should reset to default in Settings
+
+---
+
 ## [0.1.39] - 2025-11-29
 
 ### Fixed
