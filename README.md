@@ -7,11 +7,26 @@ Removes ads from podcasts using Whisper transcription. Serves modified RSS feeds
 ## How It Works
 
 1. **Transcription** - Whisper converts audio to text with timestamps
-2. **Ad Detection** - Claude API analyzes transcript to identify ad segments
+2. **Ad Detection** - Claude API analyzes transcript to identify ad segments (with optional dual-pass detection)
 3. **Audio Processing** - FFmpeg removes detected ads and inserts short audio markers
 4. **Serving** - Flask serves modified RSS feeds and processed audio files
 
 Processing happens on-demand when you play an episode. First play takes a few minutes, subsequent plays are instant (cached).
+
+### Multi-Pass Detection
+
+Enable dual-pass ad detection in Settings for improved accuracy:
+
+- **First Pass** - Standard ad detection finds obvious sponsor reads and ad breaks
+- **Second Pass** - Blind analysis with different focus catches subtle baked-in ads, casual product mentions, and cross-promotions that the first pass might miss
+- **Smart Merge** - Overlapping detections from both passes are merged (earliest start, latest end) for maximum coverage
+
+Each detected ad shows a badge indicating which pass found it:
+- **Pass 1** (blue) - Found by first pass only
+- **Pass 2** (purple) - Found by second pass only
+- **Merged** (green) - Found by both passes (boundaries combined)
+
+Multi-pass increases processing time and API costs but catches more ads.
 
 ## Requirements
 
@@ -89,10 +104,10 @@ All configuration is managed through the web UI or REST API. No config files nee
 
 ### Ad Detection Settings
 
-Customize ad detection prompts in Settings:
+Customize ad detection in Settings:
+- **Claude Model** - Select which model to use for ad detection
+- **Multi-Pass Detection** - Enable dual-pass analysis for better accuracy (catches subtle ads)
 - **System Prompt** - Instructions for how Claude analyzes transcripts
-- **User Prompt Template** - Template for analysis requests
-- **Claude Model** - Select which model to use
 
 ## Finding Podcast RSS Feeds
 

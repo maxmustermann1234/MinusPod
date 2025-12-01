@@ -5,6 +5,136 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.54] - 2025-12-01
+
+### Fixed
+- Fixed `adsRemovedFirstPass` and `adsRemovedSecondPass` count calculation
+  - Previous: calculated as `total - firstPassCount` which gave negative/incorrect values after merging
+  - New: counts based on actual `pass` field in merged results
+  - `first_pass_count = first_only + merged` (ads found by first pass)
+  - `second_pass_count = second_only + merged` (ads found by second pass)
+- Improved logging to show breakdown: `first:X, second:Y, merged:Z`
+
+---
+
+## [0.1.53] - 2025-12-01
+
+### Changed
+- Second pass now runs BLIND (no knowledge of first pass results)
+  - Previous approach: tell second pass what first pass found, ask to find more
+  - New approach: second pass analyzes independently with different detection focus
+  - Second pass specializes in subtle/baked-in ads that don't sound like traditional ads
+  - Results merged automatically using improved algorithm
+- Improved merge algorithm for combining pass results
+  - Overlapping segments merged: takes earliest start, latest end
+  - Adjacent segments (within 2s gap) also merged
+  - Non-overlapping segments kept as separate ads
+  - Ads now marked as `pass: 1`, `pass: 2`, or `pass: 'merged'`
+- UI shows "Merged" badge (green) for segments detected by both passes
+
+### Technical
+- `BLIND_SECOND_PASS_SYSTEM_PROMPT` replaces previous informed prompt
+- `detect_ads_second_pass()` no longer takes `first_pass_ads` parameter
+- `merge_and_deduplicate()` rewritten with interval merging algorithm
+- Frontend types: `AdSegment.pass` now `1 | 2 | 'merged'`
+
+---
+
+## [0.1.52] - 2025-12-01
+
+### Changed
+- Made second pass ad detection more aggressive
+  - Reframes first pass reviewer as "junior/inexperienced" to encourage skepticism
+  - Added "DETECTION BIAS: When in doubt, mark it as an ad"
+  - Added explicit instruction to NOT just confirm first pass work
+  - Removed verification step - focus only on finding missed ads
+  - Should increase likelihood of catching non-obvious advertisements
+
+---
+
+## [0.1.51] - 2025-11-30
+
+### Changed
+- Multi-pass ad detection now uses parallel analysis instead of sequential re-transcription
+  - Both passes analyze the SAME original transcript (not re-transcribed after processing)
+  - Second pass now runs with different prompt to find ads first pass might have missed
+  - Results merged with deduplication (>50% overlap = same ad)
+  - Audio processed ONCE with all detected ads (faster, more efficient)
+- Second pass prompt redesigned as "skeptical reviewer" approach
+  - Given first pass results as context
+  - Looks for: short ads, ads without sponsor language, baked-in ads, post-roll ads
+  - Returns only NEW ads not already found by first pass
+
+### Added
+- Per-pass ad tracking in database and UI
+  - New columns: `ads_removed_firstpass`, `ads_removed_secondpass`
+  - API returns `adsRemovedFirstPass` and `adsRemovedSecondPass` fields
+  - Each ad marker now has `pass` field (1 or 2) indicating which pass found it
+- Pass badges in Episode Detail UI
+  - Ads marked with "Pass 1" (blue) or "Pass 2" (purple) badges
+  - Header shows breakdown: "Detected Ads (11) (5 first pass, 6 second pass)"
+- `merge_and_deduplicate()` function for combining pass results
+
+### Technical
+- Database migration adds `ads_removed_firstpass`, `ads_removed_secondpass` columns
+- Frontend types updated: `AdSegment.pass?: 1 | 2`, `EpisodeDetail.adsRemovedFirstPass/SecondPass`
+
+---
+
+## [0.1.50] - 2025-11-30
+
+### Added
+- UI toggle for multi-pass ad detection in Settings page
+  - New styled toggle switch to enable/disable multi-pass detection
+  - Settings now properly persisted and displayed
+
+### Changed
+- Database schema: renamed `claude_prompt`/`claude_raw_response` columns to `first_pass_prompt`/`first_pass_response`
+- Added new columns: `second_pass_prompt`, `second_pass_response` to store multi-pass detection data
+- API response field changes (breaking change for API consumers):
+  - `claudePrompt` renamed to `firstPassPrompt`
+  - `claudeRawResponse` renamed to `firstPassResponse`
+  - Added `secondPassPrompt`, `secondPassResponse` fields
+- Second pass detection now returns and stores prompt/response for debugging
+
+---
+
+## [0.1.49] - 2025-11-30
+
+### Added
+- API reliability with retry logic for transient Claude API errors
+  - Retries up to 3 times on 529 overloaded, 500, 502, 503, rate limit errors
+  - Exponential backoff with jitter (2s base, 60s max)
+  - Episodes now track `adDetectionStatus` (success/failed) in database and API
+  - New endpoint: `POST /feeds/<slug>/episodes/<episode_id>/retry-ad-detection`
+    - Retries ad detection using existing transcript (no re-transcription needed)
+- Multi-pass ad detection (opt-in feature)
+  - Enable via Settings API: `PUT /settings/ad-detection` with `{"multiPassEnabled": true}`
+  - When enabled, after first-pass processing:
+    1. Re-transcribes the processed audio (where first-pass ads are now beeps)
+    2. Runs second-pass detection looking for missed ads
+    3. First-pass ads provided as context ("we found these, look for similar")
+    4. Processes audio again if additional ads found
+  - Combined ad count and time saved from both passes
+  - Note: Approximately doubles transcription and API costs when enabled
+
+### Changed
+- Expanded DEFAULT_SYSTEM_PROMPT for better ad detection accuracy
+  - Added DETECTION BIAS guidance: "When in doubt, mark it as an ad"
+  - Added RETAIL/CONSUMER BRANDS list (Nordstrom, Macy's, Target, Nike, Sephora, etc.)
+  - Added RETAIL/COMMERCIAL AD INDICATORS section (shopping CTAs, free shipping, price mentions)
+  - Added NETWORK/RADIO-STYLE ADS section for ads without podcast-specific elements
+  - Added second example showing Nordstrom-style retail ad detection
+  - Strengthened REMINDER section to catch all ad types
+  - Note: Users with custom prompts should reset to default in Settings to get improvements
+
+### Fixed
+- Joe Rogan episode type issue: Claude API 529 overloaded error was silently returning 0 ads
+  - Now properly retries and blocks until success or permanent failure
+  - Failed detection clearly marked in UI/API (adDetectionStatus: "failed")
+
+---
+
 ## [0.1.48] - 2025-11-29
 
 ### Added

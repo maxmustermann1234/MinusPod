@@ -9,7 +9,7 @@ info:
     - View and manage processed episodes
     - Configure ad detection settings including Claude model selection
     - Monitor system status and trigger cleanup operations
-  version: 0.1.0
+  version: 0.1.54
   contact:
     name: Podcast Server
   license:
@@ -318,7 +318,7 @@ paths:
       tags:
         - Settings
       summary: Update ad detection settings
-      description: Update Claude model or system prompt
+      description: Update Claude model, system prompt, or multi-pass detection
       operationId: updateAdDetectionSettings
       requestBody:
         required: true
@@ -334,6 +334,9 @@ paths:
                   type: string
                   description: Claude model ID to use for ad detection
                   example: claude-sonnet-4-5-20250929
+                multiPassEnabled:
+                  type: boolean
+                  description: Enable dual-pass ad detection for improved accuracy
       responses:
         '200':
           description: Settings updated
@@ -534,6 +537,12 @@ components:
                 $ref: '#/components/schemas/AdMarker'
             transcriptAvailable:
               type: boolean
+            adsRemovedFirstPass:
+              type: integer
+              description: Number of ads detected by first pass (includes merged)
+            adsRemovedSecondPass:
+              type: integer
+              description: Number of ads detected by second pass (includes merged)
 
     AdMarker:
       type: object
@@ -544,9 +553,19 @@ components:
         end:
           type: number
           description: End time in seconds
+        confidence:
+          type: number
+          description: Detection confidence (0.0 to 1.0)
+          example: 0.95
         reason:
           type: string
           description: Reason for marking as ad
+        pass:
+          type:
+            - integer
+            - string
+          description: Which detection pass found this ad (1, 2, or "merged" if both)
+          example: 1
 
     Model:
       type: object
@@ -581,6 +600,14 @@ components:
               type: string
             isDefault:
               type: boolean
+        multiPassEnabled:
+          type: object
+          properties:
+            value:
+              type: boolean
+              description: Whether dual-pass ad detection is enabled
+            isDefault:
+              type: boolean
         retentionPeriodMinutes:
           type: integer
         defaults:
@@ -590,6 +617,8 @@ components:
               type: string
             claudeModel:
               type: string
+            multiPassEnabled:
+              type: boolean
 
     SystemStatus:
       type: object
