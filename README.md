@@ -28,6 +28,16 @@ Each detected ad shows a badge indicating which pass found it:
 
 Multi-pass increases processing time and API costs but catches more ads.
 
+### Sliding Window Processing
+
+For long episodes, transcripts are processed in overlapping 10-minute windows:
+
+- **Window Size** - 10 minutes of transcript per API call
+- **Overlap** - 3 minutes between windows ensures ads at boundaries aren't missed
+- **Deduplication** - Ads detected in multiple windows are automatically merged
+
+This approach ensures consistent detection quality regardless of episode length. A 60-minute episode is processed as 9 overlapping windows, with any duplicate detections combined into a single ad marker.
+
 ## Requirements
 
 - Docker with NVIDIA GPU support (for Whisper)
@@ -105,9 +115,10 @@ All configuration is managed through the web UI or REST API. No config files nee
 ### Ad Detection Settings
 
 Customize ad detection in Settings:
-- **Claude Model** - Select which model to use for ad detection
-- **Multi-Pass Detection** - Enable dual-pass analysis for better accuracy (catches subtle ads)
-- **System Prompt** - Instructions for how Claude analyzes transcripts
+- **Claude Model** - Model for first pass ad detection
+- **Multi-Pass Detection** - Enable dual-pass analysis for better accuracy
+- **Second Pass Model** - Separate model for second pass (visible when multi-pass enabled)
+- **System Prompts** - Customizable prompts for first and second pass detection
 
 ## Finding Podcast RSS Feeds
 
