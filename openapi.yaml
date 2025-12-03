@@ -9,7 +9,7 @@ info:
     - View and manage processed episodes
     - Configure ad detection settings including Claude model selection
     - Monitor system status and trigger cleanup operations
-  version: 0.1.72
+  version: 0.0.0
   contact:
     name: Podcast Server
   license:
@@ -344,6 +344,10 @@ paths:
                 multiPassEnabled:
                   type: boolean
                   description: Enable dual-pass ad detection for improved accuracy
+                whisperModel:
+                  type: string
+                  description: Whisper model for transcription (tiny, base, small, medium, large-v3)
+                  example: small
       responses:
         '200':
           description: Settings updated
@@ -394,6 +398,26 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Model'
+
+  /settings/whisper-models:
+    get:
+      tags:
+        - Settings
+      summary: Get available Whisper models
+      description: Returns list of available Whisper models for transcription with resource requirements
+      operationId: getWhisperModels
+      responses:
+        '200':
+          description: List of available Whisper models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WhisperModel'
 
   /system/status:
     get:
@@ -620,6 +644,30 @@ components:
           format: date-time
           nullable: true
 
+    WhisperModel:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Model identifier (tiny, base, small, medium, large-v3)
+          example: small
+        name:
+          type: string
+          description: Human-readable model name
+          example: Small (Default)
+        vram:
+          type: string
+          description: Estimated GPU VRAM requirement
+          example: ~2GB
+        speed:
+          type: string
+          description: Approximate transcription speed
+          example: ~2-3 min/60min
+        quality:
+          type: string
+          description: Relative quality compared to other models
+          example: Better
+
     Settings:
       type: object
       properties:
@@ -659,6 +707,14 @@ components:
               description: Whether dual-pass ad detection is enabled
             isDefault:
               type: boolean
+        whisperModel:
+          type: object
+          properties:
+            value:
+              type: string
+              description: Whisper model for transcription
+            isDefault:
+              type: boolean
         retentionPeriodMinutes:
           type: integer
         defaults:
@@ -674,6 +730,8 @@ components:
               type: string
             multiPassEnabled:
               type: boolean
+            whisperModel:
+              type: string
 
     SystemStatus:
       type: object

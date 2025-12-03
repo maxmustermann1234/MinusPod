@@ -265,7 +265,7 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 raise Exception("Failed to download audio")
 
             audio_logger.info(f"[{slug}:{episode_id}] Starting transcription")
-            segments = transcriber.transcribe(audio_path)
+            segments = transcriber.transcribe(audio_path, podcast_name=podcast_name)
             if not segments:
                 raise Exception("Failed to transcribe audio")
 

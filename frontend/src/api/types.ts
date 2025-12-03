@@ -73,6 +73,7 @@ export interface Settings {
   claudeModel: SettingValue;
   secondPassModel: SettingValue;
   multiPassEnabled: SettingValueBoolean;
+  whisperModel: SettingValue;
   retentionPeriodMinutes: number;
   defaults: {
     systemPrompt: string;
@@ -80,6 +81,7 @@ export interface Settings {
     claudeModel: string;
     secondPassModel: string;
     multiPassEnabled: boolean;
+    whisperModel: string;
   };
 }
 
@@ -89,11 +91,20 @@ export interface UpdateSettingsPayload {
   claudeModel?: string;
   secondPassModel?: string;
   multiPassEnabled?: boolean;
+  whisperModel?: string;
 }
 
 export interface ClaudeModel {
   id: string;
   name: string;
+}
+
+export interface WhisperModel {
+  id: string;
+  name: string;
+  vram: string;
+  speed: string;
+  quality: string;
 }
 
 export interface SystemStatus {

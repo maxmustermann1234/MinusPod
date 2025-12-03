@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.75] - 2025-12-02
+
+### Added
+- Configurable Whisper model via API and Settings UI
+  - New `/settings/whisper-models` endpoint lists available models with VRAM/speed/quality info
+  - Settings page now includes Whisper Model dropdown with resource requirements
+  - Supports: tiny, base, small (default), medium, large-v3
+  - Model hot-swap: changing model triggers reload on next transcription
+- Podcast-aware initial prompt for Whisper transcription
+  - Includes sponsor vocabulary (BetterHelp, Athletic Greens, Squarespace, etc.)
+  - Improves accuracy of sponsor name transcription
+- Hallucination filtering for Whisper output
+  - Filters common artifacts: "thanks for watching", "[music]", repeated segments
+  - Removes YouTube-style hallucinations that don't belong in podcasts
+- Audio preprocessing before transcription
+  - Normalizes to 16kHz mono (Whisper's native format)
+  - Applies loudnorm filter for consistent volume levels
+  - Highpass (80Hz) and lowpass (8kHz) for speech frequency focus
+
+### Changed
+- WhisperModelSingleton now reads configured model from database settings
+- Model can be changed at runtime without server restart
+- Transcription now logs which Whisper model is being used
+
+---
+
 ## [0.1.74] - 2025-12-02
 
 ### Fixed

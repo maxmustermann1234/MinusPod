@@ -505,6 +505,14 @@ class Database:
             ('second_pass_model', DEFAULT_MODEL)
         )
 
+        # Whisper model (defaults to env var or 'small')
+        whisper_model = os.environ.get('WHISPER_MODEL', 'small')
+        conn.execute(
+            """INSERT INTO settings (key, value, is_default) VALUES (?, ?, 1)
+               ON CONFLICT(key) DO NOTHING""",
+            ('whisper_model', whisper_model)
+        )
+
         conn.commit()
         logger.info("Default settings seeded")
 
@@ -883,7 +891,8 @@ class Database:
             'retention_period_minutes': os.environ.get('RETENTION_PERIOD', '1440'),
             'claude_model': DEFAULT_MODEL,
             'second_pass_model': DEFAULT_MODEL,
-            'multi_pass_enabled': 'false'
+            'multi_pass_enabled': 'false',
+            'whisper_model': os.environ.get('WHISPER_MODEL', 'small')
         }
 
         if key in defaults:
