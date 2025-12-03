@@ -1096,22 +1096,26 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
 
             # Generate Podcasting 2.0 assets (VTT transcript and chapters)
             try:
-                # Generate VTT transcript with adjusted timestamps
-                transcript_gen = TranscriptGenerator()
-                vtt_content = transcript_gen.generate_vtt(segments, ads_to_remove)
-                if vtt_content and len(vtt_content) > 10:
-                    storage.save_transcript_vtt(slug, episode_id, vtt_content)
-                    audio_logger.info(f"[{slug}:{episode_id}] Generated VTT transcript")
+                # Check settings for VTT transcripts
+                vtt_enabled = db.get_setting('vtt_transcripts_enabled')
+                if vtt_enabled is None or vtt_enabled.lower() == 'true':
+                    transcript_gen = TranscriptGenerator()
+                    vtt_content = transcript_gen.generate_vtt(segments, ads_to_remove)
+                    if vtt_content and len(vtt_content) > 10:
+                        storage.save_transcript_vtt(slug, episode_id, vtt_content)
+                        audio_logger.info(f"[{slug}:{episode_id}] Generated VTT transcript")
 
-                # Generate chapters from ad boundaries and description timestamps
-                chapters_gen = ChaptersGenerator()
-                chapters = chapters_gen.generate_chapters(
-                    segments, ads_to_remove, episode_description,
-                    podcast_name, episode_title
-                )
-                if chapters and chapters.get('chapters'):
-                    storage.save_chapters_json(slug, episode_id, chapters)
-                    audio_logger.info(f"[{slug}:{episode_id}] Generated {len(chapters['chapters'])} chapters")
+                # Check settings for chapters
+                chapters_enabled = db.get_setting('chapters_enabled')
+                if chapters_enabled is None or chapters_enabled.lower() == 'true':
+                    chapters_gen = ChaptersGenerator()
+                    chapters = chapters_gen.generate_chapters(
+                        segments, ads_to_remove, episode_description,
+                        podcast_name, episode_title
+                    )
+                    if chapters and chapters.get('chapters'):
+                        storage.save_chapters_json(slug, episode_id, chapters)
+                        audio_logger.info(f"[{slug}:{episode_id}] Generated {len(chapters['chapters'])} chapters")
             except Exception as e:
                 audio_logger.warning(f"[{slug}:{episode_id}] Failed to generate Podcasting 2.0 assets: {e}")
 

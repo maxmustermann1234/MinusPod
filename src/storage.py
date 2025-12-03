@@ -154,46 +154,50 @@ class Storage:
     # ========== VTT Transcript Methods (Podcasting 2.0) ==========
 
     def save_transcript_vtt(self, slug: str, episode_id: str, vtt_content: str) -> None:
-        """Save VTT transcript to filesystem."""
-        vtt_path = self.get_episode_path(slug, episode_id, ".vtt")
-        with open(vtt_path, 'w', encoding='utf-8') as f:
-            f.write(vtt_content)
-        logger.debug(f"[{slug}:{episode_id}] Saved VTT transcript")
+        """Save VTT transcript to database."""
+        try:
+            self.db.save_episode_details(slug, episode_id, transcript_vtt=vtt_content)
+            logger.debug(f"[{slug}:{episode_id}] Saved VTT transcript to database")
+        except ValueError:
+            logger.warning(f"[{slug}:{episode_id}] Episode not in DB, VTT not saved")
 
     def get_transcript_vtt(self, slug: str, episode_id: str) -> Optional[str]:
-        """Get VTT transcript from filesystem."""
-        vtt_path = self.get_episode_path(slug, episode_id, ".vtt")
-        if vtt_path.exists():
-            with open(vtt_path, 'r', encoding='utf-8') as f:
-                return f.read()
+        """Get VTT transcript from database."""
+        episode = self.db.get_episode(slug, episode_id)
+        if episode and episode.get('transcript_vtt'):
+            return episode['transcript_vtt']
         return None
 
     def has_transcript_vtt(self, slug: str, episode_id: str) -> bool:
-        """Check if VTT transcript exists."""
-        vtt_path = self.get_episode_path(slug, episode_id, ".vtt")
-        return vtt_path.exists()
+        """Check if VTT transcript exists in database."""
+        episode = self.db.get_episode(slug, episode_id)
+        return bool(episode and episode.get('transcript_vtt'))
 
     # ========== Chapters Methods (Podcasting 2.0) ==========
 
     def save_chapters_json(self, slug: str, episode_id: str, chapters: Dict) -> None:
-        """Save chapters JSON to filesystem."""
-        chapters_path = self.get_episode_path(slug, episode_id, "-chapters.json")
-        with open(chapters_path, 'w', encoding='utf-8') as f:
-            json.dump(chapters, f, indent=2)
-        logger.debug(f"[{slug}:{episode_id}] Saved chapters JSON")
+        """Save chapters JSON to database."""
+        try:
+            chapters_str = json.dumps(chapters)
+            self.db.save_episode_details(slug, episode_id, chapters_json=chapters_str)
+            logger.debug(f"[{slug}:{episode_id}] Saved chapters JSON to database")
+        except ValueError:
+            logger.warning(f"[{slug}:{episode_id}] Episode not in DB, chapters not saved")
 
     def get_chapters_json(self, slug: str, episode_id: str) -> Optional[Dict]:
-        """Get chapters JSON from filesystem."""
-        chapters_path = self.get_episode_path(slug, episode_id, "-chapters.json")
-        if chapters_path.exists():
-            with open(chapters_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
+        """Get chapters JSON from database."""
+        episode = self.db.get_episode(slug, episode_id)
+        if episode and episode.get('chapters_json'):
+            try:
+                return json.loads(episode['chapters_json'])
+            except json.JSONDecodeError:
+                return None
         return None
 
     def has_chapters_json(self, slug: str, episode_id: str) -> bool:
-        """Check if chapters JSON exists."""
-        chapters_path = self.get_episode_path(slug, episode_id, "-chapters.json")
-        return chapters_path.exists()
+        """Check if chapters JSON exists in database."""
+        episode = self.db.get_episode(slug, episode_id)
+        return bool(episode and episode.get('chapters_json'))
 
     def save_ads_json(self, slug: str, episode_id: str, ads_data: Any,
                       pass_number: int = 1) -> None:
@@ -367,19 +371,21 @@ class Storage:
 
 
     def cleanup_episode_files(self, slug: str, episode_id: str) -> int:
-        """Delete all files for an episode. Returns bytes freed."""
+        """Delete all files for an episode. Returns bytes freed.
+
+        Note: VTT and chapters are now stored in database, not files.
+        Database cascade delete handles episode_details when episode is deleted.
+        """
         freed = 0
 
-        # Delete MP3, VTT transcript, and chapters JSON
-        extensions = ['.mp3', '.vtt', '-chapters.json']
-        for ext in extensions:
-            path = self.get_episode_path(slug, episode_id, ext)
-            if path.exists():
-                try:
-                    freed += path.stat().st_size
-                    path.unlink()
-                except Exception as e:
-                    logger.warning(f"Failed to delete {path}: {e}")
+        # Only delete MP3 file - VTT and chapters are now in database
+        mp3_path = self.get_episode_path(slug, episode_id, '.mp3')
+        if mp3_path.exists():
+            try:
+                freed += mp3_path.stat().st_size
+                mp3_path.unlink()
+            except Exception as e:
+                logger.warning(f"Failed to delete {mp3_path}: {e}")
 
         return freed
 

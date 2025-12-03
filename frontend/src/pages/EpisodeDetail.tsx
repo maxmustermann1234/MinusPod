@@ -208,6 +208,16 @@ function EpisodeDetail() {
               <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColors[episode.status]}`}>
                 {episode.status}
               </span>
+              {episode.transcriptVttAvailable && (
+                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-600 dark:text-blue-400">
+                  VTT
+                </span>
+              )}
+              {episode.chaptersAvailable && (
+                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-500/20 text-purple-600 dark:text-purple-400">
+                  Chapters
+                </span>
+              )}
               <div className="relative">
                 <button
                   onClick={() => setShowReprocessMenu(!showReprocessMenu)}
@@ -249,6 +259,28 @@ function EpisodeDetail() {
             <audio controls className="w-full" src={`/episodes/${slug}/${episode.id}.mp3`}>
               Your browser does not support the audio element.
             </audio>
+            {(episode.transcriptVttAvailable || episode.chaptersAvailable) && (
+              <div className="flex flex-wrap gap-2 mt-3">
+                {episode.transcriptVttAvailable && episode.transcriptVttUrl && (
+                  <a
+                    href={episode.transcriptVttUrl}
+                    download
+                    className="px-3 py-1 text-sm bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded hover:bg-blue-500/30 transition-colors"
+                  >
+                    Download VTT
+                  </a>
+                )}
+                {episode.chaptersAvailable && episode.chaptersUrl && (
+                  <a
+                    href={episode.chaptersUrl}
+                    download
+                    className="px-3 py-1 text-sm bg-purple-500/20 text-purple-600 dark:text-purple-400 rounded hover:bg-purple-500/30 transition-colors"
+                  >
+                    Download Chapters
+                  </a>
+                )}
+              </div>
+            )}
           </div>
         )}
 

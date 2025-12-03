@@ -821,17 +821,16 @@ def get_episode(slug, episode_id):
 
     # Get file size and Podcasting 2.0 asset availability if processed
     file_size = None
-    transcript_vtt_available = False
-    chapters_available = False
     storage = get_storage()
 
     if status == 'completed':
         file_path = storage.get_episode_path(slug, episode_id)
         if file_path.exists():
             file_size = file_path.stat().st_size
-        # Check for Podcasting 2.0 assets
-        transcript_vtt_available = storage.has_transcript_vtt(slug, episode_id)
-        chapters_available = storage.has_chapters_json(slug, episode_id)
+
+    # Check for Podcasting 2.0 assets (stored in database now)
+    transcript_vtt_available = bool(episode.get('transcript_vtt'))
+    chapters_available = bool(episode.get('chapters_json'))
 
     # Get corrections for this episode
     corrections = db.get_episode_corrections(episode_id)
@@ -1393,6 +1392,12 @@ def get_settings():
     auto_process_value = settings.get('auto_process_enabled', {}).get('value', 'true')
     auto_process_enabled = auto_process_value.lower() in ('true', '1', 'yes')
 
+    # Get Podcasting 2.0 settings (defaults to true)
+    vtt_value = settings.get('vtt_transcripts_enabled', {}).get('value', 'true')
+    vtt_enabled = vtt_value.lower() in ('true', '1', 'yes')
+    chapters_value = settings.get('chapters_enabled', {}).get('value', 'true')
+    chapters_enabled = chapters_value.lower() in ('true', '1', 'yes')
+
     return json_response({
         'systemPrompt': {
             'value': settings.get('system_prompt', {}).get('value', DEFAULT_SYSTEM_PROMPT),
@@ -1426,6 +1431,14 @@ def get_settings():
             'value': auto_process_enabled,
             'isDefault': settings.get('auto_process_enabled', {}).get('is_default', True)
         },
+        'vttTranscriptsEnabled': {
+            'value': vtt_enabled,
+            'isDefault': settings.get('vtt_transcripts_enabled', {}).get('is_default', True)
+        },
+        'chaptersEnabled': {
+            'value': chapters_enabled,
+            'isDefault': settings.get('chapters_enabled', {}).get('is_default', True)
+        },
         'retentionPeriodMinutes': int(os.environ.get('RETENTION_PERIOD') or settings.get('retention_period_minutes', {}).get('value', '1440')),
         'defaults': {
             'systemPrompt': DEFAULT_SYSTEM_PROMPT,
@@ -1435,7 +1448,9 @@ def get_settings():
             'multiPassEnabled': False,
             'whisperModel': default_whisper_model,
             'audioAnalysisEnabled': False,
-            'autoProcessEnabled': True
+            'autoProcessEnabled': True,
+            'vttTranscriptsEnabled': True,
+            'chaptersEnabled': True
         }
     })
 
@@ -1492,6 +1507,16 @@ def update_ad_detection_settings():
         db.set_setting('auto_process_enabled', value, is_default=False)
         logger.info(f"Updated auto-process to: {value}")
 
+    if 'vttTranscriptsEnabled' in data:
+        value = 'true' if data['vttTranscriptsEnabled'] else 'false'
+        db.set_setting('vtt_transcripts_enabled', value, is_default=False)
+        logger.info(f"Updated VTT transcripts to: {value}")
+
+    if 'chaptersEnabled' in data:
+        value = 'true' if data['chaptersEnabled'] else 'false'
+        db.set_setting('chapters_enabled', value, is_default=False)
+        logger.info(f"Updated chapters generation to: {value}")
+
     return json_response({'message': 'Settings updated'})
 
 
@@ -1508,6 +1533,8 @@ def reset_ad_detection_settings():
     db.reset_setting('multi_pass_enabled')
     db.reset_setting('whisper_model')
     db.reset_setting('audio_analysis_enabled')
+    db.reset_setting('vtt_transcripts_enabled')
+    db.reset_setting('chapters_enabled')
 
     # Mark whisper model for reload
     try:
@@ -1516,7 +1543,7 @@ def reset_ad_detection_settings():
     except Exception as e:
         logger.warning(f"Could not mark model for reload: {e}")
 
-    logger.info("Reset ad detection settings to defaults")
+    logger.info("Reset all settings to defaults")
     return json_response({'message': 'Settings reset to defaults'})
 
 

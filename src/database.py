@@ -163,6 +163,8 @@ CREATE TABLE IF NOT EXISTS episode_details (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     episode_id INTEGER UNIQUE NOT NULL,
     transcript_text TEXT,
+    transcript_vtt TEXT,
+    chapters_json TEXT,
     ad_markers_json TEXT,
     first_pass_response TEXT,
     first_pass_prompt TEXT,
@@ -932,6 +934,34 @@ class Database:
         except Exception as e:
             logger.warning(f"Failed to auto-populate search index: {e}")
 
+        # Refresh episode_details columns after previous migrations
+        cursor = conn.execute("PRAGMA table_info(episode_details)")
+        details_columns = [row['name'] for row in cursor.fetchall()]
+
+        # Migration: Add transcript_vtt column if missing
+        if 'transcript_vtt' not in details_columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episode_details
+                    ADD COLUMN transcript_vtt TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added transcript_vtt column to episode_details table")
+            except Exception as e:
+                logger.error(f"Migration failed for transcript_vtt: {e}")
+
+        # Migration: Add chapters_json column if missing
+        if 'chapters_json' not in details_columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episode_details
+                    ADD COLUMN chapters_json TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added chapters_json column to episode_details table")
+            except Exception as e:
+                logger.error(f"Migration failed for chapters_json: {e}")
+
     def _migrate_from_json(self):
         """Migrate data from JSON files to SQLite."""
         conn = self.get_connection()
@@ -1122,6 +1152,20 @@ class Database:
             ('audio_bitrate', '128k')
         )
 
+        # VTT transcripts enabled (Podcasting 2.0)
+        conn.execute(
+            """INSERT INTO settings (key, value, is_default) VALUES (?, ?, 1)
+               ON CONFLICT(key) DO NOTHING""",
+            ('vtt_transcripts_enabled', 'true')
+        )
+
+        # Chapters enabled (Podcasting 2.0)
+        conn.execute(
+            """INSERT INTO settings (key, value, is_default) VALUES (?, ?, 1)
+               ON CONFLICT(key) DO NOTHING""",
+            ('chapters_enabled', 'true')
+        )
+
         conn.commit()
         logger.info("Default settings seeded")
 
@@ -1292,7 +1336,8 @@ class Database:
         """Get episode by slug and episode_id."""
         conn = self.get_connection()
         cursor = conn.execute(
-            """SELECT e.*, p.slug, ed.transcript_text, ed.ad_markers_json,
+            """SELECT e.*, p.slug, ed.transcript_text, ed.transcript_vtt,
+                      ed.chapters_json, ed.ad_markers_json,
                       ed.first_pass_response, ed.first_pass_prompt,
                       ed.second_pass_prompt, ed.second_pass_response
                FROM episodes e
@@ -1394,12 +1439,14 @@ class Database:
 
     def save_episode_details(self, slug: str, episode_id: str,
                             transcript_text: str = None,
+                            transcript_vtt: str = None,
+                            chapters_json: str = None,
                             ad_markers: List[Dict] = None,
                             first_pass_response: str = None,
                             first_pass_prompt: str = None,
                             second_pass_prompt: str = None,
                             second_pass_response: str = None):
-        """Save or update episode details (transcript, ad markers, pass data)."""
+        """Save or update episode details (transcript, VTT, chapters, ad markers, pass data)."""
         conn = self.get_connection()
 
         # Get episode database ID
@@ -1416,7 +1463,7 @@ class Database:
         )
         row = cursor.fetchone()
 
-        ad_markers_json = json.dumps(ad_markers) if ad_markers is not None else None
+        ad_markers_json_str = json.dumps(ad_markers) if ad_markers is not None else None
 
         if row:
             # Update existing
@@ -1425,9 +1472,15 @@ class Database:
             if transcript_text is not None:
                 updates.append("transcript_text = ?")
                 values.append(transcript_text)
-            if ad_markers_json is not None:
+            if transcript_vtt is not None:
+                updates.append("transcript_vtt = ?")
+                values.append(transcript_vtt)
+            if chapters_json is not None:
+                updates.append("chapters_json = ?")
+                values.append(chapters_json)
+            if ad_markers_json_str is not None:
                 updates.append("ad_markers_json = ?")
-                values.append(ad_markers_json)
+                values.append(ad_markers_json_str)
             if first_pass_response is not None:
                 updates.append("first_pass_response = ?")
                 values.append(first_pass_response)
@@ -1451,12 +1504,12 @@ class Database:
             # Insert new
             conn.execute(
                 """INSERT INTO episode_details
-                   (episode_id, transcript_text, ad_markers_json,
-                    first_pass_response, first_pass_prompt,
+                   (episode_id, transcript_text, transcript_vtt, chapters_json,
+                    ad_markers_json, first_pass_response, first_pass_prompt,
                     second_pass_prompt, second_pass_response)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (db_episode_id, transcript_text, ad_markers_json,
-                 first_pass_response, first_pass_prompt,
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (db_episode_id, transcript_text, transcript_vtt, chapters_json,
+                 ad_markers_json_str, first_pass_response, first_pass_prompt,
                  second_pass_prompt, second_pass_response)
             )
 
@@ -1590,7 +1643,9 @@ class Database:
             'claude_model': DEFAULT_MODEL,
             'second_pass_model': DEFAULT_MODEL,
             'multi_pass_enabled': 'false',
-            'whisper_model': os.environ.get('WHISPER_MODEL', 'small')
+            'whisper_model': os.environ.get('WHISPER_MODEL', 'small'),
+            'vtt_transcripts_enabled': 'true',
+            'chapters_enabled': 'true'
         }
 
         if key in defaults:
