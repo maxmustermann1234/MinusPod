@@ -105,6 +105,23 @@ paths:
                 $ref: '#/components/schemas/Error'
 
   /feeds/{slug}:
+    get:
+      tags:
+        - Feeds
+      summary: Get a single feed
+      description: Returns details for a specific podcast feed
+      operationId: getFeed
+      parameters:
+        - $ref: '#/components/parameters/slug'
+      responses:
+        '200':
+          description: Feed details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Feed'
+        '404':
+          $ref: '#/components/responses/NotFound'
     delete:
       tags:
         - Feeds
@@ -297,6 +314,75 @@ paths:
                     type: string
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /feeds/{slug}/episodes/{episodeId}/reprocess:
+    post:
+      tags:
+        - Episodes
+      summary: Force reprocess an episode
+      description: |
+        Deletes all cached data (audio, transcript, ads) and immediately
+        reprocesses the episode from scratch. Use when you want to re-run
+        transcription and ad detection with updated settings.
+      operationId: reprocessEpisode
+      parameters:
+        - $ref: '#/components/parameters/slug'
+        - $ref: '#/components/parameters/episodeId'
+      responses:
+        '200':
+          description: Episode reprocessing started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  status:
+                    type: string
+                    enum: [completed, processing]
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /feeds/{slug}/episodes/{episodeId}/retry-ad-detection:
+    post:
+      tags:
+        - Episodes
+      summary: Retry ad detection
+      description: |
+        Re-runs ad detection using the existing transcript. Faster than full
+        reprocess since it skips transcription. Use when ad detection failed
+        due to API errors or when you want to try with updated prompts.
+      operationId: retryAdDetection
+      parameters:
+        - $ref: '#/components/parameters/slug'
+        - $ref: '#/components/parameters/episodeId'
+      responses:
+        '200':
+          description: Ad detection retry completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  adsDetected:
+                    type: integer
+                  status:
+                    type: string
+        '400':
+          description: Episode has no transcript (must use reprocess instead)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
 
   /settings:
     get:
