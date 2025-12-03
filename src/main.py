@@ -467,10 +467,24 @@ def swagger_ui():
 
 @app.route('/openapi.yaml')
 def serve_openapi():
-    """Serve OpenAPI specification."""
+    """Serve OpenAPI specification with dynamic version."""
     openapi_path = ROOT_DIR / 'openapi.yaml'
     if openapi_path.exists():
-        return send_file(openapi_path, mimetype='application/x-yaml')
+        try:
+            from version import __version__
+            content = openapi_path.read_text()
+            # Replace version line dynamically
+            import re
+            content = re.sub(
+                r'^(\s*version:\s*).*$',
+                rf'\g<1>{__version__}',
+                content,
+                count=1,
+                flags=re.MULTILINE
+            )
+            return Response(content, mimetype='application/x-yaml')
+        except Exception:
+            return send_file(openapi_path, mimetype='application/x-yaml')
     abort(404)
 
 

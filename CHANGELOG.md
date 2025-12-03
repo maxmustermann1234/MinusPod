@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.72] - 2025-12-03
+
+### Fixed
+- Wrap descriptions in CDATA to fix invalid XML in RSS feeds
+  - Channel descriptions were not escaped, causing raw HTML and `&nbsp;` entities to break XML parsing
+  - Episode descriptions now also use CDATA for consistency
+  - Fixes Pocket Casts rejecting feeds with HTML in descriptions (e.g., No Agenda, DTNS)
+
+### Changed
+- OpenAPI version is now dynamically injected from version.py
+  - No longer need to manually update openapi.yaml version
+
+---
+
+## [0.1.71] - 2025-12-03
+
+### Fixed
+- Validate iTunes fields before outputting to RSS feed
+  - `itunes:explicit` was outputting Python's `None` as string "None" (invalid XML)
+  - `itunes:duration` could also output `None` in some cases
+  - Now validates `itunes:explicit` against allowed values (true/false/yes/no)
+  - Skips fields with invalid values instead of outputting malformed XML
+  - Fixes Pocket Casts rejecting feeds with invalid iTunes tags
+
+---
+
+## [0.1.70] - 2025-12-03
+
+### Fixed
+- Limited RSS feed to 100 most recent episodes
+  - Large feeds (2000+ episodes, 3MB+) were rejected by Pocket Casts during validation
+  - Feed size now stays under ~500KB, compatible with all podcast apps
+
+---
+
+## [0.1.69] - 2025-12-02
+
+### Fixed
+- Removed `<itunes:block>Yes</itunes:block>` from modified RSS feeds
+  - This tag was preventing podcast apps from subscribing to feeds
+  - Original feeds (e.g., Acast) don't have this tag; it was being added unnecessarily
+
+---
+
 ## [0.1.68] - 2025-12-02
 
 ### Changed

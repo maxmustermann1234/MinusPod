@@ -60,11 +60,8 @@ class RSSParser:
         channel = feed.feed
         lines.append(f'<title>{channel.get("title", "")}</title>')
         lines.append(f'<link>{channel.get("link", "")}</link>')
-        lines.append(f'<description>{channel.get("description", "")}</description>')
+        lines.append(f'<description><![CDATA[{channel.get("description", "")}]]></description>')
         lines.append(f'<language>{channel.get("language", "en")}</language>')
-
-        # Mark as private feed for personal use only
-        lines.append('<itunes:block>Yes</itunes:block>')
 
         if 'image' in channel:
             lines.append(f'<image>')
@@ -73,8 +70,16 @@ class RSSParser:
             lines.append(f'  <link>{channel.image.get("link", "")}</link>')
             lines.append(f'</image>')
 
+        # Limit to most recent episodes to keep feed size manageable
+        # Pocket Casts and other apps may reject very large feeds (>1MB)
+        max_episodes = 100
+        entries = feed.entries[:max_episodes]
+
+        if len(feed.entries) > max_episodes:
+            logger.info(f"[{slug}] Limiting feed from {len(feed.entries)} to {max_episodes} episodes")
+
         # Process each episode
-        for entry in feed.entries:
+        for entry in entries:
             episode_url = None
             # Find audio URL in enclosures
             for enclosure in entry.get('enclosures', []):
@@ -92,7 +97,7 @@ class RSSParser:
 
             lines.append('<item>')
             lines.append(f'  <title>{self._escape_xml(entry.get("title", ""))}</title>')
-            lines.append(f'  <description>{self._escape_xml(entry.get("description", ""))}</description>')
+            lines.append(f'  <description><![CDATA[{entry.get("description", "")}]]></description>')
             lines.append(f'  <link>{entry.get("link", "")}</link>')
             lines.append(f'  <guid>{entry.get("id", episode_url)}</guid>')
             lines.append(f'  <pubDate>{entry.get("published", "")}</pubDate>')
@@ -100,11 +105,16 @@ class RSSParser:
             # Modified enclosure URL
             lines.append(f'  <enclosure url="{modified_url}" type="audio/mpeg" />')
 
-            # iTunes specific tags
+            # iTunes specific tags (validate to avoid outputting None as string)
             if 'itunes_duration' in entry:
-                lines.append(f'  <itunes:duration>{entry.itunes_duration}</itunes:duration>')
+                duration = entry.itunes_duration
+                if duration and str(duration).strip():
+                    lines.append(f'  <itunes:duration>{duration}</itunes:duration>')
+
             if 'itunes_explicit' in entry:
-                lines.append(f'  <itunes:explicit>{entry.itunes_explicit}</itunes:explicit>')
+                explicit = entry.itunes_explicit
+                if explicit and str(explicit).lower() in ('true', 'false', 'yes', 'no'):
+                    lines.append(f'  <itunes:explicit>{explicit}</itunes:explicit>')
 
             lines.append('</item>')
 
@@ -112,7 +122,7 @@ class RSSParser:
         lines.append('</rss>')
 
         modified_rss = '\n'.join(lines)
-        logger.info(f"[{slug}] Modified RSS feed with {len(feed.entries)} episodes")
+        logger.info(f"[{slug}] Modified RSS feed with {len(entries)} episodes")
         return modified_rss
 
     def _escape_xml(self, text: str) -> str:
