@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.74] - 2025-12-02
+
+### Fixed
+- Frontend now displays rejected ad detections in a separate "Rejected Detections" section
+  - Shows validation flags explaining why each detection was rejected
+  - Styled with red/warning colors to distinguish from accepted ads
+  - Displays the reason and confidence for each rejected detection
+
+---
+
 ## [0.1.73] - 2025-12-02
 
 ### Added
