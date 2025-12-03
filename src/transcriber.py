@@ -57,6 +57,17 @@ HALLUCINATION_PATTERNS = re.compile(
     re.IGNORECASE
 )
 
+# Vocabulary hallucination patterns (Whisper sometimes outputs the initial prompt)
+# These are partial matches - if any of these appear, the segment is likely a hallucination
+VOCABULARY_HALLUCINATION_PATTERNS = re.compile(
+    r'(promo code|discount code|use code|sponsored by|brought to you by|'
+    r'Athletic Greens|AG1|BetterHelp|Squarespace|NordVPN|ExpressVPN|'
+    r'HelloFresh|Audible|Masterclass|ZipRecruiter|Raycon|Manscaped|'
+    r'Stamps\.com|Indeed|LinkedIn|SimpliSafe|Casper|Helix Sleep|'
+    r'Brooklinen|Bombas|Calm|Headspace|Mint Mobile|Dollar Shave Club)',
+    re.IGNORECASE
+)
+
 
 def split_long_segments(segments: List[Dict]) -> List[Dict]:
     """Split segments longer than MAX_SEGMENT_DURATION using word timestamps.
@@ -267,6 +278,15 @@ class Transcriber:
             if HALLUCINATION_PATTERNS.match(text):
                 logger.debug(f"Filtered hallucination: {text}")
                 continue
+            # Filter vocabulary hallucinations (Whisper outputs the initial prompt)
+            # Only filter short segments that are primarily vocabulary words
+            if len(text) < 100 and VOCABULARY_HALLUCINATION_PATTERNS.search(text):
+                # Check if the text is mostly vocabulary (not real speech with sponsor mention)
+                # Real ad reads are typically longer and have more context
+                word_count = len(text.split())
+                if word_count < 15:
+                    logger.debug(f"Filtered vocabulary hallucination: {text}")
+                    continue
             # Skip repeated segments (Whisper loop artifacts)
             if filtered and text == filtered[-1].get('text', '').strip():
                 logger.debug(f"Filtered repeated segment: {text}")
