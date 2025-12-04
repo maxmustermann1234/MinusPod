@@ -1495,7 +1495,9 @@ def serve_transcript_vtt(slug, episode_id):
         abort(404)
 
     feed_logger.info(f"[{slug}:{episode_id}] Serving VTT transcript")
-    return Response(vtt_content, mimetype='text/vtt')
+    response = Response(vtt_content, mimetype='text/vtt')
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
 
 
 @app.route('/episodes/<slug>/<episode_id>/chapters.json')
@@ -1514,7 +1516,9 @@ def serve_chapters_json(slug, episode_id):
 
     import json
     feed_logger.info(f"[{slug}:{episode_id}] Serving chapters JSON")
-    return Response(json.dumps(chapters), mimetype='application/json+chapters')
+    response = Response(json.dumps(chapters), mimetype='application/json')
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
 
 
 @app.route('/health')
