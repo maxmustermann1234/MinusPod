@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.84] - 2025-12-05
+
+### Fixed
+- Fixed startup crash: `sqlite3.OperationalError: no such column: slug`
+  - Episodes table uses `podcast_id` foreign key, not `slug` column
+  - Fixed SQL queries in `reset_stuck_processing_episodes()` and API endpoints
+  - Properly joins episodes with podcasts table to get slug
+
+---
+
+## [0.1.83] - 2025-12-05
+
+### Added
+- Processing queue to prevent concurrent episode processing
+  - Only one episode can process at a time to prevent OOM from multiple Whisper/FFMPEG processes
+  - New `ProcessingQueue` singleton class with thread-safe locking
+  - Additional requests return 503 with Retry-After header
+- Background processing for non-blocking HTTP responses
+  - Episode processing now runs in background thread
+  - HTTP workers stay free for UI requests
+  - Solves UI lockup during episode processing
+- Startup recovery for stuck episodes
+  - On server start, reset any episodes stuck in "processing" status to "pending"
+  - Handles crash recovery automatically
+- Settings UI for managing processing queue
+  - New "Processing Queue" section shows episodes currently processing
+  - Cancel button to reset stuck episodes to pending
+  - Polls every 5 seconds for real-time updates
+- API endpoints for processing management
+  - `GET /api/v1/episodes/processing` - list all processing episodes
+  - `POST /api/v1/feeds/<slug>/episodes/<episode_id>/cancel` - cancel stuck episode
+
+### Fixed
+- OOM crashes when two episodes process simultaneously
+  - Workers were being killed: "Worker (pid:10) was sent SIGKILL! Perhaps out of memory?"
+  - Queue ensures only one memory-intensive operation at a time
+- Episodes stuck in "processing" status after worker crash
+  - Previously required deleting and re-adding the entire podcast
+  - Now auto-reset on startup and cancellable via UI
+
+---
+
+## [0.1.82] - 2025-12-05
+
+### Added
+- Episode-specific artwork support
+  - Extract `<itunes:image>` from RSS episode entries
+  - Store artwork URL in episodes database table
+  - Pass through episode artwork in modified RSS feed
+  - Include `artworkUrl` in API episode responses
+
+### Fixed
+- Long sponsor ads (5+ min) rejected despite being real sponsors
+  - If sponsor name from ad matches sponsor listed in episode description, allow up to 15 minutes
+  - Parses `<strong>Sponsors:</strong>` section and sponsor URLs from description
+  - Bitwarden, ThreatLocker, and other confirmed sponsors now correctly processed
+  - Added `MAX_AD_DURATION_CONFIRMED = 900.0` (15 min) for confirmed sponsors
+
+### Changed
+- Parallelized RSS feed refresh to prevent app lockup during bulk operations
+  - Uses ThreadPoolExecutor with max_workers=5 for concurrent feed fetches
+  - Each feed can take 30+ seconds; parallel refresh reduces total time significantly
+- Increased gunicorn workers from 1 to 2 and threads from 4 to 8
+  - Better handles concurrent requests during heavy operations
+  - Reduces UI freezing during bulk feed refreshes
+
+---
+
 ## [0.1.76] - 2025-12-03
 
 ### Fixed

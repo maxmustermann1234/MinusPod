@@ -40,6 +40,7 @@ class AdValidator:
     SHORT_AD_WARN = 30.0        # WARN if less
     LONG_AD_WARN = 180.0        # WARN if more (3 min)
     MAX_AD_DURATION = 300.0     # ERROR if more (5 min)
+    MAX_AD_DURATION_CONFIRMED = 900.0  # 15 min if sponsor confirmed in description
 
     # Confidence thresholds (0.0 - 1.0 scale)
     HIGH_CONFIDENCE = 0.85      # Auto-accept threshold
@@ -87,15 +88,85 @@ class AdValidator:
         'possible ad', 'likely ad', 'advertisement segment'
     ]
 
-    def __init__(self, episode_duration: float, segments: List[Dict] = None):
+    def __init__(self, episode_duration: float, segments: List[Dict] = None,
+                 episode_description: str = None):
         """Initialize validator.
 
         Args:
             episode_duration: Total episode duration in seconds
             segments: List of transcript segments with 'start', 'end', 'text' keys
+            episode_description: Episode description (may contain sponsor info)
         """
         self.episode_duration = episode_duration
         self.segments = segments or []
+        self.episode_description = episode_description or ""
+        self.description_sponsors = self._extract_sponsors_from_description()
+
+    def _extract_sponsors_from_description(self) -> set:
+        """Extract sponsor names from episode description.
+
+        Looks for sponsors in:
+        - <strong>Sponsors:</strong> sections with <a href="..."> links
+        - URL patterns like domain.com/code
+        - Known sponsor patterns
+
+        Returns:
+            Set of lowercase sponsor names
+        """
+        sponsors = set()
+        if not self.episode_description:
+            return sponsors
+
+        description = self.episode_description.lower()
+
+        # Extract domains from href URLs (e.g., "bitwarden.com/twit" -> "bitwarden")
+        href_pattern = re.compile(r'href=["\']?(?:https?://)?(?:www\.)?([a-z0-9-]+)\.(?:com|io|co|net|org)', re.IGNORECASE)
+        for match in href_pattern.finditer(self.episode_description):
+            domain = match.group(1).lower()
+            # Skip common non-sponsor domains
+            if domain not in ('redcircle', 'twitter', 'instagram', 'youtube', 'facebook', 'apple', 'spotify'):
+                sponsors.add(domain)
+
+        # Check for known sponsor patterns in description text
+        if self.SPONSOR_PATTERNS.search(description):
+            for match in self.SPONSOR_PATTERNS.finditer(description):
+                sponsor = match.group(0).lower().replace(' ', '')
+                sponsors.add(sponsor)
+
+        if sponsors:
+            logger.info(f"Extracted sponsors from description: {sponsors}")
+
+        return sponsors
+
+    def _is_sponsor_confirmed(self, ad: Dict) -> bool:
+        """Check if the ad's sponsor is confirmed in the episode description.
+
+        Args:
+            ad: Ad marker with reason field
+
+        Returns:
+            True if sponsor name from ad matches a sponsor in description
+        """
+        if not self.description_sponsors:
+            return False
+
+        # Extract sponsor from ad reason
+        reason = ad.get('reason', '').lower()
+
+        # Check for direct matches with description sponsors
+        for sponsor in self.description_sponsors:
+            if sponsor in reason:
+                logger.info(f"Sponsor '{sponsor}' confirmed in description for ad: {ad.get('reason', '')[:50]}")
+                return True
+
+        # Also check transcript text in ad range for sponsor mentions
+        ad_text = self._get_text_in_range(ad['start'], ad['end']).lower()
+        for sponsor in self.description_sponsors:
+            if sponsor in ad_text:
+                logger.info(f"Sponsor '{sponsor}' found in ad transcript, confirmed in description")
+                return True
+
+        return False
 
     def validate(self, ads: List[Dict]) -> ValidationResult:
         """Validate all ads and return results.
@@ -174,10 +245,17 @@ class AdValidator:
         elif duration < self.SHORT_AD_WARN:
             flags.append(f"WARN: Short duration ({duration:.1f}s)")
 
-        if duration > self.MAX_AD_DURATION:
+        # Check if sponsor is confirmed in episode description
+        sponsor_confirmed = self._is_sponsor_confirmed(ad)
+        max_duration = self.MAX_AD_DURATION_CONFIRMED if sponsor_confirmed else self.MAX_AD_DURATION
+
+        if duration > max_duration:
             flags.append(f"ERROR: Very long ({duration:.1f}s)")
         elif duration > self.LONG_AD_WARN:
-            flags.append(f"WARN: Long duration ({duration:.1f}s)")
+            if sponsor_confirmed:
+                flags.append(f"INFO: Long ({duration:.1f}s) but sponsor confirmed in description")
+            else:
+                flags.append(f"WARN: Long duration ({duration:.1f}s)")
 
         # Confidence checks (on original confidence)
         if confidence < self.REJECT_CONFIDENCE:

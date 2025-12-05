@@ -116,6 +116,15 @@ class RSSParser:
                 if explicit and str(explicit).lower() in ('true', 'false', 'yes', 'no'):
                     lines.append(f'  <itunes:explicit>{explicit}</itunes:explicit>')
 
+            # Episode artwork (itunes:image)
+            artwork_url = None
+            if hasattr(entry, 'image') and hasattr(entry.image, 'href'):
+                artwork_url = entry.image.href
+            elif 'itunes_image' in entry:
+                artwork_url = entry.itunes_image.get('href')
+            if artwork_url:
+                lines.append(f'  <itunes:image href="{self._escape_xml(artwork_url)}" />')
+
             lines.append('</item>')
 
         lines.append('</channel>')
@@ -151,12 +160,20 @@ class RSSParser:
                     break
 
             if episode_url:
+                # Extract episode artwork (itunes:image or standard image tag)
+                artwork_url = None
+                if hasattr(entry, 'image') and hasattr(entry.image, 'href'):
+                    artwork_url = entry.image.href
+                elif 'itunes_image' in entry:
+                    artwork_url = entry.itunes_image.get('href')
+
                 episodes.append({
                     'id': self.generate_episode_id(episode_url),
                     'url': episode_url,
                     'title': entry.get('title', 'Unknown'),
                     'published': entry.get('published', ''),
                     'description': entry.get('description', ''),
+                    'artwork_url': artwork_url,
                 })
 
         return episodes

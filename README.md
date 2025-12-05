@@ -38,6 +38,20 @@ For long episodes, transcripts are processed in overlapping 10-minute windows:
 
 This approach ensures consistent detection quality regardless of episode length. A 60-minute episode is processed as 9 overlapping windows, with any duplicate detections combined into a single ad marker.
 
+### Processing Queue
+
+To prevent memory issues from concurrent processing, episodes are processed one at a time:
+
+- **Single Processing** - Only one episode processes at a time (Whisper + FFMPEG are memory-intensive)
+- **Background Processing** - Processing runs in a background thread, keeping UI responsive
+- **Automatic Recovery** - Episodes stuck in "processing" status are automatically reset on server restart
+- **Queue Management** - View and cancel processing episodes in Settings
+
+When you request an episode that needs processing:
+1. If nothing is processing, it starts in the background and returns HTTP 503 with `Retry-After: 30`
+2. If another episode is processing, it returns HTTP 503 (your podcast app will retry)
+3. Once processed, subsequent requests serve the cached file instantly
+
 ### Post-Detection Validation
 
 After ad detection, a validation layer reviews each detection before audio processing:
@@ -179,6 +193,8 @@ Key endpoints:
 - `POST /api/v1/feeds` - Add a new feed
 - `POST /api/v1/feeds/{slug}/episodes/{id}/reprocess` - Force reprocess an episode
 - `POST /api/v1/feeds/{slug}/episodes/{id}/retry-ad-detection` - Retry ad detection only
+- `GET /api/v1/episodes/processing` - List episodes currently processing
+- `POST /api/v1/feeds/{slug}/episodes/{id}/cancel` - Cancel stuck processing episode
 - `GET /api/v1/settings` - Get current settings
 - `PUT /api/v1/settings/ad-detection` - Update ad detection config
 

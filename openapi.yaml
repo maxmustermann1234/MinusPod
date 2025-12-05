@@ -9,7 +9,7 @@ info:
     - View and manage processed episodes
     - Configure ad detection settings including Claude model selection
     - Monitor system status and trigger cleanup operations
-  version: 0.0.0
+  version: 0.1.84
   contact:
     name: Podcast Server
   license:
@@ -30,6 +30,8 @@ tags:
     description: Podcast feed management
   - name: Episodes
     description: Episode data and transcripts
+  - name: Processing
+    description: Processing queue management
   - name: Settings
     description: Application settings and configuration
   - name: System
@@ -383,6 +385,58 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
+
+  /feeds/{slug}/episodes/{episodeId}/cancel:
+    post:
+      tags:
+        - Processing
+      summary: Cancel episode processing
+      description: |
+        Cancel an episode stuck in processing status and reset it to pending.
+        Use this when an episode is stuck due to a crashed worker or other issues.
+      operationId: cancelEpisodeProcessing
+      parameters:
+        - $ref: '#/components/parameters/slug'
+        - $ref: '#/components/parameters/episodeId'
+      responses:
+        '200':
+          description: Episode processing canceled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  episodeId:
+                    type: string
+                  slug:
+                    type: string
+        '400':
+          description: Episode is not in processing status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /episodes/processing:
+    get:
+      tags:
+        - Processing
+      summary: List processing episodes
+      description: Returns all episodes currently in processing status across all feeds
+      operationId: listProcessingEpisodes
+      responses:
+        '200':
+          description: List of processing episodes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProcessingEpisode'
 
   /settings:
     get:
@@ -859,6 +913,28 @@ components:
               type: string
             baseUrl:
               type: string
+
+    ProcessingEpisode:
+      type: object
+      properties:
+        episodeId:
+          type: string
+          description: Episode identifier
+        slug:
+          type: string
+          description: Podcast feed slug
+        title:
+          type: string
+          description: Episode title
+        podcast:
+          type: string
+          description: Podcast name
+        startedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: When processing started (if available)
 
     Error:
       type: object
