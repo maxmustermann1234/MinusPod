@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS episodes (
     ads_removed_secondpass INTEGER DEFAULT 0,
     error_message TEXT,
     ad_detection_status TEXT DEFAULT NULL CHECK(ad_detection_status IN (NULL, 'success', 'failed')),
+    artwork_url TEXT,
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (podcast_id) REFERENCES podcasts(id) ON DELETE CASCADE,
@@ -261,6 +262,18 @@ class Database:
                 logger.info("Migration: Added ad_detection_status column to episodes table")
             except Exception as e:
                 logger.error(f"Migration failed for ad_detection_status: {e}")
+
+        # Migration: Add artwork_url column if missing
+        if 'artwork_url' not in columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episodes
+                    ADD COLUMN artwork_url TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added artwork_url column to episodes table")
+            except Exception as e:
+                logger.error(f"Migration failed for artwork_url: {e}")
 
         # Get existing columns in episode_details table
         cursor = conn.execute("PRAGMA table_info(episode_details)")
@@ -687,7 +700,7 @@ class Database:
                     if key in ('original_url', 'title', 'description', 'status', 'processed_file',
                                'processed_at', 'original_duration', 'new_duration',
                                'ads_removed', 'ads_removed_firstpass', 'ads_removed_secondpass',
-                               'error_message', 'ad_detection_status'):
+                               'error_message', 'ad_detection_status', 'artwork_url'):
                         fields.append(f"{key} = ?")
                         values.append(value)
 
@@ -706,8 +719,8 @@ class Database:
                    (podcast_id, episode_id, original_url, title, description, status,
                     processed_file, processed_at, original_duration,
                     new_duration, ads_removed, ads_removed_firstpass, ads_removed_secondpass,
-                    error_message, ad_detection_status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    error_message, ad_detection_status, artwork_url)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     podcast_id,
                     episode_id,
@@ -723,7 +736,8 @@ class Database:
                     kwargs.get('ads_removed_firstpass', 0),
                     kwargs.get('ads_removed_secondpass', 0),
                     kwargs.get('error_message'),
-                    kwargs.get('ad_detection_status')
+                    kwargs.get('ad_detection_status'),
+                    kwargs.get('artwork_url')
                 )
             )
             db_id = cursor.lastrowid

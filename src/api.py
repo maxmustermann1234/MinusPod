@@ -352,7 +352,8 @@ def list_episodes(slug):
             'newDuration': ep['new_duration'],
             'adsRemoved': ep['ads_removed'],
             'timeSaved': time_saved,
-            'error': ep.get('error_message')
+            'error': ep.get('error_message'),
+            'artworkUrl': ep.get('artwork_url')
         })
 
     return json_response({
@@ -437,7 +438,8 @@ def get_episode(slug, episode_id):
         'firstPassPrompt': episode.get('first_pass_prompt'),
         'firstPassResponse': episode.get('first_pass_response'),
         'secondPassPrompt': episode.get('second_pass_prompt'),
-        'secondPassResponse': episode.get('second_pass_response')
+        'secondPassResponse': episode.get('second_pass_response'),
+        'artworkUrl': episode.get('artwork_url')
     })
 
 

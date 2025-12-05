@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.82] - 2025-12-05
+
+### Added
+- Episode-specific artwork support
+  - Extract `<itunes:image>` from RSS episode entries
+  - Store artwork URL in episodes database table
+  - Pass through episode artwork in modified RSS feed
+  - Include `artworkUrl` in API episode responses
+
+### Fixed
+- Long sponsor ads (5+ min) rejected despite being real sponsors
+  - If sponsor name from ad matches sponsor listed in episode description, allow up to 15 minutes
+  - Parses `<strong>Sponsors:</strong>` section and sponsor URLs from description
+  - Bitwarden, ThreatLocker, and other confirmed sponsors now correctly processed
+  - Added `MAX_AD_DURATION_CONFIRMED = 900.0` (15 min) for confirmed sponsors
+
+### Changed
+- Parallelized RSS feed refresh to prevent app lockup during bulk operations
+  - Uses ThreadPoolExecutor with max_workers=5 for concurrent feed fetches
+  - Each feed can take 30+ seconds; parallel refresh reduces total time significantly
+- Increased gunicorn workers from 1 to 2 and threads from 4 to 8
+  - Better handles concurrent requests during heavy operations
+  - Reduces UI freezing during bulk feed refreshes
+
+---
+
 ## [0.1.76] - 2025-12-03
 
 ### Fixed

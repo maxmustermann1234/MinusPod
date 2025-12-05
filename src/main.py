@@ -4,6 +4,7 @@ import os
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from functools import wraps
@@ -172,13 +173,24 @@ def refresh_rss_feed(slug: str, feed_url: str):
 
 
 def refresh_all_feeds():
-    """Refresh all RSS feeds once."""
+    """Refresh all RSS feeds in parallel."""
     try:
         refresh_logger.info("Refreshing all RSS feeds")
 
         feed_map = get_feed_map()
-        for slug, feed_info in feed_map.items():
-            refresh_rss_feed(slug, feed_info['in'])
+
+        # Parallelize feed refresh with ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                executor.submit(refresh_rss_feed, slug, feed_info['in']): slug
+                for slug, feed_info in feed_map.items()
+            }
+            for future in as_completed(futures):
+                slug = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    refresh_logger.error(f"[{slug}] Feed refresh failed: {e}")
 
         refresh_logger.info(f"RSS refresh complete for {len(feed_map)} feeds")
         return True
@@ -207,7 +219,7 @@ def background_rss_refresh():
 
 def process_episode(slug: str, episode_id: str, episode_url: str,
                    episode_title: str = "Unknown", podcast_name: str = "Unknown",
-                   episode_description: str = None):
+                   episode_description: str = None, episode_artwork_url: str = None):
     """Process a single episode (transcribe, detect ads, remove ads)."""
     start_time = time.time()
 
@@ -219,6 +231,7 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             original_url=episode_url,
             title=episode_title,
             description=episode_description,
+            artwork_url=episode_artwork_url,
             status='processing')
 
         # Step 1: Check if transcript exists in database
@@ -361,7 +374,7 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             # Catches errors, flags suspicious detections, auto-corrects issues
             if all_ads:
                 episode_duration = segments[-1]['end'] if segments else 0
-                validator = AdValidator(episode_duration, segments)
+                validator = AdValidator(episode_duration, segments, episode_description)
                 validation_result = validator.validate(all_ads)
 
                 audio_logger.info(
@@ -631,11 +644,13 @@ def serve_episode(slug, episode_id):
     original_url = None
     episode_title = "Unknown"
     episode_description = None
+    episode_artwork_url = None
     for ep in episodes:
         if ep['id'] == episode_id:
             original_url = ep['url']
             episode_title = ep.get('title', 'Unknown')
             episode_description = ep.get('description')
+            episode_artwork_url = ep.get('artwork_url')
             break
 
     if not original_url:
@@ -644,7 +659,7 @@ def serve_episode(slug, episode_id):
 
     feed_logger.info(f"[{slug}:{episode_id}] Starting processing")
 
-    if process_episode(slug, episode_id, original_url, episode_title, podcast_name, episode_description):
+    if process_episode(slug, episode_id, original_url, episode_title, podcast_name, episode_description, episode_artwork_url):
         file_path = storage.get_episode_path(slug, episode_id)
         if file_path.exists():
             return send_file(file_path, mimetype='audio/mpeg')
