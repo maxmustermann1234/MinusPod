@@ -103,6 +103,7 @@ from ad_detector import AdDetector, merge_and_deduplicate, refine_ad_boundaries,
 from ad_validator import AdValidator
 from audio_processor import AudioProcessor
 from database import Database
+from processing_queue import ProcessingQueue
 
 # Initialize components
 storage = Storage()
@@ -215,6 +216,77 @@ def background_rss_refresh():
         refresh_all_feeds()
         run_cleanup()
         time.sleep(900)  # 15 minutes
+
+
+def reset_stuck_processing_episodes():
+    """Reset any episodes stuck in 'processing' status from previous crash."""
+    conn = db.get_connection()
+    cursor = conn.execute(
+        """SELECT e.id, e.episode_id, p.slug
+           FROM episodes e
+           JOIN podcasts p ON e.podcast_id = p.id
+           WHERE e.status = 'processing'"""
+    )
+    stuck = cursor.fetchall()
+
+    for row in stuck:
+        refresh_logger.warning(
+            f"Resetting stuck episode: {row['slug']}/{row['episode_id']}"
+        )
+        conn.execute(
+            "UPDATE episodes SET status = 'pending', error_message = 'Reset after restart' "
+            "WHERE id = ?",
+            (row['id'],)
+        )
+    conn.commit()
+
+    if stuck:
+        refresh_logger.info(f"Reset {len(stuck)} stuck episodes to pending")
+
+
+def _process_episode_background(slug, episode_id, original_url, title, podcast_name, description, artwork_url):
+    """Background thread wrapper for process_episode with queue management."""
+    queue = ProcessingQueue()
+    try:
+        process_episode(slug, episode_id, original_url, title, podcast_name, description, artwork_url)
+    except Exception as e:
+        audio_logger.error(f"[{slug}:{episode_id}] Background processing failed: {e}")
+    finally:
+        queue.release()
+
+
+def start_background_processing(slug, episode_id, original_url, title, podcast_name, description, artwork_url):
+    """
+    Start processing in background thread.
+
+    Returns:
+        Tuple of (started: bool, reason: str)
+        - (True, "started") if processing was started
+        - (False, "already_processing") if this episode is already being processed
+        - (False, "queue_busy:slug:episode_id") if another episode is processing
+    """
+    queue = ProcessingQueue()
+
+    # Check if already processing this episode
+    if queue.is_processing(slug, episode_id):
+        return False, "already_processing"
+
+    # Check if queue is busy with another episode
+    if not queue.acquire(slug, episode_id, timeout=0):
+        current = queue.get_current()
+        if current:
+            return False, f"queue_busy:{current[0]}:{current[1]}"
+        return False, "queue_busy"
+
+    # Start background thread
+    processing_thread = threading.Thread(
+        target=_process_episode_background,
+        args=(slug, episode_id, original_url, title, podcast_name, description, artwork_url),
+        daemon=True
+    )
+    processing_thread.start()
+
+    return True, "started"
 
 
 def process_episode(slug: str, episode_id: str, episode_url: str,
@@ -624,7 +696,11 @@ def serve_episode(slug, episode_id):
 
     elif status == 'processing':
         feed_logger.info(f"[{slug}:{episode_id}] Currently processing")
-        abort(503)
+        return Response(
+            "Episode is being processed",
+            status=503,
+            headers={'Retry-After': '30'}
+        )
 
     # Need to process - find original URL from RSS
     cached_rss = storage.get_rss(slug)
@@ -657,15 +733,30 @@ def serve_episode(slug, episode_id):
         feed_logger.error(f"[{slug}:{episode_id}] Episode not found in RSS")
         abort(404)
 
-    feed_logger.info(f"[{slug}:{episode_id}] Starting processing")
+    # Start background processing (non-blocking)
+    started, reason = start_background_processing(
+        slug, episode_id, original_url, episode_title,
+        podcast_name, episode_description, episode_artwork_url
+    )
 
-    if process_episode(slug, episode_id, original_url, episode_title, podcast_name, episode_description, episode_artwork_url):
-        file_path = storage.get_episode_path(slug, episode_id)
-        if file_path.exists():
-            return send_file(file_path, mimetype='audio/mpeg')
-
-    feed_logger.info(f"[{slug}:{episode_id}] Processing failed, redirecting to original")
-    return Response(status=302, headers={'Location': original_url})
+    if started:
+        feed_logger.info(f"[{slug}:{episode_id}] Started background processing")
+        return Response(
+            "Episode processing started, please retry",
+            status=503,
+            headers={'Retry-After': '30'}
+        )
+    elif reason == "already_processing":
+        feed_logger.info(f"[{slug}:{episode_id}] Already processing")
+        return Response(
+            "Episode is being processed",
+            status=503,
+            headers={'Retry-After': '30'}
+        )
+    else:
+        # Queue is busy with another episode
+        feed_logger.info(f"[{slug}:{episode_id}] Queue busy ({reason}), redirecting to original")
+        return Response(status=302, headers={'Location': original_url})
 
 
 @app.route('/health')
@@ -700,6 +791,9 @@ def _startup():
 
     base_url = os.getenv('BASE_URL', 'http://localhost:8000')
     logger.info(f"BASE_URL: {base_url}")
+
+    # Reset any episodes stuck in 'processing' status from previous crash
+    reset_stuck_processing_episodes()
 
     # Start background RSS refresh thread
     refresh_thread = threading.Thread(target=background_rss_refresh, daemon=True)

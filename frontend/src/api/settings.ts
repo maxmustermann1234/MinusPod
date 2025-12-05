@@ -37,3 +37,23 @@ export async function runCleanup(): Promise<{ message: string; episodesRemoved: 
     method: 'POST',
   });
 }
+
+// Processing Queue
+
+export interface ProcessingEpisode {
+  episodeId: string;
+  slug: string;
+  title: string;
+  podcast: string;
+  startedAt: string | null;
+}
+
+export async function getProcessingEpisodes(): Promise<ProcessingEpisode[]> {
+  return apiRequest<ProcessingEpisode[]>('/episodes/processing');
+}
+
+export async function cancelProcessing(slug: string, episodeId: string): Promise<{ message: string }> {
+  return apiRequest<{ message: string }>(`/feeds/${slug}/episodes/${episodeId}/cancel`, {
+    method: 'POST',
+  });
+}

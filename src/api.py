@@ -616,6 +616,76 @@ def retry_ad_detection(slug, episode_id):
         return error_response(f'Failed to retry ad detection: {str(e)}', 500)
 
 
+# ========== Processing Queue Endpoints ==========
+
+@api.route('/episodes/processing', methods=['GET'])
+@log_request
+def get_processing_episodes():
+    """Get all episodes currently in processing status."""
+    db = get_database()
+    conn = db.get_connection()
+
+    cursor = conn.execute("""
+        SELECT e.episode_id, e.title, p.slug, p.title as podcast
+        FROM episodes e
+        JOIN podcasts p ON e.podcast_id = p.id
+        WHERE e.status = 'processing'
+        ORDER BY e.updated_at DESC
+    """)
+    episodes = cursor.fetchall()
+
+    return json_response([{
+        'episodeId': ep['episode_id'],
+        'slug': ep['slug'],
+        'title': ep['title'] or 'Unknown',
+        'podcast': ep['podcast'] or ep['slug'],
+        'startedAt': None  # Could add timestamp tracking later
+    } for ep in episodes])
+
+
+@api.route('/feeds/<slug>/episodes/<episode_id>/cancel', methods=['POST'])
+@log_request
+def cancel_episode_processing(slug, episode_id):
+    """Cancel/reset an episode stuck in processing status."""
+    db = get_database()
+
+    episode = db.get_episode(slug, episode_id)
+    if not episode:
+        return error_response('Episode not found', 404)
+
+    if episode['status'] != 'processing':
+        return error_response(
+            f"Episode is not processing (status: {episode['status']})",
+            400
+        )
+
+    # Reset status to pending - use podcast_id join to find by slug
+    conn = db.get_connection()
+    conn.execute(
+        """UPDATE episodes SET status = 'pending', error_message = 'Canceled by user'
+           WHERE podcast_id = (SELECT id FROM podcasts WHERE slug = ?)
+           AND episode_id = ?""",
+        (slug, episode_id)
+    )
+    conn.commit()
+
+    # Release from processing queue if held
+    try:
+        from processing_queue import ProcessingQueue
+        queue = ProcessingQueue()
+        if queue.is_processing(slug, episode_id):
+            queue.release()
+    except Exception as e:
+        logger.warning(f"Could not release processing queue: {e}")
+
+    logger.info(f"Canceled processing: {slug}:{episode_id}")
+    return json_response({
+        'message': 'Episode canceled and reset to pending',
+        'episodeId': episode_id,
+        'slug': slug
+    })
+
+
 # ========== Settings Endpoints ==========
 
 @api.route('/settings', methods=['GET'])

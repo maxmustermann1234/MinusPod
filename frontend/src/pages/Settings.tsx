@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSettings, updateSettings, resetSettings, getModels, getWhisperModels, getSystemStatus, runCleanup } from '../api/settings';
+import { getSettings, updateSettings, resetSettings, getModels, getWhisperModels, getSystemStatus, runCleanup, getProcessingEpisodes, cancelProcessing } from '../api/settings';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 function Settings() {
@@ -32,6 +32,21 @@ function Settings() {
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['status'],
     queryFn: getSystemStatus,
+  });
+
+  const { data: processingEpisodes } = useQuery({
+    queryKey: ['processing-episodes'],
+    queryFn: getProcessingEpisodes,
+    refetchInterval: 5000, // Poll every 5 seconds
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: (params: { slug: string; episodeId: string }) =>
+      cancelProcessing(params.slug, params.episodeId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['processing-episodes'] });
+      queryClient.invalidateQueries({ queryKey: ['status'] });
+    },
   });
 
   useEffect(() => {
@@ -206,6 +221,34 @@ function Settings() {
             </span>
           )}
         </div>
+      </div>
+
+      <div className="bg-card rounded-lg border border-border p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-4">Processing Queue</h2>
+        {processingEpisodes && processingEpisodes.length > 0 ? (
+          <div className="space-y-2">
+            {processingEpisodes.map((episode) => (
+              <div
+                key={`${episode.slug}-${episode.episodeId}`}
+                className="bg-secondary/50 rounded-lg p-4 flex justify-between items-center"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-foreground truncate">{episode.title}</p>
+                  <p className="text-sm text-muted-foreground">{episode.podcast}</p>
+                </div>
+                <button
+                  onClick={() => cancelMutation.mutate({ slug: episode.slug, episodeId: episode.episodeId })}
+                  disabled={cancelMutation.isPending}
+                  className="px-3 py-1 text-sm rounded bg-destructive text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50 transition-colors ml-4 flex-shrink-0"
+                >
+                  {cancelMutation.isPending ? 'Canceling...' : 'Cancel'}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">No episodes currently processing</p>
+        )}
       </div>
 
       <div className="bg-card rounded-lg border border-border p-6">
