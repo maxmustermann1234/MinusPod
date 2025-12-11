@@ -17,6 +17,9 @@ services:
       - BASE_URL=${BASE_URL:-http://localhost:8000}
       - WHISPER_DEVICE=${WHISPER_DEVICE:-cuda}
       - RETENTION_PERIOD=${RETENTION_PERIOD:-1440}
+      # Optional: HuggingFace token for pyannote speaker diarization
+      # Required only if speaker analysis is enabled in audio analysis settings
+      - HF_TOKEN=${HF_TOKEN:-}
     deploy:
       resources:
         reservations:

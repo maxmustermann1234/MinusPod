@@ -700,6 +700,100 @@ class AdDetector:
             logger.warning(f"Could not load second pass model from DB: {e}")
         return DEFAULT_MODEL
 
+    def _format_audio_context(self, audio_analysis, window_start: float, window_end: float) -> str:
+        """Format audio analysis signals for a specific window as prompt context.
+
+        Args:
+            audio_analysis: AudioAnalysisResult object
+            window_start: Start time of current window in seconds
+            window_end: End time of current window in seconds
+
+        Returns:
+            Formatted string to include in Claude prompt
+        """
+        if not audio_analysis or not audio_analysis.signals:
+            return ""
+
+        # Get signals that overlap with this window
+        window_signals = [
+            s for s in audio_analysis.signals
+            if s.start < window_end and s.end > window_start
+        ]
+
+        if not window_signals:
+            return ""
+
+        lines = []
+        lines.append("\n" + "=" * 50)
+        lines.append("AUDIO ANALYSIS SIGNALS (supplementary context)")
+        lines.append("=" * 50)
+
+        # Conversation type
+        if audio_analysis.conversation_metrics:
+            metrics = audio_analysis.conversation_metrics
+            if metrics.is_conversational:
+                lines.append(f"Episode Type: CONVERSATIONAL ({metrics.num_speakers} speakers)")
+            else:
+                lines.append(f"Episode Type: SOLO/INTERVIEW ({metrics.num_speakers} speakers)")
+
+        # Volume changes
+        volume_signals = [
+            s for s in window_signals
+            if 'volume' in s.signal_type.lower()
+        ]
+        if volume_signals:
+            lines.append("\nVolume Changes:")
+            for s in volume_signals:
+                direction = "+" if "increase" in s.signal_type else "-"
+                deviation = s.details.get('deviation_db', 0)
+                time_str = self._format_time(s.start)
+                lines.append(f"  [{time_str}] {direction}{deviation:.1f}dB (confidence: {s.confidence:.0%})")
+
+        # Music beds
+        music_signals = [
+            s for s in window_signals
+            if s.signal_type == 'music_bed'
+        ]
+        if music_signals:
+            lines.append("\nMusic Beds Detected:")
+            for s in music_signals:
+                start_str = self._format_time(s.start)
+                end_str = self._format_time(s.end)
+                lines.append(f"  [{start_str} - {end_str}] (confidence: {s.confidence:.0%})")
+
+        # Monologues
+        mono_signals = [
+            s for s in window_signals
+            if s.signal_type == 'monologue'
+        ]
+        if mono_signals:
+            lines.append("\nExtended Monologues (potential ad reads):")
+            for s in mono_signals:
+                start_str = self._format_time(s.start)
+                end_str = self._format_time(s.end)
+                speaker = s.details.get('speaker', 'unknown')
+                is_host = s.details.get('is_host', False)
+                has_ad_lang = s.details.get('has_ad_language', False)
+                notes = []
+                if is_host:
+                    notes.append("HOST")
+                if has_ad_lang:
+                    notes.append("AD LANGUAGE")
+                note_str = f" [{', '.join(notes)}]" if notes else ""
+                lines.append(f"  [{start_str} - {end_str}] {s.duration:.0f}s by {speaker}{note_str}")
+
+        lines.append("-" * 50)
+        lines.append("NOTE: Correlate these signals with transcript content.")
+        lines.append("")
+
+        return '\n'.join(lines)
+
+    def _format_time(self, seconds: float) -> str:
+        """Format seconds as MM:SS."""
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes}:{secs:02d}"
+
     def get_system_prompt(self) -> str:
         """Get system prompt from database or default."""
         try:
@@ -834,11 +928,15 @@ class AdDetector:
 
     def detect_ads(self, segments: List[Dict], podcast_name: str = "Unknown",
                    episode_title: str = "Unknown", slug: str = None,
-                   episode_id: str = None, episode_description: str = None) -> Optional[Dict]:
+                   episode_id: str = None, episode_description: str = None,
+                   audio_analysis=None) -> Optional[Dict]:
         """Detect ad segments using Claude API with sliding window approach.
 
         Processes transcript in overlapping windows to ensure ads at chunk
         boundaries are not missed. Windows are 10 minutes with 3 minute overlap.
+
+        Args:
+            audio_analysis: Optional AudioAnalysisResult with audio signals
         """
         if not self.api_key:
             logger.warning("Skipping ad detection - no API key")
@@ -894,12 +992,17 @@ class AdDetector:
 - If an ad extends past this window, use {window_end:.1f} with note "continues in next"
 """
 
+                # Format audio analysis context for this window
+                audio_context = ""
+                if audio_analysis and hasattr(audio_analysis, 'signals') and audio_analysis.signals:
+                    audio_context = self._format_audio_context(audio_analysis, window_start, window_end)
+
                 prompt = user_prompt_template.format(
                     podcast_name=podcast_name,
                     episode_title=episode_title,
                     description_section=description_section,
                     transcript=transcript
-                ) + window_context
+                ) + audio_context + window_context
 
                 logger.info(f"[{slug}:{episode_id}] Window {i+1}/{len(windows)}: "
                            f"{window_start/60:.1f}-{window_end/60:.1f}min, {len(window_segments)} segments")
@@ -978,9 +1081,13 @@ class AdDetector:
 
     def process_transcript(self, segments: List[Dict], podcast_name: str = "Unknown",
                           episode_title: str = "Unknown", slug: str = None,
-                          episode_id: str = None, episode_description: str = None) -> Dict:
+                          episode_id: str = None, episode_description: str = None,
+                          audio_analysis=None) -> Dict:
         """Process transcript for ad detection."""
-        result = self.detect_ads(segments, podcast_name, episode_title, slug, episode_id, episode_description)
+        result = self.detect_ads(
+            segments, podcast_name, episode_title, slug, episode_id, episode_description,
+            audio_analysis=audio_analysis
+        )
         if result is None:
             return {"ads": [], "status": "failed", "error": "Detection failed", "retryable": True}
         return result
@@ -997,11 +1104,15 @@ class AdDetector:
     def detect_ads_second_pass(self, segments: List[Dict],
                                podcast_name: str = "Unknown", episode_title: str = "Unknown",
                                slug: str = None, episode_id: str = None,
-                               episode_description: str = None) -> Optional[Dict]:
+                               episode_description: str = None,
+                               audio_analysis=None) -> Optional[Dict]:
         """Blind second pass ad detection with sliding window approach.
 
         Focuses on subtle/baked-in ads using a separate model and prompt.
         Uses the same sliding window approach as first pass for consistency.
+
+        Args:
+            audio_analysis: Optional AudioAnalysisResult with audio signals
         """
         if not self.api_key:
             logger.warning("Skipping second pass - no API key")
@@ -1054,12 +1165,17 @@ class AdDetector:
 - If an ad extends past this window, use {window_end:.1f} with note "continues in next"
 """
 
+                # Format audio analysis context for this window
+                audio_context = ""
+                if audio_analysis and hasattr(audio_analysis, 'signals') and audio_analysis.signals:
+                    audio_context = self._format_audio_context(audio_analysis, window_start, window_end)
+
                 prompt = USER_PROMPT_TEMPLATE.format(
                     podcast_name=podcast_name,
                     episode_title=episode_title,
                     description_section=description_section,
                     transcript=transcript
-                ) + window_context
+                ) + audio_context + window_context
 
                 logger.info(f"[{slug}:{episode_id}] Second pass Window {i+1}/{len(windows)}: "
                            f"{window_start/60:.1f}-{window_end/60:.1f}min")

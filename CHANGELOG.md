@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.85] - 2025-12-11
+
+### Added
+- Comprehensive audio analysis module for enhanced ad detection
+  - Volume/loudness analysis using ffmpeg loudnorm to detect dynamically inserted ads
+  - Music bed detection using librosa spectral analysis (spectral flatness, low-freq energy, harmonic ratio)
+  - Speaker diarization using pyannote.audio to detect monologue ad reads in conversational podcasts
+- Audio analysis signals passed as context to Claude for improved detection accuracy
+  - Volume changes (increases/decreases above threshold)
+  - Music bed regions with confidence scores
+  - Extended monologues with speaker identification and ad language detection
+- New database settings for audio analysis configuration
+  - `audio_analysis_enabled` - master toggle (default: false)
+  - `volume_analysis_enabled`, `music_detection_enabled`, `speaker_analysis_enabled` - component toggles
+  - `volume_threshold_db`, `music_confidence_threshold`, `monologue_duration_threshold` - tunable thresholds
+- Audio analysis results stored in `episode_details.audio_analysis_json` for debugging
+- HF_TOKEN environment variable for HuggingFace authentication (required for speaker diarization)
+
+### Changed
+- ad_detector.py now accepts optional audio_analysis parameter for both first and second pass detection
+- process_episode() runs audio analysis when enabled and passes signals to Claude
+- Updated requirements.txt with librosa, soundfile, pyannote.audio
+- Updated Dockerfile with libsndfile system dependency
+- Updated docker-compose.yml with HF_TOKEN environment variable
+
+### Technical Details
+- New module: `src/audio_analysis/` with volume_analyzer, music_detector, speaker_analyzer, and facade
+- Audio analysis runs after transcription (uses same audio file)
+- Each analyzer operates independently with graceful degradation on failure
+- Volume analyzer: 5-second frames, 3dB threshold, 15s minimum anomaly duration
+- Music detector: 0.5s frames, spectral analysis, 10s minimum region duration
+- Speaker analyzer: pyannote diarization, 45s minimum monologue duration
+
+---
+
 ## [0.1.84] - 2025-12-05
 
 ### Fixed

@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     ffmpeg \
     wget \
+    libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set python3.11 as default python3
