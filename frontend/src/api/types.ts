@@ -9,6 +9,7 @@ export interface Feed {
   processedCount?: number;
   lastRefreshed?: string;
   createdAt?: string;
+  lastEpisodeDate?: string;
 }
 
 export interface Episode {

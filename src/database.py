@@ -570,7 +570,8 @@ class Database:
         cursor = conn.execute("""
             SELECT p.*,
                    COUNT(e.id) as episode_count,
-                   SUM(CASE WHEN e.status = 'processed' THEN 1 ELSE 0 END) as processed_count
+                   SUM(CASE WHEN e.status = 'processed' THEN 1 ELSE 0 END) as processed_count,
+                   MAX(e.created_at) as last_episode_date
             FROM podcasts p
             LEFT JOIN episodes e ON p.id = e.podcast_id
             GROUP BY p.id

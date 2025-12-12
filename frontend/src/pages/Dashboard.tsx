@@ -14,10 +14,18 @@ function Dashboard() {
     const stored = localStorage.getItem('dashboardViewMode');
     return stored === 'list' ? 'list' : 'grid';
   });
+  const [sortBy, setSortBy] = useState<'recent' | 'title'>(() => {
+    const stored = localStorage.getItem('dashboardSortBy');
+    return stored === 'title' ? 'title' : 'recent';
+  });
 
   useEffect(() => {
     localStorage.setItem('dashboardViewMode', viewMode);
   }, [viewMode]);
+
+  useEffect(() => {
+    localStorage.setItem('dashboardSortBy', sortBy);
+  }, [sortBy]);
 
   const { data: feeds, isLoading, error } = useQuery({
     queryKey: ['feeds'],
@@ -105,6 +113,36 @@ function Dashboard() {
               </svg>
             </button>
           </div>
+          <div className="flex border border-border rounded overflow-hidden">
+            <button
+              onClick={() => setSortBy('recent')}
+              className={`p-2 transition-colors ${
+                sortBy === 'recent'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+              }`}
+              aria-label="Sort by recent"
+              title="Sort by most recent episode"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
+            <button
+              onClick={() => setSortBy('title')}
+              className={`p-2 transition-colors ${
+                sortBy === 'title'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+              }`}
+              aria-label="Sort by title"
+              title="Sort alphabetically"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
+              </svg>
+            </button>
+          </div>
           <button
             onClick={() => refreshAllMutation.mutate()}
             disabled={refreshAllMutation.isPending}
@@ -152,7 +190,14 @@ function Dashboard() {
         </div>
       ) : viewMode === 'grid' ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {[...feeds].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })).map((feed) => (
+          {[...feeds].sort((a, b) => {
+            if (sortBy === 'recent') {
+              const dateA = a.lastEpisodeDate ? new Date(a.lastEpisodeDate).getTime() : 0;
+              const dateB = b.lastEpisodeDate ? new Date(b.lastEpisodeDate).getTime() : 0;
+              return dateB - dateA;
+            }
+            return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+          }).map((feed) => (
             <FeedCard
               key={feed.slug}
               feed={feed}
@@ -164,7 +209,14 @@ function Dashboard() {
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {[...feeds].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })).map((feed) => (
+          {[...feeds].sort((a, b) => {
+            if (sortBy === 'recent') {
+              const dateA = a.lastEpisodeDate ? new Date(a.lastEpisodeDate).getTime() : 0;
+              const dateB = b.lastEpisodeDate ? new Date(b.lastEpisodeDate).getTime() : 0;
+              return dateB - dateA;
+            }
+            return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+          }).map((feed) => (
             <FeedListItem
               key={feed.slug}
               feed={feed}

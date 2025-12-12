@@ -16,39 +16,42 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Python application
-FROM nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
 # Install Python 3.11 and system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 \
     python3.11-dev \
     python3-pip \
     ffmpeg \
-    wget \
     libsndfile1 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Set python3.11 as default python3
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# Pre-install PyTorch 2.3.0 with CUDA 12.1 (compatible with cuDNN 8)
+RUN pip install --no-cache-dir \
+    torch==2.3.0+cu121 \
+    torchaudio==2.3.0+cu121 \
+    --extra-index-url https://download.pytorch.org/whl/cu121
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy requirements and install remaining Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && rm -rf /root/.cache /tmp/* \
+    && find /usr/local -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
 
 # Set cache directories to /app/data/.cache (works with volume mounts and non-root users)
-ENV WHISPER_MODEL=small
-ENV HF_HOME=/app/data/.cache
-ENV HUGGINGFACE_HUB_CACHE=/app/data/.cache/hub
-ENV XDG_CACHE_HOME=/app/data/.cache
-
-# Note: We don't pre-download the model here because /app/data is typically
-# a volume mount. The model will download on first run to the mounted volume.
+ENV WHISPER_MODEL=small \
+    HF_HOME=/app/data/.cache \
+    HUGGINGFACE_HUB_CACHE=/app/data/.cache/hub \
+    XDG_CACHE_HOME=/app/data/.cache \
+    RETENTION_PERIOD=1440
 
 # Copy application code
 COPY src/ ./src/
@@ -57,22 +60,20 @@ COPY assets/ ./assets/
 COPY assets/ ./assets_builtin/
 COPY openapi.yaml ./
 
-# Ensure source files are readable
-RUN chmod -R 644 ./src/*.py && chmod 755 ./src
-
-# Copy built frontend from builder stage and fix permissions
+# Copy built frontend from builder stage
 COPY --from=frontend-builder /app/static/ui ./static/ui/
-RUN chmod -R 644 ./static/ui/* && chmod 755 ./static/ui ./static/ui/assets
 
-# Copy entrypoint script (755 = rwxr-xr-x, readable and executable by all)
+# Copy entrypoint script
 COPY entrypoint.sh /app/
-RUN chmod 755 /app/entrypoint.sh
 
-# Create data directory (will be overwritten by volume mount in most cases)
-RUN mkdir -p /app/data
-
-# Environment variables (RETENTION_PERIOD is in minutes, 1440 = 24 hours)
-ENV RETENTION_PERIOD=1440
+# Set permissions - use find to recursively set permissions on subdirectories
+# IMPORTANT: glob pattern *.py does NOT match files in subdirectories!
+RUN find ./src -type f -name '*.py' -exec chmod 644 {} \; && \
+    find ./src -type d -exec chmod 755 {} \; && \
+    find ./static/ui -type f -exec chmod 644 {} \; && \
+    find ./static/ui -type d -exec chmod 755 {} \; && \
+    chmod 755 /app/entrypoint.sh && \
+    mkdir -p /app/data
 
 # Expose port
 EXPOSE 8000

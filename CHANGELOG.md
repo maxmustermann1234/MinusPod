@@ -5,6 +5,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.90] - 2025-12-12
+
+### Fixed
+- SQL error in dashboard API: `no such column: e.published`
+  - Database column is `created_at`, not `published`
+  - Fixes broken `/api/v1/feeds` endpoint that prevented dashboard from loading
+
+---
+
+## [0.1.89] - 2025-12-12
+
+### Fixed
+- Long ads with high confidence (>90%) being incorrectly rejected
+  - Ads over 5 minutes were rejected even with high confidence
+  - Now accepts long ads (up to 15 min) if confidence >= 90%
+  - Improves detection for shows with longer host-read ads (e.g., TWiT network)
+
+### Added
+- Dashboard sorting by most recent episode (default)
+  - New sort toggle in dashboard header (clock icon = recent, A-Z icon = alphabetical)
+  - Podcasts with recent episodes appear first
+  - Sort preference persisted in localStorage
+  - Added `lastEpisodeDate` field to API response
+
+---
+
+## [0.1.88] - 2025-12-11
+
+### Fixed
+- ONNX Runtime cuDNN compatibility crash: `Could not load library libcudnn_ops_infer.so.8`
+  - Root cause: CUDA 12.4 includes cuDNN 9.x, but ONNX Runtime (used by pyannote.audio) requires cuDNN 8.x
+  - Workers crashed with code 134 (SIGABRT) when attempting speaker diarization
+  - Rolled back to CUDA 12.1 with cuDNN 8 for full compatibility
+
+### Changed
+- Downgraded to CUDA 12.1 base image (nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04)
+- Using PyTorch 2.3.0+cu121 and torchaudio 2.3.0+cu121
+- Pinned pyannote.audio to >=3.1.0,<4.0.0 (v4.0 requires torch>=2.8.0 which needs CUDA 12.4)
+
+---
+
+## [0.1.87] - 2025-12-11
+
+### Changed
+- Upgraded to CUDA 12.4 base image (nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04)
+- Docker image size optimization: Pre-install PyTorch 2.8.0+cu124 (required by pyannote.audio)
+  - Prevents duplicate torch installation during pip install
+  - Using torch==2.8.0+cu124 and torchaudio==2.8.0+cu124 with CUDA 12.4
+
+### Known Issues
+- cuDNN 8 vs 9 incompatibility causes ONNX Runtime crash (fixed in v0.1.88)
+
+---
+
+## [0.1.86] - 2025-12-11
+
+### Fixed
+- App startup failure: `PermissionError: [Errno 13] Permission denied: '/app/src/audio_analysis/__init__.py'`
+  - Root cause: `chmod -R 644 ./src/*.py` glob pattern only matched files in `./src/`, not subdirectories
+  - Fixed by using `find ./src -type f -name '*.py' -exec chmod 644 {} \;` to recursively set permissions
+
+### Changed
+- Docker image optimizations to reduce size (~12GB -> ~8-9GB estimated)
+  - Pre-install PyTorch with specific CUDA 12.1 build to prevent duplicate installations
+  - Added `--no-install-recommends` to apt-get to skip unnecessary packages
+  - Clean up pip cache and `__pycache__` directories after install
+  - Removed unused `wget` package from apt-get install
+- Reorganized requirements.txt with clearer sections (Core, API, Utilities, Audio analysis)
+- Consolidated environment variables in Dockerfile using single ENV block
+
+---
+
 ## [0.1.85] - 2025-12-11
 
 ### Added

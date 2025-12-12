@@ -46,6 +46,7 @@ class AdValidator:
     HIGH_CONFIDENCE = 0.85      # Auto-accept threshold
     LOW_CONFIDENCE = 0.5        # Warn threshold
     REJECT_CONFIDENCE = 0.3     # Auto-reject threshold
+    HIGH_CONFIDENCE_OVERRIDE = 0.90  # Override long-duration errors if confidence above this
 
     # Position windows (as % of episode duration)
     PRE_ROLL = (0.0, 0.05)      # First 5%
@@ -273,7 +274,7 @@ class AdValidator:
         confidence = self._verify_in_transcript(ad, confidence, flags)
 
         # Make decision based on adjusted confidence and flags
-        decision = self._make_decision(confidence, flags)
+        decision = self._make_decision(confidence, flags, duration)
 
         ad['validation'] = {
             'decision': decision.value,
@@ -394,17 +395,28 @@ class AdValidator:
                 text_parts.append(seg.get('text', ''))
         return ' '.join(text_parts)
 
-    def _make_decision(self, confidence: float, flags: List[str]) -> Decision:
+    def _make_decision(self, confidence: float, flags: List[str],
+                        duration: float = 0.0) -> Decision:
         """Decide ACCEPT/REVIEW/REJECT based on confidence and flags.
 
         Args:
             confidence: Adjusted confidence score
             flags: List of flags/warnings
+            duration: Ad duration in seconds (for high-confidence override check)
 
         Returns:
             Decision enum value
         """
         has_errors = any('ERROR' in f for f in flags)
+        has_long_error = any('Very long' in f for f in flags)
+
+        # High confidence (>0.9) overrides long-duration errors up to 15 minutes
+        if has_long_error and confidence >= self.HIGH_CONFIDENCE_OVERRIDE:
+            if duration <= self.MAX_AD_DURATION_CONFIRMED:
+                logger.info(
+                    f"Accepting long ad ({duration:.1f}s) due to high confidence ({confidence:.2f})"
+                )
+                return Decision.ACCEPT
 
         if has_errors or confidence < self.REJECT_CONFIDENCE:
             return Decision.REJECT
