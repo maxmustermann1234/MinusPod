@@ -115,9 +115,14 @@ class SpeakerAnalyzer:
         if self._pipeline is None:
             logger.info("Loading pyannote speaker diarization model...")
             try:
+                # Authenticate via huggingface_hub.login() instead of passing token
+                # to Pipeline.from_pretrained(). This avoids version compatibility
+                # issues between pyannote 3.x and newer huggingface_hub versions.
+                from huggingface_hub import login
+                login(token=self.hf_token)
+
                 self._pipeline = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-3.1",
-                    token=self.hf_token
+                    "pyannote/speaker-diarization-3.1"
                 )
 
                 if torch.cuda.is_available():
