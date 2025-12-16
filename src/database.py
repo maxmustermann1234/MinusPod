@@ -367,6 +367,22 @@ class Database:
             except Exception as e:
                 logger.error(f"Migration failed for description: {e}")
 
+        # Refresh details_columns list before checking for new columns
+        cursor = conn.execute("PRAGMA table_info(episode_details)")
+        details_columns = [row['name'] for row in cursor.fetchall()]
+
+        # Migration: Add audio_analysis_json column if missing
+        if 'audio_analysis_json' not in details_columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episode_details
+                    ADD COLUMN audio_analysis_json TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added audio_analysis_json column to episode_details table")
+            except Exception as e:
+                logger.error(f"Migration failed for audio_analysis_json: {e}")
+
     def _migrate_from_json(self):
         """Migrate data from JSON files to SQLite."""
         conn = self.get_connection()
@@ -526,6 +542,23 @@ class Database:
             ('whisper_model', whisper_model)
         )
 
+        # Audio analysis settings (disabled by default)
+        audio_analysis_settings = [
+            ('audio_analysis_enabled', 'false'),
+            ('volume_analysis_enabled', 'true'),
+            ('music_detection_enabled', 'true'),
+            ('speaker_analysis_enabled', 'true'),
+            ('volume_threshold_db', '3.0'),
+            ('music_confidence_threshold', '0.6'),
+            ('monologue_duration_threshold', '45.0'),
+        ]
+        for key, value in audio_analysis_settings:
+            conn.execute(
+                """INSERT INTO settings (key, value, is_default) VALUES (?, ?, 1)
+                   ON CONFLICT(key) DO NOTHING""",
+                (key, value)
+            )
+
         conn.commit()
         logger.info("Default settings seeded")
 
@@ -537,7 +570,8 @@ class Database:
         cursor = conn.execute("""
             SELECT p.*,
                    COUNT(e.id) as episode_count,
-                   SUM(CASE WHEN e.status = 'processed' THEN 1 ELSE 0 END) as processed_count
+                   SUM(CASE WHEN e.status = 'processed' THEN 1 ELSE 0 END) as processed_count,
+                   MAX(e.created_at) as last_episode_date
             FROM podcasts p
             LEFT JOIN episodes e ON p.id = e.podcast_id
             GROUP BY p.id
@@ -814,6 +848,42 @@ class Database:
             )
 
         conn.commit()
+
+    def save_episode_audio_analysis(self, slug: str, episode_id: str, audio_analysis_json: str):
+        """Save audio analysis results for an episode."""
+        conn = self.get_connection()
+
+        # Get episode database ID
+        episode = self.get_episode(slug, episode_id)
+        if not episode:
+            logger.warning(f"Episode not found for audio analysis: {slug}/{episode_id}")
+            return
+
+        db_episode_id = episode['id']
+
+        # Check if details exist
+        cursor = conn.execute(
+            "SELECT id FROM episode_details WHERE episode_id = ?",
+            (db_episode_id,)
+        )
+        row = cursor.fetchone()
+
+        if row:
+            # Update existing
+            conn.execute(
+                "UPDATE episode_details SET audio_analysis_json = ? WHERE id = ?",
+                (audio_analysis_json, row['id'])
+            )
+        else:
+            # Insert new
+            conn.execute(
+                """INSERT INTO episode_details (episode_id, audio_analysis_json)
+                   VALUES (?, ?)""",
+                (db_episode_id, audio_analysis_json)
+            )
+
+        conn.commit()
+        logger.debug(f"[{slug}:{episode_id}] Saved audio analysis to database")
 
     def clear_episode_details(self, slug: str, episode_id: str):
         """Clear transcript and ad markers for an episode."""

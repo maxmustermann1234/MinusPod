@@ -22,6 +22,19 @@ class RSSParser:
             response.raise_for_status()
             logger.info(f"Successfully fetched RSS feed, size: {len(response.content)} bytes")
             return response.text
+        except requests.exceptions.ContentDecodingError as e:
+            # Some servers claim gzip encoding but send malformed data
+            # Retry without accepting compressed responses
+            logger.warning(f"Gzip decompression failed, retrying without compression: {e}")
+            try:
+                headers = {'Accept-Encoding': 'identity'}
+                response = requests.get(url, timeout=timeout, headers=headers)
+                response.raise_for_status()
+                logger.info(f"Successfully fetched RSS feed (uncompressed), size: {len(response.content)} bytes")
+                return response.text
+            except requests.RequestException as retry_e:
+                logger.error(f"Failed to fetch RSS feed (retry): {retry_e}")
+                return None
         except requests.RequestException as e:
             logger.error(f"Failed to fetch RSS feed: {e}")
             return None

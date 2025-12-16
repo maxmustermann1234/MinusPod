@@ -9,6 +9,7 @@ export interface Feed {
   processedCount?: number;
   lastRefreshed?: string;
   createdAt?: string;
+  lastEpisodeDate?: string;
 }
 
 export interface Episode {
@@ -74,6 +75,7 @@ export interface Settings {
   secondPassModel: SettingValue;
   multiPassEnabled: SettingValueBoolean;
   whisperModel: SettingValue;
+  audioAnalysisEnabled: SettingValueBoolean;
   retentionPeriodMinutes: number;
   defaults: {
     systemPrompt: string;
@@ -82,6 +84,7 @@ export interface Settings {
     secondPassModel: string;
     multiPassEnabled: boolean;
     whisperModel: string;
+    audioAnalysisEnabled: boolean;
   };
 }
 
@@ -92,6 +95,7 @@ export interface UpdateSettingsPayload {
   secondPassModel?: string;
   multiPassEnabled?: boolean;
   whisperModel?: string;
+  audioAnalysisEnabled?: boolean;
 }
 
 export interface ClaudeModel {

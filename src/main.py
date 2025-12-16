@@ -104,6 +104,7 @@ from ad_validator import AdValidator
 from audio_processor import AudioProcessor
 from database import Database
 from processing_queue import ProcessingQueue
+from audio_analysis import AudioAnalyzer
 
 # Initialize components
 storage = Storage()
@@ -112,6 +113,7 @@ transcriber = Transcriber()
 ad_detector = AdDetector()
 audio_processor = AudioProcessor()
 db = Database()
+audio_analyzer = AudioAnalyzer(db=db)
 
 
 def get_feed_map():
@@ -208,6 +210,20 @@ def run_cleanup():
             refresh_logger.info(f"Cleanup: removed {deleted} episodes, freed {freed_mb:.1f} MB")
     except Exception as e:
         refresh_logger.error(f"Cleanup failed: {e}")
+
+    # Clean orphan podcast directories (podcasts deleted from DB but directories remain)
+    try:
+        valid_slugs = {p['slug'] for p in db.get_all_podcasts()}
+        podcast_base = os.path.join(storage.data_dir, 'podcasts')
+        if os.path.exists(podcast_base):
+            for slug in os.listdir(podcast_base):
+                if slug not in valid_slugs:
+                    orphan_path = os.path.join(podcast_base, slug)
+                    if os.path.isdir(orphan_path):
+                        refresh_logger.warning(f"Removing orphan podcast directory: {slug}")
+                        shutil.rmtree(orphan_path, ignore_errors=True)
+    except Exception as e:
+        refresh_logger.error(f"Orphan cleanup failed: {e}")
 
 
 def background_rss_refresh():
@@ -361,9 +377,37 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             transcript_text = transcriber.segments_to_text(segments)
             storage.save_transcript(slug, episode_id, transcript_text)
 
+        # Step 1.5: Run audio analysis (if enabled)
+        audio_analysis_result = None
+        if audio_analyzer.is_enabled():
+            audio_logger.info(f"[{slug}:{episode_id}] Running audio analysis")
+            try:
+                audio_analysis_result = audio_analyzer.analyze(
+                    audio_path,
+                    transcript_segments=segments
+                )
+                if audio_analysis_result.signals:
+                    audio_logger.info(
+                        f"[{slug}:{episode_id}] Audio analysis: {len(audio_analysis_result.signals)} signals "
+                        f"in {audio_analysis_result.analysis_time_seconds:.1f}s"
+                    )
+                if audio_analysis_result.errors:
+                    for err in audio_analysis_result.errors:
+                        audio_logger.warning(f"[{slug}:{episode_id}] Audio analysis warning: {err}")
+
+                # Save audio analysis results to database
+                import json
+                db.save_episode_audio_analysis(slug, episode_id, json.dumps(audio_analysis_result.to_dict()))
+            except Exception as e:
+                audio_logger.error(f"[{slug}:{episode_id}] Audio analysis failed: {e}")
+                # Continue without audio analysis - it's optional
+
         try:
             # Step 2: Detect ads (first pass)
-            ad_result = ad_detector.process_transcript(segments, podcast_name, episode_title, slug, episode_id, episode_description)
+            ad_result = ad_detector.process_transcript(
+                segments, podcast_name, episode_title, slug, episode_id, episode_description,
+                audio_analysis=audio_analysis_result
+            )
             storage.save_ads_json(slug, episode_id, ad_result, pass_number=1)
 
             # Check ad detection status
@@ -402,7 +446,8 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 # Does NOT know what first pass found - we merge/dedupe results ourselves
                 second_pass_result = ad_detector.detect_ads_second_pass(
                     segments,  # Same transcript, blind analysis
-                    podcast_name, episode_title, slug, episode_id, episode_description
+                    podcast_name, episode_title, slug, episode_id, episode_description,
+                    audio_analysis=audio_analysis_result
                 )
 
                 # Save second pass data to database

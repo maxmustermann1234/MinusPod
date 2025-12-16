@@ -5,6 +5,290 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.104] - 2025-12-16
+
+### Fixed
+- Volume analysis (ebur128) regex not matching ffmpeg output format
+  - ffmpeg outputs `TARGET:-23 LUFS` between `t:` and `M:` fields
+  - Updated regex to allow flexible content between timestamp and loudness values
+
+### Improved
+- Reduced log spam from harmless warnings
+  - Suppressed torchaudio MPEG_LAYER_III warnings (MP3 metadata, repeated per chunk)
+  - Suppressed pyannote TF32 reproducibility warning
+  - Suppressed pyannote std() degrees of freedom warning
+  - Set ORT_LOG_LEVEL=3 to suppress onnxruntime GPU discovery warnings
+
+---
+
+## [0.1.103] - 2025-12-16
+
+### Fixed
+- Speaker diarization still failing with cuDNN error during inference
+  - v0.1.102 disabled cuDNN only during pipeline load, then restored it
+  - Actual diarization inference also uses LSTM/RNN and failed
+  - Now disables cuDNN globally when pyannote is used (stays disabled)
+  - GPU acceleration still works, using PyTorch native RNN kernels
+
+---
+
+## [0.1.102] - 2025-12-16
+
+### Fixed
+- Volume analysis (ebur128) not producing measurements
+  - Changed ffmpeg verbosity from `-v info` to `-v verbose`
+  - ebur128 filter needs verbose level to output frame-by-frame data
+- Speaker diarization failing with cuDNN version mismatch
+  - pyannote LSTMs triggered cuDNN RNN code path incompatible with our cuDNN 8
+  - Disable cuDNN temporarily when moving pipeline to GPU
+  - Still uses GPU acceleration, just PyTorch native RNN instead of cuDNN
+
+---
+
+## [0.1.101] - 2025-12-16
+
+### Improved
+- Better debugging for ebur128 volume analysis failures
+  - Now logs lines containing ebur128 data patterns instead of just first 10 lines
+  - Will show if ffmpeg output format differs from expected regex pattern
+- Full traceback logging for speaker diarization failures
+  - Helps diagnose pyannote internal errors like 'NoneType' has no attribute 'eval'
+
+---
+
+## [0.1.100] - 2025-12-16
+
+### Fixed
+- Cache permission denied error (take 2) - speaker diarization still failing
+  - HOME=/app pointed to read-only container image directory
+  - Changed to HOME=/app/data which is the writable volume mount
+  - Now $HOME/.cache = /app/data/.cache (same as HF_HOME)
+
+### Improved
+- Volume analysis debugging - upgraded ffmpeg stderr logging from DEBUG to WARNING
+  - Now shows ffmpeg return code and stderr when ebur128 fails
+  - Will help diagnose why volume analysis is returning no measurements
+
+---
+
+## [0.1.99] - 2025-12-16
+
+### Fixed
+- Cache permission denied error in speaker diarization
+  - Container was missing HOME environment variable
+  - Libraries trying to write to $HOME/.cache failed with "Permission denied: /.cache"
+  - Set HOME=/app in Dockerfile to provide writable cache location
+
+---
+
+## [0.1.98] - 2025-12-16
+
+### Added
+- Documentation for pyannote model license requirement in docker-compose.yml
+  - Users must accept license at https://hf.co/pyannote/speaker-diarization-3.1
+  - Token alone is not sufficient; explicit license acceptance required
+
+### Improved
+- Better error messages for speaker diarization failures
+  - Now explicitly mentions license acceptance when pipeline returns None
+  - Logs masked HF token status for debugging deployment issues
+- Added debug logging for ebur128 volume analysis failures
+  - Logs ffmpeg stderr sample when no measurements found
+
+---
+
+## [0.1.97] - 2025-12-16
+
+### Fixed
+- Speaker diarization failing due to huggingface_hub/pyannote version mismatch
+  - pyannote 3.x uses `use_auth_token` internally when calling huggingface_hub
+  - huggingface_hub v1.0+ removed support for `use_auth_token` parameter
+  - Fix: Pin `huggingface_hub>=0.20.0,<1.0` to maintain compatibility
+  - Speaker analysis has never worked since v0.1.85; this is the actual fix
+
+---
+
+## [0.1.96] - 2025-12-16
+
+### Fixed
+- RSS feed fetch failing for servers with malformed gzip responses
+  - Some servers claim gzip encoding but send corrupted data
+  - Added fallback: retry without compression when gzip decompression fails
+- Speaker diarization fix attempt (incomplete - see v0.1.97)
+
+---
+
+## [0.1.95] - 2025-12-13
+
+### Fixed
+- Dashboard sorting by recent episodes not working
+  - `lastEpisodeDate` field was missing from `/api/v1/feeds` response
+  - Database correctly calculated the value but API didn't return it
+- Orphan podcast directories not cleaned up after deletion
+  - Directories could be recreated if accessed after database deletion
+  - Added automatic cleanup in background task to remove orphan directories
+- Speaker diarization failing with huggingface_hub deprecation (incomplete fix, see v0.1.96)
+
+---
+
+## [0.1.94] - 2025-12-12
+
+### Fixed
+- Ad detection window validation to prevent hallucinated ads
+  - Claude sometimes hallucinates `start=0.0` when no ads found in a window
+  - Ads are now validated against window bounds (with 2 min tolerance)
+  - Ads exceeding 7 minutes are rejected as unrealistically long
+  - Applied to both first pass and second pass detection
+  - Logged as warnings when ads are rejected for debugging
+
+### Changed
+- Music detector now caps region duration at 2 minutes
+  - Real music beds rarely exceed 2 minutes
+  - Prevents unrealistically long music regions from being merged
+- Audio signal filtering now excludes signals over 3 minutes
+  - Prevents bad audio data from reaching Claude prompt
+
+---
+
+## [0.1.93] - 2025-12-12
+
+### Fixed
+- Volume analysis timeout on long episodes
+  - Previous implementation ran ~2000 separate ffmpeg processes for a 2h45m episode
+  - Now uses single-pass ebur128 filter analysis
+  - 165-minute episode analyzed in ~2-3 minutes instead of timing out after 10 minutes
+  - Dynamic timeout based on audio duration
+
+---
+
+## [0.1.92] - 2025-12-12
+
+### Fixed
+- Audio analysis setting not responding to UI toggle
+  - `AudioAnalyzer.is_enabled()` was returning cached startup value
+  - Now reads from database for live setting updates
+  - Toggling audio analysis in Settings now takes effect immediately
+
+---
+
+## [0.1.91] - 2025-12-12
+
+### Added
+- Audio Analysis settings toggle in UI
+  - New Settings page section for enabling/disabling audio analysis
+  - API endpoint support for `audioAnalysisEnabled` setting
+  - Analyzes volume changes, music detection, and speaker patterns
+  - Experimental feature disabled by default
+
+---
+
+## [0.1.90] - 2025-12-12
+
+### Fixed
+- SQL error in dashboard API: `no such column: e.published`
+  - Database column is `created_at`, not `published`
+  - Fixes broken `/api/v1/feeds` endpoint that prevented dashboard from loading
+
+---
+
+## [0.1.89] - 2025-12-12
+
+### Fixed
+- Long ads with high confidence (>90%) being incorrectly rejected
+  - Ads over 5 minutes were rejected even with high confidence
+  - Now accepts long ads (up to 15 min) if confidence >= 90%
+  - Improves detection for shows with longer host-read ads (e.g., TWiT network)
+
+### Added
+- Dashboard sorting by most recent episode (default)
+  - New sort toggle in dashboard header (clock icon = recent, A-Z icon = alphabetical)
+  - Podcasts with recent episodes appear first
+  - Sort preference persisted in localStorage
+  - Added `lastEpisodeDate` field to API response
+
+---
+
+## [0.1.88] - 2025-12-11
+
+### Fixed
+- ONNX Runtime cuDNN compatibility crash: `Could not load library libcudnn_ops_infer.so.8`
+  - Root cause: CUDA 12.4 includes cuDNN 9.x, but ONNX Runtime (used by pyannote.audio) requires cuDNN 8.x
+  - Workers crashed with code 134 (SIGABRT) when attempting speaker diarization
+  - Rolled back to CUDA 12.1 with cuDNN 8 for full compatibility
+
+### Changed
+- Downgraded to CUDA 12.1 base image (nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04)
+- Using PyTorch 2.3.0+cu121 and torchaudio 2.3.0+cu121
+- Pinned pyannote.audio to >=3.1.0,<4.0.0 (v4.0 requires torch>=2.8.0 which needs CUDA 12.4)
+
+---
+
+## [0.1.87] - 2025-12-11
+
+### Changed
+- Upgraded to CUDA 12.4 base image (nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04)
+- Docker image size optimization: Pre-install PyTorch 2.8.0+cu124 (required by pyannote.audio)
+  - Prevents duplicate torch installation during pip install
+  - Using torch==2.8.0+cu124 and torchaudio==2.8.0+cu124 with CUDA 12.4
+
+### Known Issues
+- cuDNN 8 vs 9 incompatibility causes ONNX Runtime crash (fixed in v0.1.88)
+
+---
+
+## [0.1.86] - 2025-12-11
+
+### Fixed
+- App startup failure: `PermissionError: [Errno 13] Permission denied: '/app/src/audio_analysis/__init__.py'`
+  - Root cause: `chmod -R 644 ./src/*.py` glob pattern only matched files in `./src/`, not subdirectories
+  - Fixed by using `find ./src -type f -name '*.py' -exec chmod 644 {} \;` to recursively set permissions
+
+### Changed
+- Docker image optimizations to reduce size (~12GB -> ~8-9GB estimated)
+  - Pre-install PyTorch with specific CUDA 12.1 build to prevent duplicate installations
+  - Added `--no-install-recommends` to apt-get to skip unnecessary packages
+  - Clean up pip cache and `__pycache__` directories after install
+  - Removed unused `wget` package from apt-get install
+- Reorganized requirements.txt with clearer sections (Core, API, Utilities, Audio analysis)
+- Consolidated environment variables in Dockerfile using single ENV block
+
+---
+
+## [0.1.85] - 2025-12-11
+
+### Added
+- Comprehensive audio analysis module for enhanced ad detection
+  - Volume/loudness analysis using ffmpeg loudnorm to detect dynamically inserted ads
+  - Music bed detection using librosa spectral analysis (spectral flatness, low-freq energy, harmonic ratio)
+  - Speaker diarization using pyannote.audio to detect monologue ad reads in conversational podcasts
+- Audio analysis signals passed as context to Claude for improved detection accuracy
+  - Volume changes (increases/decreases above threshold)
+  - Music bed regions with confidence scores
+  - Extended monologues with speaker identification and ad language detection
+- New database settings for audio analysis configuration
+  - `audio_analysis_enabled` - master toggle (default: false)
+  - `volume_analysis_enabled`, `music_detection_enabled`, `speaker_analysis_enabled` - component toggles
+  - `volume_threshold_db`, `music_confidence_threshold`, `monologue_duration_threshold` - tunable thresholds
+- Audio analysis results stored in `episode_details.audio_analysis_json` for debugging
+- HF_TOKEN environment variable for HuggingFace authentication (required for speaker diarization)
+
+### Changed
+- ad_detector.py now accepts optional audio_analysis parameter for both first and second pass detection
+- process_episode() runs audio analysis when enabled and passes signals to Claude
+- Updated requirements.txt with librosa, soundfile, pyannote.audio
+- Updated Dockerfile with libsndfile system dependency
+- Updated docker-compose.yml with HF_TOKEN environment variable
+
+### Technical Details
+- New module: `src/audio_analysis/` with volume_analyzer, music_detector, speaker_analyzer, and facade
+- Audio analysis runs after transcription (uses same audio file)
+- Each analyzer operates independently with graceful degradation on failure
+- Volume analyzer: 5-second frames, 3dB threshold, 15s minimum anomaly duration
+- Music detector: 0.5s frames, spectral analysis, 10s minimum region duration
+- Speaker analyzer: pyannote diarization, 45s minimum monologue duration
+
+---
+
 ## [0.1.84] - 2025-12-05
 
 ### Fixed
