@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.103] - 2025-12-16
+
+### Fixed
+- Speaker diarization still failing with cuDNN error during inference
+  - v0.1.102 disabled cuDNN only during pipeline load, then restored it
+  - Actual diarization inference also uses LSTM/RNN and failed
+  - Now disables cuDNN globally when pyannote is used (stays disabled)
+  - GPU acceleration still works, using PyTorch native RNN kernels
+
+---
+
 ## [0.1.102] - 2025-12-16
 
 ### Fixed
