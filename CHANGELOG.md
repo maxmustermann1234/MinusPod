@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.100] - 2025-12-16
+
+### Fixed
+- Cache permission denied error (take 2) - speaker diarization still failing
+  - HOME=/app pointed to read-only container image directory
+  - Changed to HOME=/app/data which is the writable volume mount
+  - Now $HOME/.cache = /app/data/.cache (same as HF_HOME)
+
+### Improved
+- Volume analysis debugging - upgraded ffmpeg stderr logging from DEBUG to WARNING
+  - Now shows ffmpeg return code and stderr when ebur128 fails
+  - Will help diagnose why volume analysis is returning no measurements
+
+---
+
 ## [0.1.99] - 2025-12-16
 
 ### Fixed
