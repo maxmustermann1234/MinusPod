@@ -117,6 +117,30 @@ The server includes a web-based management UI at `/ui/`:
 - **Settings** - Configure ad detection prompts and Claude model
 - **System Status** - View statistics and run cleanup
 
+### Transcript Editor (Mobile-First)
+
+The transcript editor allows you to review and adjust ad detections directly in the browser. It's optimized for mobile as the primary interface:
+
+**Mobile Features:**
+- **Touch-Optimized** - All buttons meet 44-48px accessibility standards for easy tapping
+- **Swipe Navigation** - Swipe left/right on transcript to navigate between ads
+- **Haptic Feedback** - Vibration feedback on boundary adjustments and actions
+- **Bottom Sheet Player** - Apple Podcasts-style collapsible audio controls
+- **Draggable Progress** - Touch-drag seeking with visual thumb indicator
+- **Icon Buttons** - Compact action buttons (X, reset, check, save) with full labels in expanded mode
+- **Landscape Mode** - Optimized layout for horizontal orientation
+
+**Touch Gestures:**
+- Single tap: Seek to segment (or set boundary in Set Start/End mode)
+- Double tap: Set start boundary
+- Long press: Set end boundary
+- Horizontal swipe: Navigate to previous/next ad
+
+**Desktop Features:**
+- Keyboard shortcuts for quick editing (Space, J/K, Shift+J/K, C, X, Esc)
+- Click to seek, Shift+Click to set end, Alt+Click to set start
+- Inline audio player with hover-expandable progress bar
+
 ### Screenshots
 
 **Dashboard**
