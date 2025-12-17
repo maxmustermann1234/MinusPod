@@ -903,7 +903,8 @@ class Database:
         values = []
         for key, value in kwargs.items():
             if key in ('title', 'description', 'artwork_url', 'artwork_cached',
-                       'last_checked_at', 'source_url'):
+                       'last_checked_at', 'source_url', 'network_id', 'dai_platform',
+                       'network_id_override'):
                 fields.append(f"{key} = ?")
                 values.append(value)
 

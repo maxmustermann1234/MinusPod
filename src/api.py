@@ -90,7 +90,9 @@ def list_feeds():
             'processedCount': podcast.get('processed_count', 0),
             'lastRefreshed': podcast.get('last_checked_at'),
             'createdAt': podcast.get('created_at'),
-            'lastEpisodeDate': podcast.get('last_episode_date')
+            'lastEpisodeDate': podcast.get('last_episode_date'),
+            'networkId': podcast.get('network_id'),
+            'daiPlatform': podcast.get('dai_platform')
         })
 
     return json_response({'feeds': feeds})
@@ -199,8 +201,62 @@ def get_feed(slug):
         'episodeCount': podcast.get('episode_count', 0),
         'processedCount': podcast.get('processed_count', 0),
         'lastRefreshed': podcast.get('last_checked_at'),
-        'createdAt': podcast.get('created_at')
+        'createdAt': podcast.get('created_at'),
+        'networkId': podcast.get('network_id'),
+        'daiPlatform': podcast.get('dai_platform'),
+        'networkIdOverride': podcast.get('network_id_override')
     })
+
+
+@api.route('/feeds/<slug>', methods=['PATCH'])
+@log_request
+def update_feed(slug):
+    """Update podcast feed settings (network, DAI platform, etc.)."""
+    db = get_database()
+
+    podcast = db.get_podcast_by_slug(slug)
+    if not podcast:
+        return error_response('Feed not found', 404)
+
+    data = request.get_json()
+    if not data:
+        return error_response('No data provided', 400)
+
+    # Map API field names to database field names
+    field_map = {
+        'networkId': 'network_id',
+        'daiPlatform': 'dai_platform',
+        'networkIdOverride': 'network_id_override',
+        'title': 'title',
+        'description': 'description'
+    }
+
+    updates = {}
+    for api_field, db_field in field_map.items():
+        if api_field in data:
+            updates[db_field] = data[api_field]
+
+    if not updates:
+        return error_response('No valid fields to update', 400)
+
+    try:
+        db.update_podcast(slug, **updates)
+        logger.info(f"Updated feed {slug}: {updates}")
+
+        # Return updated feed data
+        podcast = db.get_podcast_by_slug(slug)
+        base_url = os.environ.get('BASE_URL', 'http://localhost:8000')
+        return json_response({
+            'slug': podcast['slug'],
+            'title': podcast['title'] or podcast['slug'],
+            'networkId': podcast.get('network_id'),
+            'daiPlatform': podcast.get('dai_platform'),
+            'networkIdOverride': podcast.get('network_id_override'),
+            'feedUrl': f"{base_url}/{slug}"
+        })
+    except Exception as e:
+        logger.error(f"Failed to update feed {slug}: {e}")
+        return error_response(f'Failed to update feed: {str(e)}', 500)
 
 
 @api.route('/feeds/<slug>', methods=['DELETE'])

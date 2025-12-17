@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.111] - 2025-12-17
+
+### Fixed
+- Speaker diarization tensor size error on audio boundary
+  - Added audio padding to prevent "Sizes of tensors must match" error
+  - Preprocesses audio to align to 10-second chunk boundaries (160000 samples at 16kHz)
+  - Falls back to direct file processing if preprocessing fails
+
+### Added
+- Network fields now exposed in API responses
+  - GET /api/v1/feeds returns networkId, daiPlatform for each feed
+  - GET /api/v1/feeds/{slug} returns networkId, daiPlatform, networkIdOverride
+- PATCH /api/v1/feeds/{slug} endpoint for updating feed settings
+  - Supports networkId, daiPlatform, networkIdOverride, title, description
+  - Allows manual override of auto-detected network values
+- Database update_podcast() now allows setting network_id, dai_platform, network_id_override
+
+---
+
 ## [0.1.110] - 2025-12-17
 
 ### Fixed
