@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.112] - 2025-12-17
+
+### Added
+- Network display and edit on feed page
+  - Shows Network and DAI Platform labels when available
+  - Inline edit capability to set/update network and DAI platform
+  - Calls PATCH /api/v1/feeds/{slug} to save changes
+- Jump buttons on ad segments
+  - Each detected ad now has a "Jump" button
+  - Opens TranscriptEditor and seeks to that timestamp
+  - Makes reviewing specific ads much easier
+- Clickable progress bar in TranscriptEditor
+  - Click anywhere on the progress bar to seek to that position
+  - Bar grows on hover for easier clicking
+  - Supports initialSeekTime prop for external seeking
+
+---
+
 ## [0.1.111] - 2025-12-17
 
 ### Fixed

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getEpisode, reprocessEpisode } from '../api/feeds';
@@ -8,6 +8,8 @@ import TranscriptEditor, { AdCorrection } from '../components/TranscriptEditor';
 function EpisodeDetail() {
   const { slug, episodeId } = useParams<{ slug: string; episodeId: string }>();
   const [showEditor, setShowEditor] = useState(false);
+  const [jumpToTime, setJumpToTime] = useState<number | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
 
   const queryClient = useQueryClient();
 
@@ -29,6 +31,18 @@ function EpisodeDetail() {
     // TODO: Implement API call to submit correction
     console.log('Ad correction:', correction);
     // For now, just log the correction - backend API for corrections to be implemented
+  };
+
+  // Jump to a specific ad in the editor
+  const handleJumpToAd = (startTime: number) => {
+    setJumpToTime(startTime);
+    if (!showEditor) {
+      setShowEditor(true);
+    }
+    // Scroll to editor
+    setTimeout(() => {
+      editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
   };
 
   // Convert ad markers to TranscriptEditor format
@@ -211,13 +225,14 @@ function EpisodeDetail() {
 
           {/* TranscriptEditor for reviewing/editing ad detections */}
           {showEditor && episode.status === 'completed' && (
-            <div className="mb-4">
+            <div className="mb-4" ref={editorRef}>
               <TranscriptEditor
                 segments={getTranscriptSegments()}
                 detectedAds={getDetectedAds()}
                 audioUrl={`/episodes/${slug}/${episode.id}.mp3`}
                 onCorrection={handleCorrection}
                 onClose={() => setShowEditor(false)}
+                initialSeekTime={jumpToTime ?? undefined}
               />
             </div>
           )}
@@ -242,6 +257,15 @@ function EpisodeDetail() {
                     }`}>
                       {segment.pass === 'merged' ? 'Merged' : `Pass ${segment.pass}`}
                     </span>
+                  )}
+                  {episode.transcript && (
+                    <button
+                      onClick={() => handleJumpToAd(segment.start)}
+                      className="px-2 py-0.5 text-xs bg-primary/10 text-primary rounded hover:bg-primary/20 transition-colors"
+                      title="Jump to this ad in editor"
+                    >
+                      Jump
+                    </button>
                   )}
                 </div>
                 <div className="flex flex-col items-end">

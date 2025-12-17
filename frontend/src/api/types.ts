@@ -10,6 +10,9 @@ export interface Feed {
   lastRefreshed?: string;
   createdAt?: string;
   lastEpisodeDate?: string;
+  networkId?: string;
+  daiPlatform?: string;
+  networkIdOverride?: boolean;
 }
 
 export interface Episode {

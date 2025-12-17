@@ -1,12 +1,16 @@
+import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getFeed, getEpisodes, refreshFeed } from '../api/feeds';
+import { getFeed, getEpisodes, refreshFeed, updateFeed } from '../api/feeds';
 import EpisodeList from '../components/EpisodeList';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 function FeedDetail() {
   const { slug } = useParams<{ slug: string }>();
   const queryClient = useQueryClient();
+  const [isEditingNetwork, setIsEditingNetwork] = useState(false);
+  const [editNetworkId, setEditNetworkId] = useState('');
+  const [editDaiPlatform, setEditDaiPlatform] = useState('');
 
   const { data: feed, isLoading: feedLoading, error: feedError } = useQuery({
     queryKey: ['feed', slug],
@@ -27,6 +31,27 @@ function FeedDetail() {
       queryClient.invalidateQueries({ queryKey: ['episodes', slug] });
     },
   });
+
+  const updateMutation = useMutation({
+    mutationFn: (data: { networkId?: string; daiPlatform?: string }) => updateFeed(slug!, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['feed', slug] });
+      setIsEditingNetwork(false);
+    },
+  });
+
+  const startEditingNetwork = () => {
+    setEditNetworkId(feed?.networkId || '');
+    setEditDaiPlatform(feed?.daiPlatform || '');
+    setIsEditingNetwork(true);
+  };
+
+  const saveNetworkEdit = () => {
+    updateMutation.mutate({
+      networkId: editNetworkId || undefined,
+      daiPlatform: editDaiPlatform || undefined,
+    });
+  };
 
   const copyFeedUrl = async () => {
     if (feed?.feedUrl) {
@@ -85,6 +110,66 @@ function FeedDetail() {
               <span>{feed.episodeCount} episodes</span>
               {feed.lastRefreshed && (
                 <span>Updated {new Date(feed.lastRefreshed).toLocaleDateString()}</span>
+              )}
+            </div>
+
+            {/* Network / DAI Platform info */}
+            <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+              {isEditingNetwork ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1">
+                    <label className="text-muted-foreground">Network:</label>
+                    <input
+                      type="text"
+                      value={editNetworkId}
+                      onChange={(e) => setEditNetworkId(e.target.value)}
+                      placeholder="e.g., twit, npr, relay"
+                      className="px-2 py-1 text-sm bg-secondary border border-border rounded w-32"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <label className="text-muted-foreground">DAI:</label>
+                    <input
+                      type="text"
+                      value={editDaiPlatform}
+                      onChange={(e) => setEditDaiPlatform(e.target.value)}
+                      placeholder="e.g., megaphone, acast"
+                      className="px-2 py-1 text-sm bg-secondary border border-border rounded w-32"
+                    />
+                  </div>
+                  <button
+                    onClick={saveNetworkEdit}
+                    disabled={updateMutation.isPending}
+                    className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    {updateMutation.isPending ? 'Saving...' : 'Save'}
+                  </button>
+                  <button
+                    onClick={() => setIsEditingNetwork(false)}
+                    className="px-2 py-1 text-xs bg-muted text-muted-foreground rounded hover:bg-accent"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  {feed.networkId && (
+                    <span className="px-2 py-0.5 bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded text-xs font-medium">
+                      Network: {feed.networkId}
+                    </span>
+                  )}
+                  {feed.daiPlatform && (
+                    <span className="px-2 py-0.5 bg-purple-500/20 text-purple-600 dark:text-purple-400 rounded text-xs font-medium">
+                      DAI: {feed.daiPlatform}
+                    </span>
+                  )}
+                  <button
+                    onClick={startEditingNetwork}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    {feed.networkId || feed.daiPlatform ? 'Edit' : '+ Add Network'}
+                  </button>
+                </div>
               )}
             </div>
           </div>

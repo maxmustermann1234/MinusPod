@@ -23,6 +23,7 @@ interface TranscriptEditorProps {
   audioUrl?: string;
   onCorrection: (correction: AdCorrection) => void;
   onClose?: () => void;
+  initialSeekTime?: number;
 }
 
 export interface AdCorrection {
@@ -45,6 +46,7 @@ export function TranscriptEditor({
   audioUrl,
   onCorrection,
   onClose,
+  initialSeekTime,
 }: TranscriptEditorProps) {
   const [selectedAdIndex, setSelectedAdIndex] = useState(0);
   const [adjustedStart, setAdjustedStart] = useState(0);
@@ -95,6 +97,21 @@ export function TranscriptEditor({
       activeSegment.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }, [currentTime]);
+
+  // Handle initial seek time (from Jump button)
+  useEffect(() => {
+    if (initialSeekTime !== undefined && audioRef.current) {
+      // Find the ad that contains this time
+      const adIndex = detectedAds.findIndex(
+        (ad) => initialSeekTime >= ad.start && initialSeekTime <= ad.end
+      );
+      if (adIndex !== -1) {
+        setSelectedAdIndex(adIndex);
+      }
+      // Seek to the time
+      audioRef.current.currentTime = initialSeekTime;
+    }
+  }, [initialSeekTime, detectedAds]);
 
   const handlePlayPause = useCallback(() => {
     const audio = audioRef.current;
@@ -192,6 +209,15 @@ export function TranscriptEditor({
     if (audioRef.current) {
       audioRef.current.currentTime = time;
     }
+  };
+
+  // Handle click on progress bar to seek
+  const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = clickX / rect.width;
+    const duration = segments[segments.length - 1]?.end || 1;
+    seekTo(percentage * duration);
   };
 
   const isInAdRegion = (segStart: number, segEnd: number) => {
@@ -378,9 +404,13 @@ export function TranscriptEditor({
               )}
             </button>
             <span className="text-sm font-mono">{formatTime(currentTime)}</span>
-            <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+            <div
+              className="flex-1 h-2 bg-muted rounded-full overflow-hidden cursor-pointer hover:h-3 transition-all"
+              onClick={handleProgressClick}
+              title="Click to seek"
+            >
               <div
-                className="h-full bg-primary"
+                className="h-full bg-primary pointer-events-none"
                 style={{
                   width: `${(currentTime / (segments[segments.length - 1]?.end || 1)) * 100}%`,
                 }}

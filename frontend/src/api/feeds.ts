@@ -51,3 +51,16 @@ export async function reprocessEpisode(slug: string, episodeId: string): Promise
     method: 'POST',
   });
 }
+
+export interface UpdateFeedPayload {
+  networkId?: string;
+  daiPlatform?: string;
+  networkIdOverride?: boolean;
+}
+
+export async function updateFeed(slug: string, data: UpdateFeedPayload): Promise<Feed> {
+  return apiRequest<Feed>(`/feeds/${slug}`, {
+    method: 'PATCH',
+    body: data,
+  });
+}
