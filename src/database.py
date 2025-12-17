@@ -257,21 +257,25 @@ CREATE TABLE IF NOT EXISTS sponsor_normalizations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_podcasts_slug ON podcasts(slug);
-CREATE INDEX IF NOT EXISTS idx_podcasts_network_id ON podcasts(network_id);
-CREATE INDEX IF NOT EXISTS idx_podcasts_dai_platform ON podcasts(dai_platform);
 CREATE INDEX IF NOT EXISTS idx_episodes_podcast_id ON episodes(podcast_id);
 CREATE INDEX IF NOT EXISTS idx_episodes_episode_id ON episodes(episode_id);
 CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status);
 CREATE INDEX IF NOT EXISTS idx_episodes_created_at ON episodes(created_at);
 CREATE INDEX IF NOT EXISTS idx_episode_details_episode_id ON episode_details(episode_id);
 
--- Cross-episode training indexes
-CREATE INDEX IF NOT EXISTS idx_patterns_scope ON ad_patterns(scope, network_id, podcast_id) WHERE is_active = 1;
+-- Cross-episode training indexes (indexes on new columns created in migrations)
 CREATE INDEX IF NOT EXISTS idx_patterns_sponsor ON ad_patterns(sponsor) WHERE is_active = 1;
 CREATE INDEX IF NOT EXISTS idx_fingerprints_pattern ON audio_fingerprints(pattern_id);
 CREATE INDEX IF NOT EXISTS idx_corrections_pattern ON pattern_corrections(pattern_id);
 CREATE INDEX IF NOT EXISTS idx_sponsors_name ON known_sponsors(name) WHERE is_active = 1;
 CREATE INDEX IF NOT EXISTS idx_normalizations_pattern ON sponsor_normalizations(pattern) WHERE is_active = 1;
+"""
+
+# Indexes that depend on columns added by migrations - created separately
+MIGRATION_INDEXES_SQL = """
+CREATE INDEX IF NOT EXISTS idx_podcasts_network_id ON podcasts(network_id);
+CREATE INDEX IF NOT EXISTS idx_podcasts_dai_platform ON podcasts(dai_platform);
+CREATE INDEX IF NOT EXISTS idx_patterns_scope ON ad_patterns(scope, network_id, podcast_id) WHERE is_active = 1;
 """
 
 
@@ -321,12 +325,112 @@ class Database:
     def _init_schema(self):
         """Initialize database schema."""
         conn = self.get_connection()
-        conn.executescript(SCHEMA_SQL)
-        conn.commit()
-        logger.info(f"Database schema initialized at {self.db_path}")
 
-        # Run schema migrations for existing databases
-        self._run_schema_migrations()
+        # Check if database already has tables (existing database)
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='podcasts'"
+        )
+        is_existing_db = cursor.fetchone() is not None
+
+        if is_existing_db:
+            # For existing databases, only create new tables and run migrations
+            # Don't run full SCHEMA_SQL as indexes may reference columns that don't exist yet
+            logger.info(f"Existing database found at {self.db_path}, running migrations...")
+            self._create_new_tables_only(conn)
+            self._run_schema_migrations()
+        else:
+            # Fresh database - run full schema
+            conn.executescript(SCHEMA_SQL)
+            conn.commit()
+            logger.info(f"Database schema initialized at {self.db_path}")
+            # Still run migrations to ensure all columns exist
+            self._run_schema_migrations()
+
+    def _create_new_tables_only(self, conn):
+        """Create new tables for existing databases without running indexes."""
+        # Create ad_patterns table if not exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ad_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern_type TEXT NOT NULL CHECK(pattern_type IN ('audio_fingerprint', 'text_pattern')),
+                scope TEXT NOT NULL DEFAULT 'podcast' CHECK(scope IN ('global', 'network', 'podcast')),
+                network_id TEXT,
+                podcast_id INTEGER REFERENCES podcasts(id) ON DELETE SET NULL,
+                sponsor TEXT,
+                duration_seconds REAL,
+                confidence_score REAL DEFAULT 0.0,
+                match_count INTEGER DEFAULT 1,
+                last_matched_at TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+
+        # Create audio_fingerprints table if not exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audio_fingerprints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern_id INTEGER NOT NULL REFERENCES ad_patterns(id) ON DELETE CASCADE,
+                fingerprint_hash TEXT NOT NULL,
+                duration_seconds REAL NOT NULL,
+                sample_rate INTEGER DEFAULT 44100,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+
+        # Create text_patterns table if not exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS text_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern_id INTEGER NOT NULL REFERENCES ad_patterns(id) ON DELETE CASCADE,
+                canonical_text TEXT NOT NULL,
+                tfidf_vector BLOB,
+                word_count INTEGER,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+
+        # Create pattern_corrections table if not exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pattern_corrections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern_id INTEGER REFERENCES ad_patterns(id) ON DELETE SET NULL,
+                episode_id INTEGER REFERENCES episodes(id) ON DELETE SET NULL,
+                correction_type TEXT NOT NULL CHECK(correction_type IN ('false_positive', 'boundary_adjustment', 'confirm', 'promotion')),
+                original_bounds TEXT,
+                corrected_bounds TEXT,
+                text_snippet TEXT,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+
+        # Create known_sponsors table if not exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS known_sponsors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                aliases TEXT DEFAULT '[]',
+                category TEXT,
+                common_ctas TEXT DEFAULT '[]',
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+
+        # Create sponsor_normalizations table if not exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sponsor_normalizations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern TEXT UNIQUE NOT NULL,
+                replacement TEXT NOT NULL,
+                category TEXT CHECK(category IN ('sponsor', 'url', 'number', 'phrase')),
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+
+        conn.commit()
+        logger.info("Created new tables for cross-episode training")
 
     def _run_schema_migrations(self):
         """Run schema migrations for existing databases."""
@@ -348,6 +452,18 @@ class Database:
             except Exception as e:
                 logger.error(f"Migration failed for ad_detection_status: {e}")
 
+        # Migration: Add created_at column if missing
+        if 'created_at' not in columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episodes
+                    ADD COLUMN created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                """)
+                conn.commit()
+                logger.info("Migration: Added created_at column to episodes table")
+            except Exception as e:
+                logger.error(f"Migration failed for created_at: {e}")
+
         # Migration: Add artwork_url column if missing
         if 'artwork_url' not in columns:
             try:
@@ -359,6 +475,42 @@ class Database:
                 logger.info("Migration: Added artwork_url column to episodes table")
             except Exception as e:
                 logger.error(f"Migration failed for artwork_url: {e}")
+
+        # Migration: Add processed_file column if missing
+        if 'processed_file' not in columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episodes
+                    ADD COLUMN processed_file TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added processed_file column to episodes table")
+            except Exception as e:
+                logger.error(f"Migration failed for processed_file: {e}")
+
+        # Migration: Add processed_at column if missing
+        if 'processed_at' not in columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episodes
+                    ADD COLUMN processed_at TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added processed_at column to episodes table")
+            except Exception as e:
+                logger.error(f"Migration failed for processed_at: {e}")
+
+        # Migration: Add original_duration column if missing
+        if 'original_duration' not in columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episodes
+                    ADD COLUMN original_duration REAL
+                """)
+                conn.commit()
+                logger.info("Migration: Added original_duration column to episodes table")
+            except Exception as e:
+                logger.error(f"Migration failed for original_duration: {e}")
 
         # Get existing columns in episode_details table
         cursor = conn.execute("PRAGMA table_info(episode_details)")
@@ -509,6 +661,18 @@ class Database:
                 logger.info("Migration: Added network_id_override column to podcasts table")
             except Exception as e:
                 logger.error(f"Migration failed for network_id_override: {e}")
+
+        # Migration: Add created_at column to podcasts if missing
+        if 'created_at' not in podcasts_columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE podcasts
+                    ADD COLUMN created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                """)
+                conn.commit()
+                logger.info("Migration: Added created_at column to podcasts table")
+            except Exception as e:
+                logger.error(f"Migration failed for podcasts created_at: {e}")
 
         # Create new indexes for podcasts table (will fail silently if already exist)
         try:
@@ -770,6 +934,10 @@ class Database:
         )
         conn.commit()
         return cursor.rowcount > 0
+
+    def get_podcast(self, slug: str) -> Optional[Dict]:
+        """Alias for get_podcast_by_slug for backwards compatibility."""
+        return self.get_podcast_by_slug(slug)
 
     # ========== Episode Methods ==========
 
