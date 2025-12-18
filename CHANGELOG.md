@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.129] - 2025-12-18
+
+### Added
+- **Chunked Speaker Analysis for Long Episodes**
+  - Episodes over 1 hour now processed in 30-minute chunks to prevent OOM crashes
+  - Uses speaker embedding similarity to match speakers across chunk boundaries
+  - Memory cleared between chunks via garbage collection and CUDA cache clearing
+  - Graceful per-chunk error handling - continues processing if a chunk fails
+  - Configurable chunk duration (1800s), overlap (30s), and duration threshold (3600s)
+
+### Fixed
+- **Mobile Episode Description Overflow**
+  - Added `break-words` CSS class to episode description text
+  - Long URLs and unbroken text now wrap correctly on mobile devices
+
+---
+
 ## [0.1.128] - 2025-12-18
 
 ### Added

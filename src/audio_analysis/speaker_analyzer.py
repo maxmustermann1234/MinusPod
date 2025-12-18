@@ -6,6 +6,7 @@ turn-taking pattern - one speaker talks for 60-90+ seconds uninterrupted
 while others are silent.
 """
 
+import gc
 import logging
 import os
 import re
@@ -51,6 +52,14 @@ AD_PATTERNS = re.compile(
     r'link\s+in\s+(the\s+)?(description|show\s*notes)',
     re.IGNORECASE
 )
+
+# Chunked processing configuration for long episodes
+# Episodes longer than LONG_EPISODE_THRESHOLD will be processed in chunks
+# to prevent OOM errors from loading entire audio files into memory
+CHUNK_DURATION_SECONDS = 1800  # 30 minutes per chunk
+CHUNK_OVERLAP_SECONDS = 30     # Overlap between chunks for speaker continuity
+SPEAKER_MATCH_THRESHOLD = 0.5  # Cosine distance threshold for same speaker
+LONG_EPISODE_THRESHOLD = 3600  # Episodes > 1 hour use chunked processing
 
 
 class SpeakerAnalyzer:
@@ -160,6 +169,195 @@ class SpeakerAnalyzer:
                 logger.error(f"Full traceback:\n{traceback.format_exc()}")
                 raise
 
+    def _get_audio_duration(self, audio_path: str) -> float:
+        """Get audio duration in seconds without loading full file into memory."""
+        import torchaudio
+        info = torchaudio.info(audio_path)
+        return info.num_frames / info.sample_rate
+
+    def _load_audio_chunk(
+        self,
+        audio_path: str,
+        start_sec: float,
+        end_sec: float
+    ) -> Tuple[torch.Tensor, int]:
+        """
+        Load a specific time range of audio without loading the entire file.
+
+        Args:
+            audio_path: Path to audio file
+            start_sec: Start time in seconds
+            end_sec: End time in seconds
+
+        Returns:
+            Tuple of (waveform tensor, sample_rate at 16kHz)
+        """
+        import torchaudio
+
+        # Get file info without loading data
+        info = torchaudio.info(audio_path)
+        original_sr = info.sample_rate
+
+        # Calculate frame offsets
+        frame_offset = int(start_sec * original_sr)
+        num_frames = int((end_sec - start_sec) * original_sr)
+
+        # Load only the requested segment
+        waveform, sr = torchaudio.load(
+            audio_path,
+            frame_offset=frame_offset,
+            num_frames=num_frames
+        )
+
+        # Resample to 16kHz if needed (pyannote expects 16kHz)
+        if sr != 16000:
+            resampler = torchaudio.transforms.Resample(sr, 16000)
+            waveform = resampler(waveform)
+
+        return waveform, 16000
+
+    def _clear_memory(self):
+        """Clear CUDA cache and run garbage collection between chunks."""
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def _extract_speaker_embeddings(
+        self,
+        segments: List[SpeakerSegment],
+        waveform: torch.Tensor,
+        sample_rate: int,
+        chunk_offset: float = 0.0
+    ) -> Dict[str, np.ndarray]:
+        """
+        Extract speaker embeddings for each unique speaker in the segments.
+
+        Uses the longest segment for each speaker to get the most reliable embedding.
+
+        Args:
+            segments: List of speaker segments from diarization
+            waveform: Audio waveform tensor
+            sample_rate: Sample rate of the waveform
+            chunk_offset: Time offset of this chunk in the full audio
+
+        Returns:
+            Dictionary mapping speaker ID to embedding numpy array
+        """
+        from pyannote.audio import Model, Inference
+
+        # Load embedding model (uses same HF token as pipeline)
+        embedding_model = Model.from_pretrained(
+            "pyannote/embedding",
+            use_auth_token=self.hf_token
+        )
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        embedding_model.to(device)
+
+        inference = Inference(embedding_model, window="whole")
+
+        speaker_embeddings = {}
+        for speaker in set(s.speaker for s in segments):
+            # Get longest segment for this speaker (most reliable embedding)
+            speaker_segs = [s for s in segments if s.speaker == speaker]
+            longest = max(speaker_segs, key=lambda s: s.duration)
+
+            # Ensure segment is long enough for embedding (at least 0.5 seconds)
+            if longest.duration < 0.5:
+                continue
+
+            # Calculate sample indices relative to chunk start
+            # Segments have global timestamps, so subtract chunk_offset
+            local_start = longest.start - chunk_offset
+            local_end = longest.end - chunk_offset
+
+            start_sample = int(local_start * sample_rate)
+            end_sample = int(local_end * sample_rate)
+
+            # Bounds check
+            start_sample = max(0, start_sample)
+            end_sample = min(waveform.shape[1], end_sample)
+
+            if end_sample - start_sample < sample_rate * 0.5:  # Less than 0.5 sec
+                continue
+
+            # Extract waveform for this segment
+            speaker_waveform = waveform[:, start_sample:end_sample]
+
+            try:
+                # Get embedding - inference expects dict with waveform and sample_rate
+                embedding = inference({
+                    "waveform": speaker_waveform,
+                    "sample_rate": sample_rate
+                })
+                speaker_embeddings[speaker] = embedding.cpu().numpy()
+            except Exception as e:
+                logger.warning(f"Failed to extract embedding for {speaker}: {e}")
+                continue
+
+        return speaker_embeddings
+
+    def _match_speakers_across_chunks(
+        self,
+        new_embeddings: Dict[str, np.ndarray],
+        global_embeddings: Dict[str, np.ndarray],
+        next_speaker_id: int
+    ) -> Tuple[Dict[str, str], Dict[str, np.ndarray], int]:
+        """
+        Match speakers from a new chunk to global speakers using cosine similarity.
+
+        Args:
+            new_embeddings: Speaker embeddings from the current chunk
+            global_embeddings: Accumulated global speaker embeddings
+            next_speaker_id: Next available global speaker ID number
+
+        Returns:
+            Tuple of (speaker mapping dict, updated global embeddings, next speaker ID)
+        """
+        from scipy.spatial.distance import cdist
+
+        mapping = {}
+        updated_global = global_embeddings.copy()
+        used_global = set()
+
+        for new_speaker, new_emb in new_embeddings.items():
+            best_match = None
+            best_distance = float('inf')
+
+            # Compare against all global speakers
+            for global_speaker, global_emb in global_embeddings.items():
+                if global_speaker in used_global:
+                    continue
+
+                # Compute cosine distance (0 = identical, 2 = opposite)
+                distance = cdist(
+                    new_emb.reshape(1, -1),
+                    global_emb.reshape(1, -1),
+                    metric='cosine'
+                )[0, 0]
+
+                if distance < best_distance:
+                    best_distance = distance
+                    best_match = global_speaker
+
+            if best_match and best_distance < SPEAKER_MATCH_THRESHOLD:
+                # Match found - use existing global speaker ID
+                mapping[new_speaker] = best_match
+                used_global.add(best_match)
+                logger.debug(
+                    f"Matched {new_speaker} -> {best_match} "
+                    f"(distance={best_distance:.3f})"
+                )
+            else:
+                # New speaker - assign new global ID
+                new_global_id = f"SPEAKER_{next_speaker_id:02d}"
+                mapping[new_speaker] = new_global_id
+                updated_global[new_global_id] = new_emb
+                next_speaker_id += 1
+                logger.debug(f"New speaker: {new_speaker} -> {new_global_id}")
+
+        return mapping, updated_global, next_speaker_id
+
     def _analyze_speakers(
         self,
         audio_path: str,
@@ -168,9 +366,47 @@ class SpeakerAnalyzer:
         """Perform speaker diarization and pattern analysis."""
         self._load_pipeline()
 
-        # Run diarization with audio preprocessing to avoid tensor size mismatch
-        # pyannote expects audio chunks of exactly 10 seconds (160000 samples at 16kHz)
-        # When audio ends at an unexpected boundary, we get tensor size errors
+        # Get duration to decide processing strategy
+        try:
+            duration = self._get_audio_duration(audio_path)
+        except Exception as e:
+            logger.warning(f"Could not get audio duration: {e}")
+            duration = 0  # Will use standard processing
+
+        # Choose processing method based on episode length
+        if duration > LONG_EPISODE_THRESHOLD:
+            logger.info(
+                f"Long episode ({duration/3600:.1f}h) - using chunked processing "
+                f"({CHUNK_DURATION_SECONDS/60:.0f}min chunks)"
+            )
+            segments = self._diarize_chunked(audio_path, duration)
+        else:
+            logger.info(f"Standard episode ({duration/60:.1f}min) - using standard processing")
+            segments = self._diarize_standard(audio_path)
+
+        logger.info(f"Diarization complete: {len(segments)} segments")
+
+        if not segments:
+            return [], None
+
+        # Analyze conversation patterns
+        metrics = self._analyze_conversation(segments)
+
+        # Find monologues only in conversational content
+        signals = []
+        if metrics.is_conversational:
+            signals = self._find_monologues(
+                segments, metrics, transcript_segments
+            )
+
+        return signals, metrics
+
+    def _diarize_standard(self, audio_path: str) -> List[SpeakerSegment]:
+        """
+        Standard diarization for short/medium episodes.
+
+        Loads entire audio file into memory (suitable for episodes < 1 hour).
+        """
         logger.info(f"Running speaker diarization on {audio_path}")
         try:
             import torchaudio
@@ -208,22 +444,133 @@ class SpeakerAnalyzer:
                 speaker=speaker
             ))
 
-        logger.info(f"Diarization complete: {len(segments)} segments")
+        return segments
 
-        if not segments:
-            return [], None
+    def _diarize_chunked(
+        self,
+        audio_path: str,
+        total_duration: float
+    ) -> List[SpeakerSegment]:
+        """
+        Chunked diarization for long episodes to prevent OOM.
 
-        # Analyze conversation patterns
-        metrics = self._analyze_conversation(segments)
+        Processes audio in time-based chunks with overlap, matching speakers
+        across chunks using embedding similarity.
+        """
+        all_segments = []
+        global_embeddings = {}  # Global speaker ID -> embedding
+        next_speaker_id = 0
 
-        # Find monologues only in conversational content
-        signals = []
-        if metrics.is_conversational:
-            signals = self._find_monologues(
-                segments, metrics, transcript_segments
+        chunk_start = 0.0
+        chunk_idx = 0
+
+        while chunk_start < total_duration:
+            chunk_end = min(chunk_start + CHUNK_DURATION_SECONDS, total_duration)
+
+            logger.info(
+                f"Processing chunk {chunk_idx + 1}: "
+                f"{chunk_start/60:.1f}-{chunk_end/60:.1f} min "
+                f"({(chunk_end - chunk_start)/60:.1f} min)"
             )
 
-        return signals, metrics
+            try:
+                # Load only this chunk
+                waveform, sample_rate = self._load_audio_chunk(
+                    audio_path, chunk_start, chunk_end
+                )
+
+                # Pad to 10-second boundary to avoid pyannote chunk mismatch
+                pyannote_chunk = 160000  # 10 seconds at 16kHz
+                remainder = waveform.shape[1] % pyannote_chunk
+                if remainder != 0:
+                    waveform = torch.nn.functional.pad(
+                        waveform, (0, pyannote_chunk - remainder)
+                    )
+
+                # Run diarization on chunk
+                diarization = self._pipeline({
+                    "waveform": waveform,
+                    "sample_rate": sample_rate
+                })
+
+                # Convert to segments with global timestamps
+                chunk_segments = []
+                for turn, _, speaker in diarization.itertracks(yield_label=True):
+                    # Skip segments in overlap region (except first chunk)
+                    # This prevents duplicate segments at boundaries
+                    if chunk_idx > 0 and turn.start < CHUNK_OVERLAP_SECONDS:
+                        continue
+
+                    chunk_segments.append(SpeakerSegment(
+                        start=chunk_start + turn.start,
+                        end=chunk_start + turn.end,
+                        speaker=speaker
+                    ))
+
+                # Extract embeddings and match speakers across chunks
+                if chunk_segments:
+                    try:
+                        chunk_embeddings = self._extract_speaker_embeddings(
+                            chunk_segments, waveform, sample_rate, chunk_start
+                        )
+
+                        if chunk_embeddings:
+                            if global_embeddings:
+                                # Match to existing speakers
+                                mapping, global_embeddings, next_speaker_id = \
+                                    self._match_speakers_across_chunks(
+                                        chunk_embeddings,
+                                        global_embeddings,
+                                        next_speaker_id
+                                    )
+                                # Remap speaker labels to global IDs
+                                for seg in chunk_segments:
+                                    if seg.speaker in mapping:
+                                        seg.speaker = mapping[seg.speaker]
+                            else:
+                                # First chunk - initialize global embeddings
+                                for speaker, emb in chunk_embeddings.items():
+                                    global_id = f"SPEAKER_{next_speaker_id:02d}"
+                                    global_embeddings[global_id] = emb
+                                    # Remap this speaker
+                                    for seg in chunk_segments:
+                                        if seg.speaker == speaker:
+                                            seg.speaker = global_id
+                                    next_speaker_id += 1
+
+                    except Exception as e:
+                        logger.warning(
+                            f"Speaker embedding extraction failed for chunk {chunk_idx + 1}: {e}. "
+                            "Speakers may not be consistent across chunks."
+                        )
+
+                    all_segments.extend(chunk_segments)
+
+                logger.info(
+                    f"Chunk {chunk_idx + 1}: {len(chunk_segments)} segments, "
+                    f"{len(global_embeddings)} total speakers"
+                )
+
+            except Exception as e:
+                logger.warning(
+                    f"Chunk {chunk_idx + 1} failed: {e}. "
+                    "Continuing with remaining chunks."
+                )
+
+            finally:
+                # Clear memory before next chunk
+                self._clear_memory()
+
+            # Move to next chunk (with overlap for continuity)
+            chunk_start = chunk_end - CHUNK_OVERLAP_SECONDS
+            chunk_idx += 1
+
+        logger.info(
+            f"Chunked diarization complete: {len(all_segments)} total segments, "
+            f"{len(global_embeddings)} speakers across {chunk_idx} chunks"
+        )
+
+        return all_segments
 
     def _analyze_conversation(
         self,
