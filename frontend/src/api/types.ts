@@ -10,6 +10,9 @@ export interface Feed {
   lastRefreshed?: string;
   createdAt?: string;
   lastEpisodeDate?: string;
+  networkId?: string;
+  daiPlatform?: string;
+  networkIdOverride?: string | null;
 }
 
 export interface Episode {
@@ -29,6 +32,7 @@ export interface EpisodeDetail extends Episode {
   transcript?: string;
   adMarkers?: AdSegment[];
   rejectedAdMarkers?: AdSegment[];
+  corrections?: EpisodeCorrection[];
   originalDuration?: number;
   newDuration?: number;
   timeSaved?: number;
@@ -47,6 +51,14 @@ export interface AdValidation {
   original_confidence?: number;
   flags: string[];
   corrections?: string[];
+}
+
+export interface EpisodeCorrection {
+  id: number;
+  correction_type: 'confirm' | 'false_positive' | 'boundary_adjustment';
+  original_bounds: { start: number; end: number };
+  corrected_bounds?: { start: number; end: number };
+  created_at: string;
 }
 
 export interface AdSegment {
@@ -135,4 +147,23 @@ export interface SystemStatus {
   stats: {
     totalTimeSaved: number;
   };
+}
+
+export interface Sponsor {
+  id: number;
+  name: string;
+  aliases: string[];
+  category: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface SponsorNormalization {
+  id: number;
+  pattern: string;
+  replacement: string;
+  is_regex: boolean;
+  priority: number;
+  is_active: boolean;
+  created_at: string;
 }

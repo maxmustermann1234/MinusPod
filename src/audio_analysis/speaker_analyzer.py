@@ -148,13 +148,10 @@ class SpeakerAnalyzer:
                     raise RuntimeError("Failed to load pipeline - check model license acceptance")
 
                 if torch.cuda.is_available():
-                    # Disable cuDNN globally for this process
-                    # pyannote uses LSTMs which trigger cuDNN RNN code path
-                    # cuDNN 8 + CUDA 12.1 has version mismatch issues with RNN ops
-                    # This keeps GPU acceleration but uses PyTorch native RNN instead
-                    torch.backends.cudnn.enabled = False
+                    # Use GPU with cuDNN enabled (PyTorch bundles compatible cuDNN)
+                    # Base Docker image is CUDA-only (no system cuDNN) to avoid version mismatch
                     self._pipeline.to(torch.device("cuda"))
-                    logger.info("Diarization pipeline loaded on GPU (cuDNN disabled)")
+                    logger.info("Diarization pipeline loaded on GPU with cuDNN")
                 else:
                     logger.info("Diarization pipeline loaded on CPU")
 
@@ -171,9 +168,36 @@ class SpeakerAnalyzer:
         """Perform speaker diarization and pattern analysis."""
         self._load_pipeline()
 
-        # Run diarization
+        # Run diarization with audio preprocessing to avoid tensor size mismatch
+        # pyannote expects audio chunks of exactly 10 seconds (160000 samples at 16kHz)
+        # When audio ends at an unexpected boundary, we get tensor size errors
         logger.info(f"Running speaker diarization on {audio_path}")
-        diarization = self._pipeline(audio_path)
+        try:
+            import torchaudio
+            # Load and pad audio to prevent chunk boundary issues
+            waveform, sample_rate = torchaudio.load(audio_path)
+
+            # Resample to 16kHz if needed (pyannote expects 16kHz)
+            if sample_rate != 16000:
+                resampler = torchaudio.transforms.Resample(sample_rate, 16000)
+                waveform = resampler(waveform)
+                sample_rate = 16000
+
+            # Pad to next 10-second boundary (160000 samples) to avoid chunk mismatch
+            chunk_size = 160000  # 10 seconds at 16kHz
+            current_length = waveform.shape[1]
+            remainder = current_length % chunk_size
+            if remainder != 0:
+                padding_needed = chunk_size - remainder
+                waveform = torch.nn.functional.pad(waveform, (0, padding_needed))
+                logger.debug(f"Padded audio from {current_length} to {waveform.shape[1]} samples")
+
+            # Run diarization on padded waveform
+            diarization = self._pipeline({"waveform": waveform, "sample_rate": sample_rate})
+        except Exception as e:
+            # Fallback to direct file processing if preprocessing fails
+            logger.warning(f"Audio preprocessing failed, using direct file: {e}")
+            diarization = self._pipeline(audio_path)
 
         # Convert to segments
         segments = []

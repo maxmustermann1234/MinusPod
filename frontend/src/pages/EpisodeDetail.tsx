@@ -1,10 +1,21 @@
+import { useState, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getEpisode, reprocessEpisode } from '../api/feeds';
+import { submitCorrection } from '../api/patterns';
 import LoadingSpinner from '../components/LoadingSpinner';
+import TranscriptEditor, { AdCorrection } from '../components/TranscriptEditor';
+
+// Save status type for visual feedback
+type SaveStatus = 'idle' | 'saving' | 'success' | 'error';
 
 function EpisodeDetail() {
   const { slug, episodeId } = useParams<{ slug: string; episodeId: string }>();
+  const [showEditor, setShowEditor] = useState(false);
+  const [jumpToTime, setJumpToTime] = useState<number | null>(null);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const [showReprocessMenu, setShowReprocessMenu] = useState(false);
+  const editorRef = useRef<HTMLDivElement>(null);
 
   const queryClient = useQueryClient();
 
@@ -15,11 +26,95 @@ function EpisodeDetail() {
   });
 
   const reprocessMutation = useMutation({
-    mutationFn: () => reprocessEpisode(slug!, episodeId!),
+    mutationFn: (mode: 'reprocess' | 'full') => reprocessEpisode(slug!, episodeId!, mode),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['episode', slug, episodeId] });
+      setShowReprocessMenu(false);
     },
   });
+
+  // Mutation for submitting ad corrections
+  const correctionMutation = useMutation({
+    mutationFn: (correction: AdCorrection) =>
+      submitCorrection(slug!, episodeId!, {
+        type: correction.type,
+        original_ad: {
+          start: correction.originalAd.start,
+          end: correction.originalAd.end,
+          pattern_id: correction.originalAd.pattern_id,
+          confidence: correction.originalAd.confidence,
+          reason: correction.originalAd.reason,
+        },
+        adjusted_start: correction.adjustedStart,
+        adjusted_end: correction.adjustedEnd,
+      }),
+    onMutate: () => {
+      setSaveStatus('saving');
+    },
+    onSuccess: () => {
+      setSaveStatus('success');
+      setTimeout(() => setSaveStatus('idle'), 2000);
+      queryClient.invalidateQueries({ queryKey: ['episode', slug, episodeId] });
+    },
+    onError: (error) => {
+      console.error('Failed to save correction:', error);
+      setSaveStatus('error');
+      setTimeout(() => setSaveStatus('idle'), 3000);
+    },
+  });
+
+  // Handle ad corrections from TranscriptEditor
+  const handleCorrection = (correction: AdCorrection) => {
+    correctionMutation.mutate(correction);
+  };
+
+  // Jump to a specific ad in the editor
+  const handleJumpToAd = (startTime: number) => {
+    setJumpToTime(startTime);
+    if (!showEditor) {
+      setShowEditor(true);
+    }
+    // Scroll to editor
+    setTimeout(() => {
+      editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  };
+
+  // Convert ad markers to TranscriptEditor format
+  const getDetectedAds = () => {
+    if (!episode?.adMarkers) return [];
+    return episode.adMarkers.map((marker) => ({
+      start: marker.start,
+      end: marker.end,
+      confidence: marker.confidence,
+      reason: marker.reason || '',
+      sponsor: undefined, // Could be extracted from reason if needed
+      pattern_id: undefined,
+      detection_stage: marker.pass === 1 ? 'first_pass' : marker.pass === 2 ? 'second_pass' : 'merged',
+    }));
+  };
+
+  // Generate approximate transcript segments from plain text
+  // This is a placeholder - ideally we'd have timestamped segments from the API
+  const getTranscriptSegments = () => {
+    if (!episode?.transcript || !episode.originalDuration) return [];
+
+    // Split transcript into sentences/chunks
+    const text = episode.transcript;
+    const sentences = text.split(/(?<=[.!?])\s+/).filter((s) => s.trim());
+
+    if (sentences.length === 0) return [];
+
+    // Distribute timestamps evenly across sentences (approximation)
+    const duration = episode.originalDuration;
+    const segmentDuration = duration / sentences.length;
+
+    return sentences.map((sentence, index) => ({
+      start: index * segmentDuration,
+      end: (index + 1) * segmentDuration,
+      text: sentence.trim(),
+    }));
+  };
 
   const formatDuration = (seconds?: number) => {
     if (!seconds) return '';
@@ -47,6 +142,13 @@ function EpisodeDetail() {
     if (!bytes) return '';
     const mb = bytes / (1024 * 1024);
     return `${mb.toFixed(1)} MB`;
+  };
+
+  // Helper to find correction for an ad marker
+  const getAdCorrection = (start: number, end: number) => {
+    return episode?.corrections?.find(c =>
+      c.original_bounds.start === start && c.original_bounds.end === end
+    );
   };
 
   if (isLoading) {
@@ -104,13 +206,38 @@ function EpisodeDetail() {
               <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColors[episode.status]}`}>
                 {episode.status}
               </span>
-              <button
-                onClick={() => reprocessMutation.mutate()}
-                disabled={reprocessMutation.isPending || episode.status === 'processing'}
-                className="px-2 py-0.5 text-xs sm:text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {reprocessMutation.isPending ? 'Reprocessing...' : 'Reprocess'}
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setShowReprocessMenu(!showReprocessMenu)}
+                  disabled={reprocessMutation.isPending || episode.status === 'processing'}
+                  className="px-2 py-0.5 text-xs sm:text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                >
+                  {reprocessMutation.isPending ? 'Reprocessing...' : 'Reprocess'}
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showReprocessMenu && !reprocessMutation.isPending && episode.status !== 'processing' && (
+                  <div className="absolute top-full right-0 mt-1 w-52 bg-card border border-border rounded-lg shadow-lg z-10">
+                    <button
+                      onClick={() => reprocessMutation.mutate('reprocess')}
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-accent rounded-t-lg"
+                      title="Use learned patterns + Claude analysis"
+                    >
+                      <div className="font-medium">Reprocess</div>
+                      <div className="text-xs text-muted-foreground">Use patterns + Claude</div>
+                    </button>
+                    <button
+                      onClick={() => reprocessMutation.mutate('full')}
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-accent rounded-b-lg border-t border-border"
+                      title="Skip pattern DB, Claude analyzes everything fresh"
+                    >
+                      <div className="font-medium">Full Analysis</div>
+                      <div className="text-xs text-muted-foreground">Skip patterns, Claude only</div>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -139,19 +266,45 @@ function EpisodeDetail() {
 
       {episode.adMarkers && episode.adMarkers.length > 0 && (
         <div className="bg-card rounded-lg border border-border p-6 mb-6">
-          <h2 className="text-xl font-semibold text-foreground mb-4">
-            Detected Ads ({episode.adMarkers.length})
-            {(episode.adsRemovedFirstPass !== undefined && episode.adsRemovedSecondPass !== undefined && episode.adsRemovedSecondPass > 0) && (
-              <span className="ml-2 text-sm font-normal text-muted-foreground">
-                ({episode.adsRemovedFirstPass} first pass, {episode.adsRemovedSecondPass} second pass)
-              </span>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-foreground">
+              Detected Ads ({episode.adMarkers.length})
+              {(episode.adsRemovedFirstPass !== undefined && episode.adsRemovedSecondPass !== undefined && episode.adsRemovedSecondPass > 0) && (
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
+                  ({episode.adsRemovedFirstPass} first pass, {episode.adsRemovedSecondPass} second pass)
+                </span>
+              )}
+              {episode.timeSaved && episode.timeSaved > 0 && (
+                <span className="ml-2 text-base font-normal text-muted-foreground">
+                  - {formatDuration(episode.timeSaved)} time saved
+                </span>
+              )}
+            </h2>
+            {episode.status === 'completed' && episode.transcript && (
+              <button
+                onClick={() => setShowEditor(!showEditor)}
+                className="px-3 py-1.5 text-sm bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/80 transition-colors"
+              >
+                {showEditor ? 'Hide Editor' : 'Edit Ads'}
+              </button>
             )}
-            {episode.timeSaved && episode.timeSaved > 0 && (
-              <span className="ml-2 text-base font-normal text-muted-foreground">
-                - {formatDuration(episode.timeSaved)} time saved
-              </span>
-            )}
-          </h2>
+          </div>
+
+          {/* TranscriptEditor for reviewing/editing ad detections */}
+          {showEditor && episode.status === 'completed' && (
+            <div className="mb-4" ref={editorRef}>
+              <TranscriptEditor
+                segments={getTranscriptSegments()}
+                detectedAds={getDetectedAds()}
+                audioUrl={`/episodes/${slug}/${episode.id}.mp3`}
+                onCorrection={handleCorrection}
+                onClose={() => setShowEditor(false)}
+                initialSeekTime={jumpToTime ?? undefined}
+                saveStatus={saveStatus}
+              />
+            </div>
+          )}
+
           <div className="space-y-3">
             {episode.adMarkers.map((segment, index) => (
               <div
@@ -173,6 +326,34 @@ function EpisodeDetail() {
                       {segment.pass === 'merged' ? 'Merged' : `Pass ${segment.pass}`}
                     </span>
                   )}
+                  {episode.transcript && (
+                    <button
+                      onClick={() => handleJumpToAd(segment.start)}
+                      className="px-2 py-0.5 text-xs bg-primary/10 text-primary rounded hover:bg-primary/20 transition-colors"
+                      title="Jump to this ad in editor"
+                    >
+                      Jump
+                    </button>
+                  )}
+                  {(() => {
+                    const correction = getAdCorrection(segment.start, segment.end);
+                    if (correction) {
+                      return (
+                        <span className={`px-1.5 py-0.5 text-xs rounded font-medium ${
+                          correction.correction_type === 'confirm'
+                            ? 'bg-green-500/20 text-green-600 dark:text-green-400'
+                            : correction.correction_type === 'false_positive'
+                            ? 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400'
+                            : 'bg-blue-500/20 text-blue-600 dark:text-blue-400'
+                        }`}>
+                          {correction.correction_type === 'confirm' ? 'Confirmed'
+                           : correction.correction_type === 'false_positive' ? 'Not Ad'
+                           : 'Adjusted'}
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
                 <div className="flex flex-col items-end">
                   <span className="text-sm text-muted-foreground">

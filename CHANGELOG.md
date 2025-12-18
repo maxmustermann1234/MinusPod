@@ -5,6 +5,352 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.120] - 2025-12-18
+
+### Added
+- **Pattern Management UI** (Gap 1)
+  - New `/patterns` page for viewing and managing ad patterns
+  - Filterable by scope (Global/Network/Podcast)
+  - Searchable by sponsor name, text template, network
+  - Sortable columns: scope, sponsor, confirmations, false positives, last matched
+  - Toggle to show/hide inactive patterns
+  - Pattern detail modal with edit capabilities
+
+- **Network Override UI** (Gap 2)
+  - Dropdown in Feed Detail to manually set network ID
+  - Shows "Override" (orange) or "Detected" (green) badge
+  - GET /networks API endpoint lists available networks
+  - "Auto-detect" option clears override
+
+- **Reprocessing Mode Dropdown** (Gap 3 - BUG FIX)
+  - Fixed bug where reprocess mode was accepted but not actually used
+  - Added `reprocess_mode` column to episodes table
+  - "Reprocess" mode: Uses pattern DB + Claude (default)
+  - "Full Analysis" mode: Skips pattern DB, Claude analyzes fresh
+  - Mode passed to ad_detector via `skip_patterns` parameter
+
+- **Queue Priority** (Gap 4)
+  - Added `reprocess_requested_at` column to track reprocess requests
+  - Column cleared after processing completes
+
+- **Feedback UI Enhancements** (Gap 6)
+  - "Not an Ad" button now larger and more prominent (right side)
+  - "Confirm" button now secondary/muted styling
+  - Scope badges on detected ads (Global/Network/Podcast)
+  - Shows network name for network-scoped patterns
+
+### Fixed
+- **CUDA OOM for long episodes**
+  - Adaptive batch sizing based on audio duration
+  - Episodes >120 min use batch_size=4 (was 16)
+  - Auto-retry with smaller batch on OOM error
+  - Probes duration via ffprobe before transcription
+  - Fixes windows-weekly (2h36m) transcription failures
+
+### Changed
+- `networkIdOverride` type changed from boolean to string|null
+
+---
+
+## [0.1.119] - 2025-12-17
+
+### Added
+- Mobile-first transcript editor optimization
+  - **Touch targets**: All buttons now 44-48px for industry-standard accessibility
+  - **Swipe gestures**: Swipe left/right on transcript to navigate between ads
+  - **Haptic feedback**: Vibration on boundary changes, save, confirm, reject actions
+  - **Bottom sheet audio**: Apple Podcasts-style collapsible audio player on mobile
+  - **Draggable progress bar**: Touch-drag seeking with visual thumb indicator
+  - **Icon-only buttons**: Compact X, reset, check, save icons on mobile (labels in expanded mode)
+  - **Landscape mode**: Compact layout with hidden ad selector, swipe navigation hint
+
+### Changed
+- Transcript segments now have better spacing (p-3 on mobile, space-y-2)
+- Ad selector shows only start time to fit more buttons
+- Mobile toggle button includes chevron indicator
+- Expanded player shows prev/next ad navigation buttons
+
+---
+
+## [0.1.118] - 2025-12-17
+
+### Fixed
+- Mobile transcript editor now shows transcript content
+  - Boundary controls and touch mode toggles collapse by default on mobile
+  - Tap "Adjust Boundaries" to expand controls when needed
+  - Action buttons now horizontal on mobile with smaller text
+  - Reclaims ~150px of vertical space for transcript display
+  - Desktop layout unchanged (controls always visible)
+
+---
+
+## [0.1.117] - 2025-12-17
+
+### Added
+- Correction badges show on ad markers in episode detail
+  - "Confirmed" (green) for ads marked as correct
+  - "Not Ad" (yellow) for false positives
+  - "Adjusted" (blue) for boundary adjustments
+  - Badges persist across page refreshes (loaded from database)
+- Backend support for episode corrections lookup
+  - New `get_episode_corrections(episode_id)` method in database.py
+  - Episode API now includes `corrections` array in response
+
+### Fixed
+- Mobile transcript editor height reduced to prevent sticky controls hiding content
+  - Changed from 70vh to 50vh on mobile (50vh sm:70vh)
+  - Reduced max-height from 800px to 600px on mobile (600px sm:800px)
+
+---
+
+## [0.1.116] - 2025-12-17
+
+### Fixed
+- Sticky positioning now works in transcript editor
+  - Added fixed height (70vh, max 800px) to container to enable internal scrolling
+  - Sticky top/bottom sections now stay visible while scrolling transcript
+  - Previous issue: `h-full` with no parent height constraint caused no internal scroll
+
+---
+
+## [0.1.115] - 2025-12-17
+
+### Fixed
+- Transcript editor buttons now always visible without scrolling
+  - Sticky header keeps ad selector, boundary controls visible at top
+  - Sticky footer keeps audio player, action buttons visible at bottom
+  - Only the transcript content scrolls
+
+### Added
+- Save feedback on action buttons
+  - Buttons show "Saving..." while API call in progress
+  - Buttons show "Saved!" (green) on success for 2 seconds
+  - Buttons show "Error!" (red) on failure for 3 seconds
+  - Buttons disabled during save to prevent double-clicks
+- Auto-scroll transcript when selecting ad from selector
+  - Clicking ad time button (e.g., "0:00-1:11") scrolls transcript to that ad
+  - Added data-segment-start attribute for efficient element lookup
+
+### Improved
+- Mobile touch targets for ad selector buttons (px-3 py-2 vs px-2 py-1)
+- Added momentum scrolling to ad selector with touch-pan-x
+- Better overflow handling with overflow-hidden on container
+
+---
+
+## [0.1.114] - 2025-12-17
+
+### Fixed
+- Ad correction save functionality now works
+  - Wired up submitCorrection API call in EpisodeDetail.tsx
+  - Corrections (confirm/reject/adjust) now persist to database
+  - Previously just logged to console with TODO comment
+
+### Added
+- Shift-click range selection for ad boundaries
+  - Shift+Click on transcript segment sets END boundary
+  - Alt/Cmd+Click on transcript segment sets START boundary
+  - Visual indicators show boundary segments (green left border for start, orange right for end)
+- Mobile touch controls for ad editing
+  - Mode toggle buttons: Seek Mode / Set Start / Set End
+  - Double-tap segment to set START boundary
+  - Long-press (500ms) segment to set END boundary
+  - Mobile-specific instructions replace keyboard hints
+- Auto-focus editor for keyboard shortcuts
+  - TranscriptEditor now auto-focuses when opened
+  - Focus ring shows when editor has keyboard focus
+
+### Improved
+- Keyboard shortcuts hint now includes click modifiers
+- Added select-none to transcript segments to prevent text selection during interaction
+
+---
+
+## [0.1.113] - 2025-12-17
+
+### Fixed
+- Episode count bug: Single feed API endpoint now correctly returns episode counts
+  - Modified `get_podcast_by_slug()` to JOIN episodes table for counts
+  - Matches behavior of feed list endpoint which already had correct counts
+
+### Changed
+- Post-roll ad handling: Skip remaining content if < 30 seconds after last ad
+  - Prevents post-roll ad residue from appearing in processed audio
+  - Configured threshold of 30 seconds catches most post-roll ads
+- Short ad detection filtering: Skip removal of ads < 10 seconds
+  - Very short detections are often false positives or audio gaps
+  - These segments are now left in the processed audio
+
+### Improved
+- Mobile UI for ad marking in TranscriptEditor
+  - Larger touch targets for nudge buttons on mobile (p-2 vs p-1)
+  - Larger play button on mobile (p-3 vs p-2)
+  - Taller progress bar on mobile for easier tapping
+  - Keyboard shortcuts hint hidden on mobile (not useful)
+  - Action buttons stack vertically on mobile for easier tapping
+  - Added `touch-manipulation` and `active:` states for better touch feedback
+
+---
+
+## [0.1.112] - 2025-12-17
+
+### Added
+- Network display and edit on feed page
+  - Shows Network and DAI Platform labels when available
+  - Inline edit capability to set/update network and DAI platform
+  - Calls PATCH /api/v1/feeds/{slug} to save changes
+- Jump buttons on ad segments
+  - Each detected ad now has a "Jump" button
+  - Opens TranscriptEditor and seeks to that timestamp
+  - Makes reviewing specific ads much easier
+- Clickable progress bar in TranscriptEditor
+  - Click anywhere on the progress bar to seek to that position
+  - Bar grows on hover for easier clicking
+  - Supports initialSeekTime prop for external seeking
+
+---
+
+## [0.1.111] - 2025-12-17
+
+### Fixed
+- Speaker diarization tensor size error on audio boundary
+  - Added audio padding to prevent "Sizes of tensors must match" error
+  - Preprocesses audio to align to 10-second chunk boundaries (160000 samples at 16kHz)
+  - Falls back to direct file processing if preprocessing fails
+
+### Added
+- Network fields now exposed in API responses
+  - GET /api/v1/feeds returns networkId, daiPlatform for each feed
+  - GET /api/v1/feeds/{slug} returns networkId, daiPlatform, networkIdOverride
+- PATCH /api/v1/feeds/{slug} endpoint for updating feed settings
+  - Supports networkId, daiPlatform, networkIdOverride, title, description
+  - Allows manual override of auto-detected network values
+- Database update_podcast() now allows setting network_id, dai_platform, network_id_override
+
+---
+
+## [0.1.110] - 2025-12-17
+
+### Fixed
+- Worker crash during reprocessing (exit code 134) - COMPLETE FIX
+  - v0.1.109 installed cuDNN via pip but libraries weren't in LD_LIBRARY_PATH
+  - Added LD_LIBRARY_PATH to ENV to include pip-installed cuDNN/cuBLAS libs
+  - Path: /usr/local/lib/python3.11/dist-packages/nvidia/cudnn/lib
+
+---
+
+## [0.1.109] - 2025-12-17
+
+### Fixed
+- Worker crash during reprocessing (exit code 134) - INCOMPLETE FIX
+  - Root cause: Base Docker image changed to CUDA-only lacked cuDNN libraries
+  - PyTorch RNN operations used by pyannote speaker diarization still require system cuDNN
+  - Fix: Install nvidia-cudnn-cu12==8.9.2.26 via pip to provide cuDNN libraries
+  - NOTE: Libraries installed but not in LD_LIBRARY_PATH - see v0.1.110
+- API 500 errors on pattern/correction endpoints
+  - Fixed db variable not initialized in list_patterns, get_pattern, update_pattern
+  - Fixed db not initialized in submit_correction, export_patterns, import_patterns
+  - Fixed db not initialized in reprocess_episode_with_mode
+  - Fixed _find_similar_pattern helper missing db parameter
+
+### Added
+- RSS feed network detection integration
+  - Now automatically detects DAI platform (megaphone, acast, art19, etc.) on feed refresh
+  - Now automatically detects podcast network (TWiT, Relay FM, NPR, etc.) on feed refresh
+  - Network and platform info stored in database for pattern scoping
+
+---
+
+## [0.1.108] - 2025-12-17
+
+### Fixed
+- Speaker diarization 10x performance improvement
+  - Changed Docker base image from `nvidia/cuda:12.1.1-cudnn8-runtime` to `nvidia/cuda:12.1.1-runtime` (CUDA-only, no cuDNN)
+  - Re-enabled cuDNN in speaker_analyzer.py - PyTorch now uses its bundled cuDNN without version conflicts
+  - Diarization now runs with full GPU+cuDNN acceleration instead of CPU-fallback RNN kernels
+- Database schema mismatch causing 500 errors on /api/v1/patterns endpoint
+  - Fixed `_create_new_tables_only()` to match SCHEMA_SQL schema for ad_patterns table
+  - Aligned audio_fingerprints and pattern_corrections table schemas
+- GlobalStatusBar overlapping navigation buttons
+  - Added padding-top to Layout component to account for fixed status bar
+
+### Added
+- TranscriptEditor integration in EpisodeDetail page
+  - "Edit Ads" button to toggle transcript editor for reviewing/adjusting ad detections
+  - Approximate transcript segmentation from plain text for editor display
+  - Placeholder for correction submission API
+
+---
+
+## [0.1.107] - 2025-12-17
+
+### Fixed
+- Database schema migration failing on existing databases
+  - Rewrote schema initialization to detect existing databases and only run migrations
+  - Added comprehensive migrations for all new columns (network_id, dai_platform, created_at, processed_file, etc.)
+  - Fixed known_sponsors table to include common_ctas column
+  - New tables for cross-episode training created separately from indexes
+  - Added get_podcast() alias method for backwards compatibility
+
+---
+
+## [0.1.106] - 2025-12-17
+
+### Fixed
+- Server failing to start with duplicate endpoint error
+  - Flask AssertionError: "View function mapping is overwriting an existing endpoint function: api.reprocess_episode"
+  - Renamed duplicate `reprocess_episode` function to `reprocess_episode_with_mode`
+
+---
+
+## [0.1.105] - 2025-12-17
+
+### Added
+- Cross-episode ad training system for improved ad detection accuracy
+  - Audio fingerprinting using Chromaprint to detect identical DAI-inserted ads across episodes
+  - Text pattern matching using TF-IDF vectorization and RapidFuzz for repeated sponsor reads
+  - Three-stage detection pipeline: fingerprint match -> text pattern match -> Claude fallback
+  - Pattern hierarchy system: Global -> Network -> Podcast scoping
+  - Auto-promotion of patterns when confirmed across multiple episodes
+- Sponsor management service with 100+ seed sponsors
+  - Automatic text normalization (URLs, email addresses, phone numbers)
+  - 5-minute cache for sponsor lookups
+  - API endpoints for sponsor CRUD operations
+- Real-time processing status via Server-Sent Events (SSE)
+  - Global status bar component showing current processing activity
+  - Live updates for feed refresh and episode processing
+- Transcript editor UI with keyboard navigation
+  - Segment boundary adjustment with J/K/L keys
+  - Pattern correction submission (confirm, false positive, boundary adjustment)
+  - Visual highlighting of ad segments
+- Pattern correction workflow
+  - Submit corrections to refine pattern boundaries
+  - Track correction history per pattern
+  - Auto-promote patterns after threshold confirmations
+- Data retention and cleanup service
+  - Configurable retention periods for episodes and patterns
+  - Automatic cleanup of stale patterns with low confidence
+  - Manual cleanup triggers via API
+- Import/export functionality for patterns and sponsors
+  - Export patterns to JSON for backup or sharing
+  - Import patterns from other instances
+
+### Changed
+- Ad detector now uses 3-stage detection pipeline
+  - Stage 1: Audio fingerprint matching (instant, no API cost)
+  - Stage 2: Text pattern matching (fast, no API cost)
+  - Stage 3: Claude API fallback (only for unknown ads)
+- Updated Dockerfile with libchromaprint-tools for audio fingerprinting
+- Added pyacoustid, rapidfuzz, scikit-learn to requirements.txt
+
+### Technical
+- New database tables: ad_patterns, audio_fingerprints, text_patterns, pattern_corrections, sponsors, sponsor_normalizations
+- New services: sponsor_service.py, status_service.py, audio_fingerprinter.py, text_pattern_matcher.py, pattern_service.py, cleanup_service.py
+- New frontend components: GlobalStatusBar.tsx, TranscriptEditor.tsx
+- New API endpoints for patterns, corrections, sponsors, import/export, SSE status
+
+---
+
 ## [0.1.104] - 2025-12-16
 
 ### Fixed

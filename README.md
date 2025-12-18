@@ -69,6 +69,53 @@ Ads are classified as:
 
 Rejected ads appear in a separate "Rejected Detections" section in the UI, allowing you to verify the validator's decisions.
 
+### Cross-Episode Ad Pattern Learning
+
+The system learns from ad detections across all episodes to improve accuracy over time. When an ad is detected and validated, text patterns are extracted and stored for future matching.
+
+**Pattern Hierarchy:**
+- **Global Patterns** - Match across all podcasts (e.g., common sponsors like Squarespace, BetterHelp)
+- **Network Patterns** - Match within a podcast network (TWiT, Relay FM, Gimlet, etc.)
+- **Podcast Patterns** - Match only for a specific podcast
+
+When processing new episodes, the system first checks for known patterns before sending to Claude. Patterns with high confirmation counts and low false positive rates are matched with high confidence.
+
+**Pattern Sources:**
+- **Audio Fingerprinting** - Identifies DAI-inserted ads using Chromaprint acoustic fingerprints
+- **Text Pattern Matching** - TF-IDF similarity and fuzzy matching against learned patterns
+- **Claude Analysis** - Falls back to AI analysis for uncovered segments
+
+**User Corrections:**
+In the transcript editor, you can confirm or reject detected ads:
+- **Confirm** - Creates/updates patterns in the database, incrementing confirmation count
+- **Mark as Not Ad** - Flags as false positive, incrementing false_positive_count (auto-disables patterns with high false positive rates)
+
+**Pattern Management:**
+Access the Patterns page from the navigation bar to:
+- View all patterns with their scope, sponsor, and statistics
+- Filter by scope (Global, Network, Podcast) or search by sponsor name
+- Toggle patterns active/inactive
+- View confirmation and false positive counts
+
+### Real-Time Processing Status
+
+A global status bar shows real-time processing progress via Server-Sent Events:
+
+- **Processing Indicator** - Shows currently processing episode title
+- **Stage Display** - Current stage (Transcribing, Detecting Ads, Processing Audio)
+- **Progress Bar** - Visual progress indicator
+- **Queue Depth** - Number of episodes waiting to be processed
+- **Quick Navigation** - Click to view the processing episode
+
+### Reprocessing Modes
+
+When reprocessing an episode from the UI, two modes are available:
+
+- **Reprocess** (default) - Uses learned patterns from the pattern database plus Claude analysis
+- **Full Analysis** - Skips the pattern database entirely for a fresh Claude-only analysis
+
+Full Analysis is useful when you want to re-evaluate an episode without the influence of learned patterns (e.g., after disabling patterns that caused false positives).
+
 ### Audio Analysis (Optional)
 
 Enable audio analysis in Settings for improved ad detection accuracy:
@@ -113,9 +160,35 @@ The server includes a web-based management UI at `/ui/`:
 
 - **Dashboard** - View all feeds with artwork and episode counts
 - **Add Feed** - Add new podcasts by RSS URL
-- **Feed Management** - Refresh, delete, copy feed URLs
+- **Feed Management** - Refresh, delete, copy feed URLs, set network override
+- **Patterns** - View and manage cross-episode ad patterns
 - **Settings** - Configure ad detection prompts and Claude model
 - **System Status** - View statistics and run cleanup
+- **Real-Time Status Bar** - Shows current processing progress across all pages
+
+### Transcript Editor (Mobile-First)
+
+The transcript editor allows you to review and adjust ad detections directly in the browser. It's optimized for mobile as the primary interface:
+
+**Mobile Features:**
+- **Touch-Optimized** - All buttons meet 44-48px accessibility standards for easy tapping
+- **Swipe Navigation** - Swipe left/right on transcript to navigate between ads
+- **Haptic Feedback** - Vibration feedback on boundary adjustments and actions
+- **Bottom Sheet Player** - Apple Podcasts-style collapsible audio controls
+- **Draggable Progress** - Touch-drag seeking with visual thumb indicator
+- **Icon Buttons** - Compact action buttons (X, reset, check, save) with full labels in expanded mode
+- **Landscape Mode** - Optimized layout for horizontal orientation
+
+**Touch Gestures:**
+- Single tap: Seek to segment (or set boundary in Set Start/End mode)
+- Double tap: Set start boundary
+- Long press: Set end boundary
+- Horizontal swipe: Navigate to previous/next ad
+
+**Desktop Features:**
+- Keyboard shortcuts for quick editing (Space, J/K, Shift+J/K, C, X, Esc)
+- Click to seek, Shift+Click to set end, Alt+Click to set start
+- Inline audio player with hover-expandable progress bar
 
 ### Screenshots
 
@@ -206,10 +279,16 @@ Key endpoints:
 - `GET /api/v1/feeds` - List all feeds
 - `GET /api/v1/feeds/{slug}` - Get feed details
 - `POST /api/v1/feeds` - Add a new feed
-- `POST /api/v1/feeds/{slug}/episodes/{id}/reprocess` - Force reprocess an episode
+- `POST /api/v1/feeds/{slug}/episodes/{id}/reprocess` - Force reprocess (supports `mode`: reprocess/full)
 - `POST /api/v1/feeds/{slug}/episodes/{id}/retry-ad-detection` - Retry ad detection only
+- `POST /api/v1/feeds/{slug}/episodes/{id}/corrections` - Submit ad corrections
 - `GET /api/v1/episodes/processing` - List episodes currently processing
 - `POST /api/v1/feeds/{slug}/episodes/{id}/cancel` - Cancel stuck processing episode
+- `GET /api/v1/patterns` - List ad patterns (filter by scope)
+- `PUT /api/v1/patterns/{id}` - Update pattern
+- `GET /api/v1/networks` - List known podcast networks
+- `GET /api/v1/status` - Get current processing status
+- `GET /api/v1/status/stream` - SSE endpoint for real-time status updates
 - `GET /api/v1/settings` - Get current settings
 - `PUT /api/v1/settings/ad-detection` - Update ad detection config
 

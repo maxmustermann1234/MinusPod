@@ -122,6 +122,9 @@ CREATE TABLE IF NOT EXISTS podcasts (
     artwork_url TEXT,
     artwork_cached INTEGER DEFAULT 0,
     last_checked_at TEXT,
+    network_id TEXT,
+    dai_platform TEXT,
+    network_id_override TEXT,
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -181,12 +184,98 @@ CREATE TABLE IF NOT EXISTS stats (
     updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
+-- system_settings table (for schema versioning and configurable settings)
+CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- ad_patterns table (learned ad patterns - NO FK to podcasts, survives content deletion)
+CREATE TABLE IF NOT EXISTS ad_patterns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL CHECK(scope IN ('global', 'network', 'podcast')),
+    network_id TEXT,
+    podcast_id TEXT,
+    dai_platform TEXT,
+    text_template TEXT,
+    intro_variants TEXT DEFAULT '[]',
+    outro_variants TEXT DEFAULT '[]',
+    sponsor TEXT,
+    confirmation_count INTEGER DEFAULT 0,
+    false_positive_count INTEGER DEFAULT 0,
+    last_matched_at TEXT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    created_from_episode_id TEXT,
+    is_active INTEGER DEFAULT 1,
+    disabled_at TEXT,
+    disabled_reason TEXT
+);
+
+-- pattern_corrections table (audit log of user corrections - never deleted)
+CREATE TABLE IF NOT EXISTS pattern_corrections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern_id INTEGER,
+    episode_id TEXT,
+    podcast_title TEXT,
+    episode_title TEXT,
+    correction_type TEXT NOT NULL CHECK(correction_type IN ('false_positive', 'boundary_adjustment', 'confirm', 'promotion')),
+    original_bounds TEXT,
+    corrected_bounds TEXT,
+    text_snippet TEXT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- audio_fingerprints table (Chromaprint hashes for DAI-inserted ads)
+CREATE TABLE IF NOT EXISTS audio_fingerprints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern_id INTEGER UNIQUE,
+    fingerprint BLOB,
+    duration REAL,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- known_sponsors table (master sponsor list - single source of truth)
+CREATE TABLE IF NOT EXISTS known_sponsors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    aliases TEXT DEFAULT '[]',
+    category TEXT,
+    common_ctas TEXT DEFAULT '[]',
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+-- sponsor_normalizations table (Whisper transcription fixes)
+CREATE TABLE IF NOT EXISTS sponsor_normalizations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern TEXT UNIQUE NOT NULL,
+    replacement TEXT NOT NULL,
+    category TEXT CHECK(category IN ('sponsor', 'url', 'number', 'phrase')),
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_podcasts_slug ON podcasts(slug);
 CREATE INDEX IF NOT EXISTS idx_episodes_podcast_id ON episodes(podcast_id);
 CREATE INDEX IF NOT EXISTS idx_episodes_episode_id ON episodes(episode_id);
 CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status);
 CREATE INDEX IF NOT EXISTS idx_episodes_created_at ON episodes(created_at);
 CREATE INDEX IF NOT EXISTS idx_episode_details_episode_id ON episode_details(episode_id);
+
+-- Cross-episode training indexes (indexes on new columns created in migrations)
+CREATE INDEX IF NOT EXISTS idx_patterns_sponsor ON ad_patterns(sponsor) WHERE is_active = 1;
+CREATE INDEX IF NOT EXISTS idx_fingerprints_pattern ON audio_fingerprints(pattern_id);
+CREATE INDEX IF NOT EXISTS idx_corrections_pattern ON pattern_corrections(pattern_id);
+CREATE INDEX IF NOT EXISTS idx_sponsors_name ON known_sponsors(name) WHERE is_active = 1;
+CREATE INDEX IF NOT EXISTS idx_normalizations_pattern ON sponsor_normalizations(pattern) WHERE is_active = 1;
+"""
+
+# Indexes that depend on columns added by migrations - created separately
+MIGRATION_INDEXES_SQL = """
+CREATE INDEX IF NOT EXISTS idx_podcasts_network_id ON podcasts(network_id);
+CREATE INDEX IF NOT EXISTS idx_podcasts_dai_platform ON podcasts(dai_platform);
+CREATE INDEX IF NOT EXISTS idx_patterns_scope ON ad_patterns(scope, network_id, podcast_id) WHERE is_active = 1;
 """
 
 
@@ -236,12 +325,106 @@ class Database:
     def _init_schema(self):
         """Initialize database schema."""
         conn = self.get_connection()
-        conn.executescript(SCHEMA_SQL)
-        conn.commit()
-        logger.info(f"Database schema initialized at {self.db_path}")
 
-        # Run schema migrations for existing databases
-        self._run_schema_migrations()
+        # Check if database already has tables (existing database)
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='podcasts'"
+        )
+        is_existing_db = cursor.fetchone() is not None
+
+        if is_existing_db:
+            # For existing databases, only create new tables and run migrations
+            # Don't run full SCHEMA_SQL as indexes may reference columns that don't exist yet
+            logger.info(f"Existing database found at {self.db_path}, running migrations...")
+            self._create_new_tables_only(conn)
+            self._run_schema_migrations()
+        else:
+            # Fresh database - run full schema
+            conn.executescript(SCHEMA_SQL)
+            conn.commit()
+            logger.info(f"Database schema initialized at {self.db_path}")
+            # Still run migrations to ensure all columns exist
+            self._run_schema_migrations()
+
+    def _create_new_tables_only(self, conn):
+        """Create new tables for existing databases without running indexes."""
+        # Create ad_patterns table if not exists (must match SCHEMA_SQL exactly)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ad_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scope TEXT NOT NULL CHECK(scope IN ('global', 'network', 'podcast')),
+                network_id TEXT,
+                podcast_id TEXT,
+                dai_platform TEXT,
+                text_template TEXT,
+                intro_variants TEXT DEFAULT '[]',
+                outro_variants TEXT DEFAULT '[]',
+                sponsor TEXT,
+                confirmation_count INTEGER DEFAULT 0,
+                false_positive_count INTEGER DEFAULT 0,
+                last_matched_at TEXT,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                created_from_episode_id TEXT,
+                is_active INTEGER DEFAULT 1,
+                disabled_at TEXT,
+                disabled_reason TEXT
+            )
+        """)
+
+        # Create audio_fingerprints table if not exists (must match SCHEMA_SQL exactly)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audio_fingerprints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern_id INTEGER UNIQUE,
+                fingerprint BLOB,
+                duration REAL,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+
+        # Create pattern_corrections table if not exists (must match SCHEMA_SQL exactly)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pattern_corrections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern_id INTEGER,
+                episode_id TEXT,
+                podcast_title TEXT,
+                episode_title TEXT,
+                correction_type TEXT NOT NULL CHECK(correction_type IN ('false_positive', 'boundary_adjustment', 'confirm', 'promotion')),
+                original_bounds TEXT,
+                corrected_bounds TEXT,
+                text_snippet TEXT,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+
+        # Create known_sponsors table if not exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS known_sponsors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                aliases TEXT DEFAULT '[]',
+                category TEXT,
+                common_ctas TEXT DEFAULT '[]',
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+
+        # Create sponsor_normalizations table if not exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sponsor_normalizations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern TEXT UNIQUE NOT NULL,
+                replacement TEXT NOT NULL,
+                category TEXT CHECK(category IN ('sponsor', 'url', 'number', 'phrase')),
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+
+        conn.commit()
+        logger.info("Created new tables for cross-episode training")
 
     def _run_schema_migrations(self):
         """Run schema migrations for existing databases."""
@@ -263,6 +446,18 @@ class Database:
             except Exception as e:
                 logger.error(f"Migration failed for ad_detection_status: {e}")
 
+        # Migration: Add created_at column if missing
+        if 'created_at' not in columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episodes
+                    ADD COLUMN created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                """)
+                conn.commit()
+                logger.info("Migration: Added created_at column to episodes table")
+            except Exception as e:
+                logger.error(f"Migration failed for created_at: {e}")
+
         # Migration: Add artwork_url column if missing
         if 'artwork_url' not in columns:
             try:
@@ -274,6 +469,42 @@ class Database:
                 logger.info("Migration: Added artwork_url column to episodes table")
             except Exception as e:
                 logger.error(f"Migration failed for artwork_url: {e}")
+
+        # Migration: Add processed_file column if missing
+        if 'processed_file' not in columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episodes
+                    ADD COLUMN processed_file TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added processed_file column to episodes table")
+            except Exception as e:
+                logger.error(f"Migration failed for processed_file: {e}")
+
+        # Migration: Add processed_at column if missing
+        if 'processed_at' not in columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episodes
+                    ADD COLUMN processed_at TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added processed_at column to episodes table")
+            except Exception as e:
+                logger.error(f"Migration failed for processed_at: {e}")
+
+        # Migration: Add original_duration column if missing
+        if 'original_duration' not in columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episodes
+                    ADD COLUMN original_duration REAL
+                """)
+                conn.commit()
+                logger.info("Migration: Added original_duration column to episodes table")
+            except Exception as e:
+                logger.error(f"Migration failed for original_duration: {e}")
 
         # Get existing columns in episode_details table
         cursor = conn.execute("PRAGMA table_info(episode_details)")
@@ -367,6 +598,30 @@ class Database:
             except Exception as e:
                 logger.error(f"Migration failed for description: {e}")
 
+        # Migration: Add reprocess_mode column if missing (Gap 3 fix)
+        if 'reprocess_mode' not in columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episodes
+                    ADD COLUMN reprocess_mode TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added reprocess_mode column to episodes table")
+            except Exception as e:
+                logger.error(f"Migration failed for reprocess_mode: {e}")
+
+        # Migration: Add reprocess_requested_at column if missing (Gap 4 - priority queue)
+        if 'reprocess_requested_at' not in columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episodes
+                    ADD COLUMN reprocess_requested_at TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added reprocess_requested_at column to episodes table")
+            except Exception as e:
+                logger.error(f"Migration failed for reprocess_requested_at: {e}")
+
         # Refresh details_columns list before checking for new columns
         cursor = conn.execute("PRAGMA table_info(episode_details)")
         details_columns = [row['name'] for row in cursor.fetchall()]
@@ -382,6 +637,68 @@ class Database:
                 logger.info("Migration: Added audio_analysis_json column to episode_details table")
             except Exception as e:
                 logger.error(f"Migration failed for audio_analysis_json: {e}")
+
+        # ========== Cross-Episode Training Migrations ==========
+
+        # Get existing columns in podcasts table
+        cursor = conn.execute("PRAGMA table_info(podcasts)")
+        podcasts_columns = [row['name'] for row in cursor.fetchall()]
+
+        # Migration: Add network_id column to podcasts if missing
+        if 'network_id' not in podcasts_columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE podcasts
+                    ADD COLUMN network_id TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added network_id column to podcasts table")
+            except Exception as e:
+                logger.error(f"Migration failed for network_id: {e}")
+
+        # Migration: Add dai_platform column to podcasts if missing
+        if 'dai_platform' not in podcasts_columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE podcasts
+                    ADD COLUMN dai_platform TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added dai_platform column to podcasts table")
+            except Exception as e:
+                logger.error(f"Migration failed for dai_platform: {e}")
+
+        # Migration: Add network_id_override column to podcasts if missing
+        if 'network_id_override' not in podcasts_columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE podcasts
+                    ADD COLUMN network_id_override TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added network_id_override column to podcasts table")
+            except Exception as e:
+                logger.error(f"Migration failed for network_id_override: {e}")
+
+        # Migration: Add created_at column to podcasts if missing
+        if 'created_at' not in podcasts_columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE podcasts
+                    ADD COLUMN created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                """)
+                conn.commit()
+                logger.info("Migration: Added created_at column to podcasts table")
+            except Exception as e:
+                logger.error(f"Migration failed for podcasts created_at: {e}")
+
+        # Create new indexes for podcasts table (will fail silently if already exist)
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_podcasts_network_id ON podcasts(network_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_podcasts_dai_platform ON podcasts(dai_platform)")
+            conn.commit()
+        except Exception as e:
+            logger.debug(f"Index creation (may already exist): {e}")
 
     def _migrate_from_json(self):
         """Migrate data from JSON files to SQLite."""
@@ -580,11 +897,18 @@ class Database:
         return [dict(row) for row in cursor.fetchall()]
 
     def get_podcast_by_slug(self, slug: str) -> Optional[Dict]:
-        """Get podcast by slug."""
+        """Get podcast by slug with episode counts."""
         conn = self.get_connection()
-        cursor = conn.execute(
-            "SELECT * FROM podcasts WHERE slug = ?", (slug,)
-        )
+        cursor = conn.execute("""
+            SELECT p.*,
+                   COUNT(e.id) as episode_count,
+                   SUM(CASE WHEN e.status = 'processed' THEN 1 ELSE 0 END) as processed_count,
+                   MAX(e.created_at) as last_episode_date
+            FROM podcasts p
+            LEFT JOIN episodes e ON p.id = e.podcast_id
+            WHERE p.slug = ?
+            GROUP BY p.id
+        """, (slug,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
@@ -610,7 +934,8 @@ class Database:
         values = []
         for key, value in kwargs.items():
             if key in ('title', 'description', 'artwork_url', 'artwork_cached',
-                       'last_checked_at', 'source_url'):
+                       'last_checked_at', 'source_url', 'network_id', 'dai_platform',
+                       'network_id_override'):
                 fields.append(f"{key} = ?")
                 values.append(value)
 
@@ -635,6 +960,10 @@ class Database:
         )
         conn.commit()
         return cursor.rowcount > 0
+
+    def get_podcast(self, slug: str) -> Optional[Dict]:
+        """Alias for get_podcast_by_slug for backwards compatibility."""
+        return self.get_podcast_by_slug(slug)
 
     # ========== Episode Methods ==========
 
@@ -734,7 +1063,8 @@ class Database:
                     if key in ('original_url', 'title', 'description', 'status', 'processed_file',
                                'processed_at', 'original_duration', 'new_duration',
                                'ads_removed', 'ads_removed_firstpass', 'ads_removed_secondpass',
-                               'error_message', 'ad_detection_status', 'artwork_url'):
+                               'error_message', 'ad_detection_status', 'artwork_url',
+                               'reprocess_mode', 'reprocess_requested_at'):
                         fields.append(f"{key} = ?")
                         values.append(value)
 
@@ -1135,3 +1465,390 @@ class Database:
         )
         row = cursor.fetchone()
         return row['value'] if row else 0.0
+
+    # ========== System Settings Methods (for schema versioning) ==========
+
+    def get_system_setting(self, key: str) -> Optional[str]:
+        """Get a system setting value."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            "SELECT value FROM system_settings WHERE key = ?", (key,)
+        )
+        row = cursor.fetchone()
+        return row['value'] if row else None
+
+    def set_system_setting(self, key: str, value: str):
+        """Set a system setting value."""
+        conn = self.get_connection()
+        conn.execute(
+            """INSERT INTO system_settings (key, value, updated_at)
+               VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+               ON CONFLICT(key) DO UPDATE SET
+                 value = excluded.value,
+                 updated_at = excluded.updated_at""",
+            (key, value)
+        )
+        conn.commit()
+
+    # ========== Ad Patterns Methods ==========
+
+    def get_ad_patterns(self, scope: str = None, podcast_id: str = None,
+                        network_id: str = None, active_only: bool = True) -> List[Dict]:
+        """Get ad patterns with optional filtering."""
+        conn = self.get_connection()
+
+        query = "SELECT * FROM ad_patterns WHERE 1=1"
+        params = []
+
+        if active_only:
+            query += " AND is_active = 1"
+        if scope:
+            query += " AND scope = ?"
+            params.append(scope)
+        if podcast_id:
+            query += " AND podcast_id = ?"
+            params.append(podcast_id)
+        if network_id:
+            query += " AND network_id = ?"
+            params.append(network_id)
+
+        query += " ORDER BY confirmation_count DESC, created_at DESC"
+
+        cursor = conn.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_ad_pattern_by_id(self, pattern_id: int) -> Optional[Dict]:
+        """Get a single ad pattern by ID."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            "SELECT * FROM ad_patterns WHERE id = ?", (pattern_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def create_ad_pattern(self, scope: str, text_template: str = None,
+                          sponsor: str = None, podcast_id: str = None,
+                          network_id: str = None, dai_platform: str = None,
+                          intro_variants: List[str] = None,
+                          outro_variants: List[str] = None,
+                          created_from_episode_id: str = None) -> int:
+        """Create a new ad pattern. Returns pattern ID."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            """INSERT INTO ad_patterns
+               (scope, text_template, sponsor, podcast_id, network_id, dai_platform,
+                intro_variants, outro_variants, created_from_episode_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (scope, text_template, sponsor, podcast_id, network_id, dai_platform,
+             json.dumps(intro_variants or []), json.dumps(outro_variants or []),
+             created_from_episode_id)
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+    def update_ad_pattern(self, pattern_id: int, **kwargs) -> bool:
+        """Update an ad pattern."""
+        conn = self.get_connection()
+
+        fields = []
+        values = []
+        for key, value in kwargs.items():
+            if key in ('scope', 'text_template', 'sponsor', 'podcast_id', 'network_id',
+                       'dai_platform', 'confirmation_count', 'false_positive_count',
+                       'last_matched_at', 'is_active', 'disabled_at', 'disabled_reason'):
+                fields.append(f"{key} = ?")
+                values.append(value)
+            elif key in ('intro_variants', 'outro_variants'):
+                fields.append(f"{key} = ?")
+                values.append(json.dumps(value) if isinstance(value, list) else value)
+
+        if not fields:
+            return False
+
+        values.append(pattern_id)
+        conn.execute(
+            f"UPDATE ad_patterns SET {', '.join(fields)} WHERE id = ?",
+            values
+        )
+        conn.commit()
+        return True
+
+    def increment_pattern_match(self, pattern_id: int):
+        """Increment pattern confirmation count and update last_matched_at."""
+        conn = self.get_connection()
+        conn.execute(
+            """UPDATE ad_patterns SET
+               confirmation_count = confirmation_count + 1,
+               last_matched_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+               WHERE id = ?""",
+            (pattern_id,)
+        )
+        conn.commit()
+
+    def increment_pattern_false_positive(self, pattern_id: int):
+        """Increment pattern false positive count."""
+        conn = self.get_connection()
+        conn.execute(
+            "UPDATE ad_patterns SET false_positive_count = false_positive_count + 1 WHERE id = ?",
+            (pattern_id,)
+        )
+        conn.commit()
+
+    def delete_ad_pattern(self, pattern_id: int) -> bool:
+        """Delete an ad pattern. Returns True if deleted."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            "DELETE FROM ad_patterns WHERE id = ?", (pattern_id,)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def delete_old_episodes(self, cutoff_date: str) -> int:
+        """Delete episodes older than cutoff date. Returns count deleted."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            "DELETE FROM episodes WHERE created_at < ?", (cutoff_date,)
+        )
+        conn.commit()
+        return cursor.rowcount
+
+    # ========== Pattern Corrections Methods ==========
+
+    def create_pattern_correction(self, correction_type: str, pattern_id: int = None,
+                                   episode_id: str = None, podcast_title: str = None,
+                                   episode_title: str = None, original_bounds: Dict = None,
+                                   corrected_bounds: Dict = None, text_snippet: str = None) -> int:
+        """Create a pattern correction record. Returns correction ID."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            """INSERT INTO pattern_corrections
+               (pattern_id, episode_id, podcast_title, episode_title, correction_type,
+                original_bounds, corrected_bounds, text_snippet)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (pattern_id, episode_id, podcast_title, episode_title, correction_type,
+             json.dumps(original_bounds) if original_bounds else None,
+             json.dumps(corrected_bounds) if corrected_bounds else None,
+             text_snippet)
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+    def get_pattern_corrections(self, pattern_id: int = None, limit: int = 100) -> List[Dict]:
+        """Get pattern corrections, optionally filtered by pattern_id."""
+        conn = self.get_connection()
+
+        if pattern_id:
+            cursor = conn.execute(
+                """SELECT * FROM pattern_corrections
+                   WHERE pattern_id = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (pattern_id, limit)
+            )
+        else:
+            cursor = conn.execute(
+                "SELECT * FROM pattern_corrections ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            )
+
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_episode_corrections(self, episode_id: str) -> List[Dict]:
+        """Get all corrections for a specific episode."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            """SELECT id, correction_type, original_bounds, corrected_bounds, created_at
+               FROM pattern_corrections
+               WHERE episode_id = ?
+               ORDER BY created_at DESC""",
+            (episode_id,)
+        )
+        results = []
+        for row in cursor.fetchall():
+            item = dict(row)
+            if item.get('original_bounds'):
+                item['original_bounds'] = json.loads(item['original_bounds'])
+            if item.get('corrected_bounds'):
+                item['corrected_bounds'] = json.loads(item['corrected_bounds'])
+            results.append(item)
+        return results
+
+    # ========== Audio Fingerprints Methods ==========
+
+    def get_audio_fingerprint(self, pattern_id: int) -> Optional[Dict]:
+        """Get audio fingerprint for a pattern."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            "SELECT * FROM audio_fingerprints WHERE pattern_id = ?", (pattern_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def get_all_audio_fingerprints(self) -> List[Dict]:
+        """Get all audio fingerprints."""
+        conn = self.get_connection()
+        cursor = conn.execute("SELECT * FROM audio_fingerprints")
+        return [dict(row) for row in cursor.fetchall()]
+
+    def create_audio_fingerprint(self, pattern_id: int, fingerprint: bytes,
+                                  duration: float) -> int:
+        """Create an audio fingerprint. Returns fingerprint ID."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            """INSERT INTO audio_fingerprints (pattern_id, fingerprint, duration)
+               VALUES (?, ?, ?)
+               ON CONFLICT(pattern_id) DO UPDATE SET
+                 fingerprint = excluded.fingerprint,
+                 duration = excluded.duration""",
+            (pattern_id, fingerprint, duration)
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+    def delete_audio_fingerprint(self, pattern_id: int) -> bool:
+        """Delete an audio fingerprint."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            "DELETE FROM audio_fingerprints WHERE pattern_id = ?", (pattern_id,)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    # ========== Known Sponsors Methods ==========
+
+    def get_known_sponsors(self, active_only: bool = True) -> List[Dict]:
+        """Get all known sponsors."""
+        conn = self.get_connection()
+        query = "SELECT * FROM known_sponsors"
+        if active_only:
+            query += " WHERE is_active = 1"
+        query += " ORDER BY name"
+        cursor = conn.execute(query)
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_known_sponsor_by_id(self, sponsor_id: int) -> Optional[Dict]:
+        """Get a single sponsor by ID."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            "SELECT * FROM known_sponsors WHERE id = ?", (sponsor_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def get_known_sponsor_by_name(self, name: str) -> Optional[Dict]:
+        """Get a sponsor by name."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            "SELECT * FROM known_sponsors WHERE LOWER(name) = LOWER(?)", (name,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def create_known_sponsor(self, name: str, aliases: List[str] = None,
+                              category: str = None, common_ctas: List[str] = None) -> int:
+        """Create a known sponsor. Returns sponsor ID."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            """INSERT INTO known_sponsors (name, aliases, category, common_ctas)
+               VALUES (?, ?, ?, ?)""",
+            (name, json.dumps(aliases or []), category, json.dumps(common_ctas or []))
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+    def update_known_sponsor(self, sponsor_id: int, **kwargs) -> bool:
+        """Update a known sponsor."""
+        conn = self.get_connection()
+
+        fields = []
+        values = []
+        for key, value in kwargs.items():
+            if key in ('name', 'category', 'is_active'):
+                fields.append(f"{key} = ?")
+                values.append(value)
+            elif key in ('aliases', 'common_ctas'):
+                fields.append(f"{key} = ?")
+                values.append(json.dumps(value) if isinstance(value, list) else value)
+
+        if not fields:
+            return False
+
+        values.append(sponsor_id)
+        conn.execute(
+            f"UPDATE known_sponsors SET {', '.join(fields)} WHERE id = ?",
+            values
+        )
+        conn.commit()
+        return True
+
+    def delete_known_sponsor(self, sponsor_id: int) -> bool:
+        """Delete a known sponsor (or set inactive)."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            "UPDATE known_sponsors SET is_active = 0 WHERE id = ?", (sponsor_id,)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    # ========== Sponsor Normalizations Methods ==========
+
+    def get_sponsor_normalizations(self, category: str = None,
+                                    active_only: bool = True) -> List[Dict]:
+        """Get sponsor normalizations."""
+        conn = self.get_connection()
+
+        query = "SELECT * FROM sponsor_normalizations WHERE 1=1"
+        params = []
+
+        if active_only:
+            query += " AND is_active = 1"
+        if category:
+            query += " AND category = ?"
+            params.append(category)
+
+        query += " ORDER BY category, pattern"
+
+        cursor = conn.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+    def create_sponsor_normalization(self, pattern: str, replacement: str,
+                                      category: str) -> int:
+        """Create a sponsor normalization. Returns normalization ID."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            """INSERT INTO sponsor_normalizations (pattern, replacement, category)
+               VALUES (?, ?, ?)""",
+            (pattern, replacement, category)
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+    def update_sponsor_normalization(self, norm_id: int, **kwargs) -> bool:
+        """Update a sponsor normalization."""
+        conn = self.get_connection()
+
+        fields = []
+        values = []
+        for key, value in kwargs.items():
+            if key in ('pattern', 'replacement', 'category', 'is_active'):
+                fields.append(f"{key} = ?")
+                values.append(value)
+
+        if not fields:
+            return False
+
+        values.append(norm_id)
+        conn.execute(
+            f"UPDATE sponsor_normalizations SET {', '.join(fields)} WHERE id = ?",
+            values
+        )
+        conn.commit()
+        return True
+
+    def delete_sponsor_normalization(self, norm_id: int) -> bool:
+        """Delete a sponsor normalization (or set inactive)."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            "UPDATE sponsor_normalizations SET is_active = 0 WHERE id = ?", (norm_id,)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
