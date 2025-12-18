@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.130] - 2025-12-18
+
+### Added
+- **Streaming Music Detection for Long Episodes**
+  - Episodes over 1 hour now use `librosa.stream()` for blockwise audio processing
+  - Avoids loading entire audio file into memory
+  - Processes in ~4-minute blocks with progress logging every 10 blocks
+  - Short episodes (< 1 hour) continue using standard loading for simplicity
+
+---
+
 ## [0.1.129] - 2025-12-18
 
 ### Added
