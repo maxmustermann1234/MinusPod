@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.128] - 2025-12-18
+
+### Added
+- **Sponsor Extraction from Ad Text**
+  - Automatically extracts sponsor names from ad text by detecting URLs (hex.ai, thisisnewjersey.com)
+  - Also detects "brought to you by", "sponsored by" patterns
+  - Migration extracts sponsors for existing patterns on startup
+  - Real-time pattern creation now auto-extracts sponsor when not provided
+
+- **Podcast Name in Patterns**
+  - Patterns API now returns `podcast_name` and `podcast_slug` via JOIN
+  - Patterns page shows podcast name in scope badge instead of generic "Podcast"
+  - TypeScript types updated to include new fields
+
+---
+
 ## [0.1.127] - 2025-12-18
 
 ### Fixed

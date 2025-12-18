@@ -145,6 +145,14 @@ try:
 except Exception as e:
     audio_logger.warning(f"Pattern deduplication failed: {e}")
 
+# Extract sponsors for patterns that don't have one
+try:
+    sponsors_extracted = db.extract_sponsors_for_patterns()
+    if sponsors_extracted > 0:
+        audio_logger.info(f"Extracted sponsors for {sponsors_extracted} patterns")
+except Exception as e:
+    audio_logger.warning(f"Sponsor extraction failed: {e}")
+
 
 def get_feed_map():
     """Get feed map from database."""

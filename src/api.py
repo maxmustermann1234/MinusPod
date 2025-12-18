@@ -100,6 +100,49 @@ def extract_transcript_segment(transcript: str, start: float, end: float) -> str
     return ' '.join(segments)
 
 
+def extract_sponsor_from_text(ad_text: str) -> str:
+    """Extract sponsor name from ad text by looking for URLs and common patterns.
+
+    Looks for:
+    - Domain names (e.g., hex.ai, thisisnewjersey.com)
+    - Common sponsor phrases (e.g., "brought to you by X", "sponsored by X")
+    """
+    import re
+
+    if not ad_text:
+        return None
+
+    # Look for URLs/domains mentioned in the text
+    # Match patterns like: example.com, example.ai, visit example dot com
+    domain_pattern = r'(?:visit\s+)?(?:www\.)?([a-zA-Z0-9-]+)\.(?:com|ai|io|org|net|co|gov)(?:/[^\s]*)?'
+    domains = re.findall(domain_pattern, ad_text.lower())
+
+    # Filter out common non-sponsor domains
+    ignore_domains = {'example', 'website', 'podcast', 'episode', 'click', 'link'}
+    domains = [d for d in domains if d not in ignore_domains]
+
+    if domains:
+        # Return the first meaningful domain as sponsor
+        sponsor = domains[0].replace('-', ' ').title()
+        return sponsor
+
+    # Look for "brought to you by X" or "sponsored by X" patterns
+    sponsor_patterns = [
+        r'brought to you by\s+([A-Z][a-zA-Z0-9\s]+?)(?:\.|,|!|\s+is|\s+where|\s+the)',
+        r'sponsored by\s+([A-Z][a-zA-Z0-9\s]+?)(?:\.|,|!|\s+is|\s+where|\s+the)',
+        r'thanks to\s+([A-Z][a-zA-Z0-9\s]+?)(?:\s+for|\.|,|!)',
+    ]
+
+    for pattern in sponsor_patterns:
+        match = re.search(pattern, ad_text, re.IGNORECASE)
+        if match:
+            sponsor = match.group(1).strip()
+            if len(sponsor) < 50:  # Sanity check
+                return sponsor
+
+    return None
+
+
 # ========== Feed Endpoints ==========
 
 @api.route('/feeds', methods=['GET'])
@@ -1623,8 +1666,10 @@ def submit_correction(slug, episode_id):
                         pattern_service.record_pattern_match(pattern_id, episode_id)
                         logger.info(f"Linked to existing pattern {pattern_id} for confirmed ad in {slug}/{episode_id}")
                     else:
-                        # Extract sponsor from original ad if available
+                        # Extract sponsor from original ad or from ad text
                         sponsor = original_ad.get('sponsor')
+                        if not sponsor:
+                            sponsor = extract_sponsor_from_text(ad_text)
 
                         # Create new pattern with podcast scope
                         new_pattern_id = db.create_ad_pattern(

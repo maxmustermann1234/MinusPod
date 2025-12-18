@@ -1541,25 +1541,31 @@ class Database:
 
     def get_ad_patterns(self, scope: str = None, podcast_id: str = None,
                         network_id: str = None, active_only: bool = True) -> List[Dict]:
-        """Get ad patterns with optional filtering."""
+        """Get ad patterns with optional filtering. Includes podcast_name when available."""
         conn = self.get_connection()
 
-        query = "SELECT * FROM ad_patterns WHERE 1=1"
+        # Join with podcasts to get podcast name
+        query = """
+            SELECT ap.*, p.title as podcast_name, p.slug as podcast_slug
+            FROM ad_patterns ap
+            LEFT JOIN podcasts p ON ap.podcast_id = CAST(p.id AS TEXT)
+            WHERE 1=1
+        """
         params = []
 
         if active_only:
-            query += " AND is_active = 1"
+            query += " AND ap.is_active = 1"
         if scope:
-            query += " AND scope = ?"
+            query += " AND ap.scope = ?"
             params.append(scope)
         if podcast_id:
-            query += " AND podcast_id = ?"
+            query += " AND ap.podcast_id = ?"
             params.append(podcast_id)
         if network_id:
-            query += " AND network_id = ?"
+            query += " AND ap.network_id = ?"
             params.append(network_id)
 
-        query += " ORDER BY confirmation_count DESC, created_at DESC"
+        query += " ORDER BY ap.confirmation_count DESC, ap.created_at DESC"
 
         cursor = conn.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
@@ -2161,6 +2167,68 @@ class Database:
         if removed_count > 0:
             logger.info(f"Deduplicated {removed_count} patterns total")
         return removed_count
+
+    def extract_sponsors_for_patterns(self) -> int:
+        """Extract sponsor names for patterns that have text_template but no sponsor.
+
+        Returns count of patterns updated."""
+        import re
+
+        def extract_sponsor_from_text(ad_text: str) -> str:
+            """Extract sponsor from ad text by looking for URLs and patterns."""
+            if not ad_text:
+                return None
+
+            # Look for domains
+            domain_pattern = r'(?:visit\s+)?(?:www\.)?([a-zA-Z0-9-]+)\.(?:com|ai|io|org|net|co|gov)(?:/[^\s]*)?'
+            domains = re.findall(domain_pattern, ad_text.lower())
+
+            ignore_domains = {'example', 'website', 'podcast', 'episode', 'click', 'link'}
+            domains = [d for d in domains if d not in ignore_domains]
+
+            if domains:
+                return domains[0].replace('-', ' ').title()
+
+            # Look for sponsor phrases
+            sponsor_patterns = [
+                r'brought to you by\s+([A-Z][a-zA-Z0-9\s]+?)(?:\.|,|!|\s+is|\s+where|\s+the)',
+                r'sponsored by\s+([A-Z][a-zA-Z0-9\s]+?)(?:\.|,|!|\s+is|\s+where|\s+the)',
+                r'thanks to\s+([A-Z][a-zA-Z0-9\s]+?)(?:\s+for|\.|,|!)',
+            ]
+
+            for pattern in sponsor_patterns:
+                match = re.search(pattern, ad_text, re.IGNORECASE)
+                if match:
+                    sponsor = match.group(1).strip()
+                    if len(sponsor) < 50:
+                        return sponsor
+
+            return None
+
+        conn = self.get_connection()
+        updated_count = 0
+
+        # Find patterns without sponsors
+        cursor = conn.execute('''
+            SELECT id, text_template FROM ad_patterns
+            WHERE sponsor IS NULL AND text_template IS NOT NULL
+        ''')
+        patterns = cursor.fetchall()
+
+        for pattern in patterns:
+            sponsor = extract_sponsor_from_text(pattern['text_template'])
+            if sponsor:
+                conn.execute(
+                    'UPDATE ad_patterns SET sponsor = ? WHERE id = ?',
+                    (sponsor, pattern['id'])
+                )
+                updated_count += 1
+                logger.info(f"Extracted sponsor '{sponsor}' for pattern {pattern['id']}")
+
+        conn.commit()
+        if updated_count > 0:
+            logger.info(f"Extracted sponsors for {updated_count} patterns")
+        return updated_count
 
     def get_processing_history(self, limit: int = 50, offset: int = 0,
                                 status_filter: str = None,
