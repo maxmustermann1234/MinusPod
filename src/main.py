@@ -614,6 +614,23 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             else:
                 audio_logger.info(f"[{slug}:{episode_id}] Complete: {len(ads_to_remove)} ads removed, {processing_time:.1f}s")
 
+            # Record processing history
+            try:
+                podcast_data = db.get_podcast_by_slug(slug)
+                if podcast_data:
+                    db.record_processing_history(
+                        podcast_id=podcast_data['id'],
+                        podcast_slug=slug,
+                        podcast_title=podcast_data.get('title') or podcast_name,
+                        episode_id=episode_id,
+                        episode_title=episode_title,
+                        status='completed',
+                        processing_duration_seconds=processing_time,
+                        ads_detected=len(ads_to_remove)
+                    )
+            except Exception as hist_err:
+                audio_logger.warning(f"[{slug}:{episode_id}] Failed to record history: {hist_err}")
+
             status_service.complete_job()
             return True
 
@@ -631,6 +648,25 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
         db.upsert_episode(slug, episode_id,
             status='failed',
             error_message=str(e))
+
+        # Record processing history for failure
+        try:
+            podcast_data = db.get_podcast_by_slug(slug)
+            if podcast_data:
+                db.record_processing_history(
+                    podcast_id=podcast_data['id'],
+                    podcast_slug=slug,
+                    podcast_title=podcast_data.get('title') or podcast_name,
+                    episode_id=episode_id,
+                    episode_title=episode_title,
+                    status='failed',
+                    processing_duration_seconds=processing_time,
+                    ads_detected=0,
+                    error_message=str(e)
+                )
+        except Exception as hist_err:
+            audio_logger.warning(f"[{slug}:{episode_id}] Failed to record history: {hist_err}")
+
         return False
 
 

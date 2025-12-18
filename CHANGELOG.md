@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.121] - 2025-12-18
+
+### Added
+- **Processing History Page**
+  - New `/history` page showing all episode processing history
+  - Stats summary: total processed, completed, failed, total ads detected
+  - Sortable table columns: processed date, duration, ads detected, reprocess number
+  - Filter by status (all/completed/failed) and by podcast
+  - Pagination for large history sets
+  - Links to podcast and episode detail pages
+  - Error message tooltip on failed entries
+
+- **History Export**
+  - Export CSV and JSON buttons for processing history
+  - Backend API: `GET /api/v1/history`, `GET /api/v1/history/stats`, `GET /api/v1/history/export`
+  - Database: New `processing_history` table tracking all processing attempts
+
+- **Processing History Recording**
+  - Records processing history for both successful and failed episode processing
+  - Tracks: podcast, episode, processed time, duration, ads detected, reprocess count, status, error message
+
+### Fixed
+- **Mobile Jump Button Bug**
+  - Fixed: Clicking "Jump" then "Play" would start from beginning instead of jumped position
+  - Root cause: `handlePlayPause` was resetting `currentTime` when outside ad bounds
+  - Solution: Added `preserveSeekPosition` state to preserve jump position on first play
+
+- **Transcript Scroll on Jump**
+  - Fixed: Jump button didn't scroll transcript to the jumped-to time
+  - Added `scrollToTime` helper function triggered on jump
+
+- **Mobile Ad Description Layout**
+  - Fixed: Ad description text was cramped on mobile devices
+  - Moved description to full-width row below time badges and controls
+
+---
+
 ## [0.1.120] - 2025-12-18
 
 ### Added

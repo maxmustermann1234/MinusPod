@@ -1,4 +1,5 @@
 """REST API for podcast server web UI."""
+import json
 import logging
 import os
 import time
@@ -746,6 +747,141 @@ def cancel_episode_processing(slug, episode_id):
         'episodeId': episode_id,
         'slug': slug
     })
+
+
+# ========== Processing History Endpoints ==========
+
+@api.route('/history', methods=['GET'])
+@log_request
+def get_processing_history():
+    """Get processing history with pagination and filtering."""
+    db = get_database()
+
+    # Parse query params
+    limit = request.args.get('limit', 50, type=int)
+    offset = request.args.get('offset', 0, type=int)
+    status_filter = request.args.get('status')  # 'completed' or 'failed'
+    podcast_slug = request.args.get('podcast')
+    sort_by = request.args.get('sort_by', 'processed_at')
+    sort_dir = request.args.get('sort_dir', 'desc')
+
+    # Clamp limits
+    limit = min(max(1, limit), 100)
+    offset = max(0, offset)
+
+    entries, total_count = db.get_processing_history(
+        limit=limit,
+        offset=offset,
+        status_filter=status_filter,
+        podcast_slug=podcast_slug,
+        sort_by=sort_by,
+        sort_dir=sort_dir
+    )
+
+    # Transform for API response
+    history = []
+    for entry in entries:
+        history.append({
+            'id': entry['id'],
+            'podcastSlug': entry['podcast_slug'],
+            'podcastTitle': entry['podcast_title'],
+            'episodeId': entry['episode_id'],
+            'episodeTitle': entry['episode_title'],
+            'processedAt': entry['processed_at'],
+            'processingDurationSeconds': entry['processing_duration_seconds'],
+            'status': entry['status'],
+            'adsDetected': entry['ads_detected'],
+            'errorMessage': entry['error_message'],
+            'reprocessNumber': entry['reprocess_number']
+        })
+
+    return json_response({
+        'history': history,
+        'total': total_count,
+        'limit': limit,
+        'offset': offset
+    })
+
+
+@api.route('/history/stats', methods=['GET'])
+@log_request
+def get_processing_history_stats():
+    """Get aggregate statistics from processing history."""
+    db = get_database()
+    stats = db.get_processing_history_stats()
+
+    return json_response({
+        'totalProcessed': stats['total_processed'],
+        'completedCount': stats['completed_count'],
+        'failedCount': stats['failed_count'],
+        'avgProcessingTimeSeconds': stats['avg_processing_time_seconds'],
+        'totalAdsDetected': stats['total_ads_detected'],
+        'reprocessCount': stats['reprocess_count'],
+        'uniqueEpisodes': stats['unique_episodes']
+    })
+
+
+@api.route('/history/export', methods=['GET'])
+@log_request
+def export_processing_history():
+    """Export processing history as CSV or JSON."""
+    import csv
+    import io
+
+    db = get_database()
+
+    # Parse query params
+    export_format = request.args.get('format', 'json').lower()
+    status_filter = request.args.get('status')
+    podcast_slug = request.args.get('podcast')
+
+    entries = db.export_processing_history(
+        status_filter=status_filter,
+        podcast_slug=podcast_slug
+    )
+
+    if export_format == 'csv':
+        # Generate CSV
+        output = io.StringIO()
+        if entries:
+            fieldnames = ['id', 'podcast_slug', 'podcast_title', 'episode_id',
+                         'episode_title', 'processed_at', 'processing_duration_seconds',
+                         'status', 'ads_detected', 'error_message', 'reprocess_number']
+            writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
+            writer.writeheader()
+            for entry in entries:
+                writer.writerow(entry)
+
+        response = Response(
+            output.getvalue(),
+            mimetype='text/csv',
+            headers={'Content-Disposition': 'attachment; filename=processing_history.csv'}
+        )
+        return response
+    else:
+        # JSON format
+        history = []
+        for entry in entries:
+            history.append({
+                'id': entry['id'],
+                'podcastSlug': entry['podcast_slug'],
+                'podcastTitle': entry['podcast_title'],
+                'episodeId': entry['episode_id'],
+                'episodeTitle': entry['episode_title'],
+                'processedAt': entry['processed_at'],
+                'processingDurationSeconds': entry['processing_duration_seconds'],
+                'status': entry['status'],
+                'adsDetected': entry['ads_detected'],
+                'errorMessage': entry['error_message'],
+                'reprocessNumber': entry['reprocess_number']
+            })
+
+        response = Response(
+            json.dumps({'history': history}, indent=2),
+            mimetype='application/json',
+            headers={'Content-Disposition': 'attachment; filename=processing_history.json'}
+        )
+        return response
 
 
 # ========== Settings Endpoints ==========

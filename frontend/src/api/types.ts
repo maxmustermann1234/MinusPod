@@ -167,3 +167,35 @@ export interface SponsorNormalization {
   is_active: boolean;
   created_at: string;
 }
+
+export interface ProcessingHistoryEntry {
+  id: number;
+  podcastId: number;
+  podcastSlug: string;
+  podcastTitle: string;
+  episodeId: string;
+  episodeTitle: string;
+  processedAt: string;
+  processingDurationSeconds: number;
+  status: 'completed' | 'failed';
+  adsDetected: number;
+  errorMessage?: string;
+  reprocessNumber: number;
+}
+
+export interface ProcessingHistoryResponse {
+  history: ProcessingHistoryEntry[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export interface ProcessingHistoryStats {
+  totalProcessed: number;
+  completedCount: number;
+  failedCount: number;
+  totalAdsDetected: number;
+  avgProcessingTime: number;
+  totalProcessingTime: number;
+}

@@ -256,6 +256,28 @@ CREATE TABLE IF NOT EXISTS sponsor_normalizations (
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
+-- processing_history table (audit log of all processing attempts)
+CREATE TABLE IF NOT EXISTS processing_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    podcast_id INTEGER NOT NULL,
+    podcast_slug TEXT NOT NULL,
+    podcast_title TEXT,
+    episode_id TEXT NOT NULL,
+    episode_title TEXT,
+    processed_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    processing_duration_seconds REAL,
+    status TEXT NOT NULL CHECK(status IN ('completed', 'failed')),
+    ads_detected INTEGER DEFAULT 0,
+    error_message TEXT,
+    reprocess_number INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    FOREIGN KEY (podcast_id) REFERENCES podcasts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_history_processed_at ON processing_history(processed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_history_podcast_episode ON processing_history(podcast_id, episode_id);
+CREATE INDEX IF NOT EXISTS idx_history_status ON processing_history(status);
+
 CREATE INDEX IF NOT EXISTS idx_podcasts_slug ON podcasts(slug);
 CREATE INDEX IF NOT EXISTS idx_episodes_podcast_id ON episodes(podcast_id);
 CREATE INDEX IF NOT EXISTS idx_episodes_episode_id ON episodes(episode_id);
@@ -423,8 +445,33 @@ class Database:
             )
         """)
 
+        # Create processing_history table if not exists (audit log of processing attempts)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS processing_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                podcast_id INTEGER NOT NULL,
+                podcast_slug TEXT NOT NULL,
+                podcast_title TEXT,
+                episode_id TEXT NOT NULL,
+                episode_title TEXT,
+                processed_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                processing_duration_seconds REAL,
+                status TEXT NOT NULL CHECK(status IN ('completed', 'failed')),
+                ads_detected INTEGER DEFAULT 0,
+                error_message TEXT,
+                reprocess_number INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                FOREIGN KEY (podcast_id) REFERENCES podcasts(id) ON DELETE CASCADE
+            )
+        """)
+
+        # Create indexes for processing_history
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_history_processed_at ON processing_history(processed_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_history_podcast_episode ON processing_history(podcast_id, episode_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_history_status ON processing_history(status)")
+
         conn.commit()
-        logger.info("Created new tables for cross-episode training")
+        logger.info("Created new tables for cross-episode training and processing history")
 
     def _run_schema_migrations(self):
         """Run schema migrations for existing databases."""
@@ -1852,3 +1899,171 @@ class Database:
         )
         conn.commit()
         return cursor.rowcount > 0
+
+    # ========== Processing History Methods ==========
+
+    def record_processing_history(self, podcast_id: int, podcast_slug: str,
+                                   podcast_title: str, episode_id: str,
+                                   episode_title: str, status: str,
+                                   processing_duration_seconds: float = None,
+                                   ads_detected: int = 0,
+                                   error_message: str = None) -> int:
+        """Record a processing attempt in history. Returns history entry ID."""
+        conn = self.get_connection()
+
+        # Calculate reprocess number (count existing entries + 1)
+        cursor = conn.execute(
+            """SELECT COUNT(*) FROM processing_history
+               WHERE podcast_id = ? AND episode_id = ?""",
+            (podcast_id, episode_id)
+        )
+        existing_count = cursor.fetchone()[0]
+        reprocess_number = existing_count + 1
+
+        cursor = conn.execute(
+            """INSERT INTO processing_history
+               (podcast_id, podcast_slug, podcast_title, episode_id, episode_title,
+                processed_at, processing_duration_seconds, status, ads_detected,
+                error_message, reprocess_number)
+               VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?, ?, ?, ?, ?)""",
+            (podcast_id, podcast_slug, podcast_title, episode_id, episode_title,
+             processing_duration_seconds, status, ads_detected, error_message,
+             reprocess_number)
+        )
+        conn.commit()
+        logger.info(f"Recorded processing history: {podcast_slug}/{episode_id} - {status} (reprocess #{reprocess_number})")
+        return cursor.lastrowid
+
+    def get_processing_history(self, limit: int = 50, offset: int = 0,
+                                status_filter: str = None,
+                                podcast_slug: str = None,
+                                sort_by: str = 'processed_at',
+                                sort_dir: str = 'desc') -> Tuple[List[Dict], int]:
+        """Get processing history with pagination. Returns (entries, total_count)."""
+        conn = self.get_connection()
+
+        # Build WHERE clause
+        where_clauses = []
+        params = []
+
+        if status_filter and status_filter in ('completed', 'failed'):
+            where_clauses.append("status = ?")
+            params.append(status_filter)
+
+        if podcast_slug:
+            where_clauses.append("podcast_slug = ?")
+            params.append(podcast_slug)
+
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+        # Validate sort column
+        valid_sort_cols = ['processed_at', 'podcast_title', 'episode_title',
+                          'processing_duration_seconds', 'ads_detected',
+                          'reprocess_number', 'status']
+        if sort_by not in valid_sort_cols:
+            sort_by = 'processed_at'
+        sort_dir = 'DESC' if sort_dir.lower() == 'desc' else 'ASC'
+
+        # Get total count
+        cursor = conn.execute(
+            f"SELECT COUNT(*) FROM processing_history WHERE {where_sql}",
+            params
+        )
+        total_count = cursor.fetchone()[0]
+
+        # Get paginated results
+        query_params = params + [limit, offset]
+        cursor = conn.execute(
+            f"""SELECT * FROM processing_history
+                WHERE {where_sql}
+                ORDER BY {sort_by} {sort_dir}
+                LIMIT ? OFFSET ?""",
+            query_params
+        )
+
+        entries = [dict(row) for row in cursor.fetchall()]
+        return entries, total_count
+
+    def get_processing_history_stats(self) -> Dict:
+        """Get aggregate statistics from processing history."""
+        conn = self.get_connection()
+
+        # Total processed
+        cursor = conn.execute("SELECT COUNT(*) FROM processing_history")
+        total_processed = cursor.fetchone()[0]
+
+        # Completed count
+        cursor = conn.execute("SELECT COUNT(*) FROM processing_history WHERE status = 'completed'")
+        completed_count = cursor.fetchone()[0]
+
+        # Failed count
+        cursor = conn.execute("SELECT COUNT(*) FROM processing_history WHERE status = 'failed'")
+        failed_count = cursor.fetchone()[0]
+
+        # Average processing time (for completed only)
+        cursor = conn.execute(
+            """SELECT AVG(processing_duration_seconds)
+               FROM processing_history
+               WHERE status = 'completed' AND processing_duration_seconds IS NOT NULL"""
+        )
+        avg_time = cursor.fetchone()[0] or 0
+
+        # Total ads detected
+        cursor = conn.execute("SELECT SUM(ads_detected) FROM processing_history WHERE status = 'completed'")
+        total_ads = cursor.fetchone()[0] or 0
+
+        # Reprocess count (entries with reprocess_number > 1)
+        cursor = conn.execute("SELECT COUNT(*) FROM processing_history WHERE reprocess_number > 1")
+        reprocess_count = cursor.fetchone()[0]
+
+        # Unique episodes processed
+        cursor = conn.execute("SELECT COUNT(DISTINCT podcast_slug || '/' || episode_id) FROM processing_history")
+        unique_episodes = cursor.fetchone()[0]
+
+        return {
+            'total_processed': total_processed,
+            'completed_count': completed_count,
+            'failed_count': failed_count,
+            'avg_processing_time_seconds': round(avg_time, 2),
+            'total_ads_detected': total_ads,
+            'reprocess_count': reprocess_count,
+            'unique_episodes': unique_episodes
+        }
+
+    def get_episode_reprocess_count(self, podcast_id: int, episode_id: str) -> int:
+        """Get the number of times an episode has been processed."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            """SELECT COUNT(*) FROM processing_history
+               WHERE podcast_id = ? AND episode_id = ?""",
+            (podcast_id, episode_id)
+        )
+        return cursor.fetchone()[0]
+
+    def export_processing_history(self, status_filter: str = None,
+                                   podcast_slug: str = None) -> List[Dict]:
+        """Export all processing history (no pagination) for export."""
+        conn = self.get_connection()
+
+        # Build WHERE clause
+        where_clauses = []
+        params = []
+
+        if status_filter and status_filter in ('completed', 'failed'):
+            where_clauses.append("status = ?")
+            params.append(status_filter)
+
+        if podcast_slug:
+            where_clauses.append("podcast_slug = ?")
+            params.append(podcast_slug)
+
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+        cursor = conn.execute(
+            f"""SELECT * FROM processing_history
+                WHERE {where_sql}
+                ORDER BY processed_at DESC""",
+            params
+        )
+
+        return [dict(row) for row in cursor.fetchall()]

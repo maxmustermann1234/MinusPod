@@ -71,6 +71,7 @@ export function TranscriptEditor({
   const [audioSheetExpanded, setAudioSheetExpanded] = useState(false);
   const [swipeStartX, setSwipeStartX] = useState<number | null>(null);
   const [isDraggingProgress, setIsDraggingProgress] = useState(false);
+  const [preserveSeekPosition, setPreserveSeekPosition] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -127,6 +128,34 @@ export function TranscriptEditor({
     }
   }, [currentTime, isPlaying]);
 
+  // Scroll transcript to show selected ad
+  const scrollToAd = useCallback((ad: DetectedAd) => {
+    if (!transcriptRef.current) return;
+
+    const segmentElements = transcriptRef.current.querySelectorAll('[data-segment-start]');
+    for (const seg of segmentElements) {
+      const start = parseFloat(seg.getAttribute('data-segment-start') || '0');
+      if (start >= ad.start) {
+        seg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        break;
+      }
+    }
+  }, []);
+
+  // Scroll transcript to a specific time (for jump functionality)
+  const scrollToTime = useCallback((time: number) => {
+    if (!transcriptRef.current) return;
+
+    const segmentElements = transcriptRef.current.querySelectorAll('[data-segment-start]');
+    for (const seg of segmentElements) {
+      const start = parseFloat(seg.getAttribute('data-segment-start') || '0');
+      if (start >= time) {
+        seg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        break;
+      }
+    }
+  }, []);
+
   // Handle initial seek time (from Jump button)
   useEffect(() => {
     if (initialSeekTime !== undefined && audioRef.current) {
@@ -139,27 +168,17 @@ export function TranscriptEditor({
       }
       // Seek to the time
       audioRef.current.currentTime = initialSeekTime;
+      // Preserve this seek position so play doesn't reset it
+      setPreserveSeekPosition(true);
+      // Scroll transcript to show the jumped-to time
+      scrollToTime(initialSeekTime);
     }
-  }, [initialSeekTime, detectedAds]);
+  }, [initialSeekTime, detectedAds, scrollToTime]);
 
   // Auto-focus container when editor opens for keyboard shortcuts
   useEffect(() => {
     if (containerRef.current) {
       containerRef.current.focus();
-    }
-  }, []);
-
-  // Scroll transcript to show selected ad
-  const scrollToAd = useCallback((ad: DetectedAd) => {
-    if (!transcriptRef.current) return;
-
-    const segmentElements = transcriptRef.current.querySelectorAll('[data-segment-start]');
-    for (const seg of segmentElements) {
-      const start = parseFloat(seg.getAttribute('data-segment-start') || '0');
-      if (start >= ad.start) {
-        seg.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        break;
-      }
     }
   }, []);
 
@@ -213,13 +232,15 @@ export function TranscriptEditor({
     if (isPlaying) {
       audio.pause();
     } else {
-      // Seek to ad start if not within ad
-      if (currentTime < adjustedStart || currentTime > adjustedEnd) {
+      // Only reset to ad start if not preserving a jump position AND outside ad bounds
+      if (!preserveSeekPosition && (currentTime < adjustedStart || currentTime > adjustedEnd)) {
         audio.currentTime = adjustedStart;
       }
+      // Clear the preserve flag after use
+      setPreserveSeekPosition(false);
       audio.play();
     }
-  }, [isPlaying, currentTime, adjustedStart, adjustedEnd]);
+  }, [isPlaying, currentTime, adjustedStart, adjustedEnd, preserveSeekPosition]);
 
   const handleNudgeEndForward = useCallback(() => {
     setAdjustedEnd((prev) => Math.min(prev + NUDGE_AMOUNT, segments[segments.length - 1]?.end || prev));
