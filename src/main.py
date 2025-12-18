@@ -121,6 +121,38 @@ sponsor_service = SponsorService(db)
 status_service = StatusService()
 pattern_service = PatternService(db)
 
+# Backfill processing history from existing episodes (runs once on startup)
+try:
+    backfilled = db.backfill_processing_history()
+    if backfilled > 0:
+        audio_logger.info(f"Backfilled {backfilled} records to processing_history")
+except Exception as e:
+    audio_logger.warning(f"History backfill failed: {e}")
+
+# Backfill patterns from existing corrections (runs once on startup)
+try:
+    patterns_created = db.backfill_patterns_from_corrections()
+    if patterns_created > 0:
+        audio_logger.info(f"Created {patterns_created} patterns from existing corrections")
+except Exception as e:
+    audio_logger.warning(f"Pattern backfill failed: {e}")
+
+# Deduplicate patterns (cleanup duplicate patterns from earlier bugs)
+try:
+    deduped = db.deduplicate_patterns()
+    if deduped > 0:
+        audio_logger.info(f"Removed {deduped} duplicate patterns")
+except Exception as e:
+    audio_logger.warning(f"Pattern deduplication failed: {e}")
+
+# Extract sponsors for patterns that don't have one
+try:
+    sponsors_extracted = db.extract_sponsors_for_patterns()
+    if sponsors_extracted > 0:
+        audio_logger.info(f"Extracted sponsors for {sponsors_extracted} patterns")
+except Exception as e:
+    audio_logger.warning(f"Sponsor extraction failed: {e}")
+
 
 def get_feed_map():
     """Get feed map from database."""
@@ -614,6 +646,23 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             else:
                 audio_logger.info(f"[{slug}:{episode_id}] Complete: {len(ads_to_remove)} ads removed, {processing_time:.1f}s")
 
+            # Record processing history
+            try:
+                podcast_data = db.get_podcast_by_slug(slug)
+                if podcast_data:
+                    db.record_processing_history(
+                        podcast_id=podcast_data['id'],
+                        podcast_slug=slug,
+                        podcast_title=podcast_data.get('title') or podcast_name,
+                        episode_id=episode_id,
+                        episode_title=episode_title,
+                        status='completed',
+                        processing_duration_seconds=processing_time,
+                        ads_detected=len(ads_to_remove)
+                    )
+            except Exception as hist_err:
+                audio_logger.warning(f"[{slug}:{episode_id}] Failed to record history: {hist_err}")
+
             status_service.complete_job()
             return True
 
@@ -631,6 +680,25 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
         db.upsert_episode(slug, episode_id,
             status='failed',
             error_message=str(e))
+
+        # Record processing history for failure
+        try:
+            podcast_data = db.get_podcast_by_slug(slug)
+            if podcast_data:
+                db.record_processing_history(
+                    podcast_id=podcast_data['id'],
+                    podcast_slug=slug,
+                    podcast_title=podcast_data.get('title') or podcast_name,
+                    episode_id=episode_id,
+                    episode_title=episode_title,
+                    status='failed',
+                    processing_duration_seconds=processing_time,
+                    ads_detected=0,
+                    error_message=str(e)
+                )
+        except Exception as hist_err:
+            audio_logger.warning(f"[{slug}:{episode_id}] Failed to record history: {hist_err}")
+
         return False
 
 

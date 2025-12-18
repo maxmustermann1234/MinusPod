@@ -309,9 +309,10 @@ function EpisodeDetail() {
             {episode.adMarkers.map((segment, index) => (
               <div
                 key={index}
-                className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg"
+                className="p-3 bg-secondary/50 rounded-lg"
               >
-                <div className="flex items-center gap-2">
+                {/* Row 1: Time, badges, jump button, confidence */}
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-sm">
                     {formatTimestamp(segment.start)} - {formatTimestamp(segment.end)}
                   </span>
@@ -329,7 +330,7 @@ function EpisodeDetail() {
                   {episode.transcript && (
                     <button
                       onClick={() => handleJumpToAd(segment.start)}
-                      className="px-2 py-0.5 text-xs bg-primary/10 text-primary rounded hover:bg-primary/20 transition-colors"
+                      className="px-3 py-1.5 sm:px-2 sm:py-0.5 text-xs bg-primary/10 text-primary rounded hover:bg-primary/20 active:bg-primary/30 transition-colors touch-manipulation min-h-[36px] sm:min-h-0"
                       title="Jump to this ad in editor"
                     >
                       Jump
@@ -354,15 +355,14 @@ function EpisodeDetail() {
                     }
                     return null;
                   })()}
-                </div>
-                <div className="flex flex-col items-end">
-                  <span className="text-sm text-muted-foreground">
+                  <span className="ml-auto text-sm text-muted-foreground whitespace-nowrap">
                     {Math.round(segment.confidence * 100)}% confidence
                   </span>
-                  {segment.reason && (
-                    <p className="text-sm text-muted-foreground mt-1 text-right max-w-md">{segment.reason}</p>
-                  )}
                 </div>
+                {/* Row 2: Description - full width below badges for better mobile display */}
+                {segment.reason && (
+                  <p className="text-sm text-muted-foreground mt-2 break-words">{segment.reason}</p>
+                )}
               </div>
             ))}
           </div>

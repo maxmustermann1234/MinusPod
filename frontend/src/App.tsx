@@ -8,6 +8,7 @@ import EpisodeDetail from './pages/EpisodeDetail';
 import AddFeed from './pages/AddFeed';
 import Settings from './pages/Settings';
 import PatternsPage from './pages/PatternsPage';
+import HistoryPage from './pages/HistoryPage';
 
 function App() {
   return (
@@ -21,6 +22,7 @@ function App() {
             <Route path="feeds/:slug/episodes/:episodeId" element={<EpisodeDetail />} />
             <Route path="add" element={<AddFeed />} />
             <Route path="patterns" element={<PatternsPage />} />
+            <Route path="history" element={<HistoryPage />} />
             <Route path="settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

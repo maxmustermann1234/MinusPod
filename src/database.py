@@ -256,6 +256,28 @@ CREATE TABLE IF NOT EXISTS sponsor_normalizations (
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
+-- processing_history table (audit log of all processing attempts)
+CREATE TABLE IF NOT EXISTS processing_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    podcast_id INTEGER NOT NULL,
+    podcast_slug TEXT NOT NULL,
+    podcast_title TEXT,
+    episode_id TEXT NOT NULL,
+    episode_title TEXT,
+    processed_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    processing_duration_seconds REAL,
+    status TEXT NOT NULL CHECK(status IN ('completed', 'failed')),
+    ads_detected INTEGER DEFAULT 0,
+    error_message TEXT,
+    reprocess_number INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    FOREIGN KEY (podcast_id) REFERENCES podcasts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_history_processed_at ON processing_history(processed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_history_podcast_episode ON processing_history(podcast_id, episode_id);
+CREATE INDEX IF NOT EXISTS idx_history_status ON processing_history(status);
+
 CREATE INDEX IF NOT EXISTS idx_podcasts_slug ON podcasts(slug);
 CREATE INDEX IF NOT EXISTS idx_episodes_podcast_id ON episodes(podcast_id);
 CREATE INDEX IF NOT EXISTS idx_episodes_episode_id ON episodes(episode_id);
@@ -423,8 +445,33 @@ class Database:
             )
         """)
 
+        # Create processing_history table if not exists (audit log of processing attempts)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS processing_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                podcast_id INTEGER NOT NULL,
+                podcast_slug TEXT NOT NULL,
+                podcast_title TEXT,
+                episode_id TEXT NOT NULL,
+                episode_title TEXT,
+                processed_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                processing_duration_seconds REAL,
+                status TEXT NOT NULL CHECK(status IN ('completed', 'failed')),
+                ads_detected INTEGER DEFAULT 0,
+                error_message TEXT,
+                reprocess_number INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                FOREIGN KEY (podcast_id) REFERENCES podcasts(id) ON DELETE CASCADE
+            )
+        """)
+
+        # Create indexes for processing_history
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_history_processed_at ON processing_history(processed_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_history_podcast_episode ON processing_history(podcast_id, episode_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_history_status ON processing_history(status)")
+
         conn.commit()
-        logger.info("Created new tables for cross-episode training")
+        logger.info("Created new tables for cross-episode training and processing history")
 
     def _run_schema_migrations(self):
         """Run schema migrations for existing databases."""
@@ -1494,25 +1541,31 @@ class Database:
 
     def get_ad_patterns(self, scope: str = None, podcast_id: str = None,
                         network_id: str = None, active_only: bool = True) -> List[Dict]:
-        """Get ad patterns with optional filtering."""
+        """Get ad patterns with optional filtering. Includes podcast_name when available."""
         conn = self.get_connection()
 
-        query = "SELECT * FROM ad_patterns WHERE 1=1"
+        # Join with podcasts to get podcast name
+        query = """
+            SELECT ap.*, p.title as podcast_name, p.slug as podcast_slug
+            FROM ad_patterns ap
+            LEFT JOIN podcasts p ON ap.podcast_id = CAST(p.id AS TEXT)
+            WHERE 1=1
+        """
         params = []
 
         if active_only:
-            query += " AND is_active = 1"
+            query += " AND ap.is_active = 1"
         if scope:
-            query += " AND scope = ?"
+            query += " AND ap.scope = ?"
             params.append(scope)
         if podcast_id:
-            query += " AND podcast_id = ?"
+            query += " AND ap.podcast_id = ?"
             params.append(podcast_id)
         if network_id:
-            query += " AND network_id = ?"
+            query += " AND ap.network_id = ?"
             params.append(network_id)
 
-        query += " ORDER BY confirmation_count DESC, created_at DESC"
+        query += " ORDER BY ap.confirmation_count DESC, ap.created_at DESC"
 
         cursor = conn.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
@@ -1523,6 +1576,22 @@ class Database:
         cursor = conn.execute(
             "SELECT * FROM ad_patterns WHERE id = ?", (pattern_id,)
         )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def find_pattern_by_text(self, text_template: str, podcast_id: str = None) -> Optional[Dict]:
+        """Find an existing pattern with the same text_template (for deduplication)."""
+        conn = self.get_connection()
+        if podcast_id:
+            cursor = conn.execute(
+                "SELECT * FROM ad_patterns WHERE text_template = ? AND podcast_id = ?",
+                (text_template, podcast_id)
+            )
+        else:
+            cursor = conn.execute(
+                "SELECT * FROM ad_patterns WHERE text_template = ? AND podcast_id IS NULL",
+                (text_template,)
+            )
         row = cursor.fetchone()
         return dict(row) if row else None
 
@@ -1852,3 +1921,445 @@ class Database:
         )
         conn.commit()
         return cursor.rowcount > 0
+
+    # ========== Processing History Methods ==========
+
+    def record_processing_history(self, podcast_id: int, podcast_slug: str,
+                                   podcast_title: str, episode_id: str,
+                                   episode_title: str, status: str,
+                                   processing_duration_seconds: float = None,
+                                   ads_detected: int = 0,
+                                   error_message: str = None) -> int:
+        """Record a processing attempt in history. Returns history entry ID."""
+        conn = self.get_connection()
+
+        # Calculate reprocess number (count existing entries + 1)
+        cursor = conn.execute(
+            """SELECT COUNT(*) FROM processing_history
+               WHERE podcast_id = ? AND episode_id = ?""",
+            (podcast_id, episode_id)
+        )
+        existing_count = cursor.fetchone()[0]
+        reprocess_number = existing_count + 1
+
+        cursor = conn.execute(
+            """INSERT INTO processing_history
+               (podcast_id, podcast_slug, podcast_title, episode_id, episode_title,
+                processed_at, processing_duration_seconds, status, ads_detected,
+                error_message, reprocess_number)
+               VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?, ?, ?, ?, ?)""",
+            (podcast_id, podcast_slug, podcast_title, episode_id, episode_title,
+             processing_duration_seconds, status, ads_detected, error_message,
+             reprocess_number)
+        )
+        conn.commit()
+        logger.info(f"Recorded processing history: {podcast_slug}/{episode_id} - {status} (reprocess #{reprocess_number})")
+        return cursor.lastrowid
+
+    def backfill_processing_history(self) -> int:
+        """Migrate existing processed episodes to processing_history table.
+        Only backfills episodes that don't already have history entries.
+        Returns count of records created."""
+        conn = self.get_connection()
+
+        # Only backfill episodes not already in history
+        # Note: processed_at is often NULL in older records, so use updated_at as fallback
+        cursor = conn.execute('''
+            INSERT INTO processing_history
+                (podcast_id, podcast_slug, podcast_title, episode_id, episode_title,
+                 processed_at, processing_duration_seconds, status, ads_detected,
+                 error_message, reprocess_number)
+            SELECT
+                e.podcast_id,
+                p.slug,
+                p.title,
+                e.episode_id,
+                e.title,
+                COALESCE(e.processed_at, e.updated_at),
+                NULL,
+                CASE
+                    WHEN e.status = 'failed' THEN 'failed'
+                    ELSE 'completed'
+                END,
+                COALESCE(e.ads_removed, 0),
+                e.error_message,
+                1
+            FROM episodes e
+            JOIN podcasts p ON e.podcast_id = p.id
+            WHERE e.status IN ('processed', 'failed')
+              AND NOT EXISTS (
+                  SELECT 1 FROM processing_history h
+                  WHERE h.podcast_id = e.podcast_id
+                    AND h.episode_id = e.episode_id
+              )
+        ''')
+
+        count = cursor.rowcount
+        conn.commit()
+        if count > 0:
+            logger.info(f"Backfilled {count} records to processing_history")
+        return count
+
+    def backfill_patterns_from_corrections(self) -> int:
+        """Create patterns from existing 'confirm' corrections that have no pattern_id.
+
+        This retroactively learns from user confirmations that were submitted
+        before the pattern learning feature existed.
+        Returns count of patterns created."""
+        import re
+
+        def parse_timestamp(ts: str) -> float:
+            """Convert HH:MM:SS.mmm to seconds."""
+            parts = ts.split(':')
+            hours = int(parts[0])
+            mins = int(parts[1])
+            secs = float(parts[2])
+            return hours * 3600 + mins * 60 + secs
+
+        def extract_transcript_segment(transcript: str, start: float, end: float) -> str:
+            """Extract text from transcript between timestamps."""
+            if not transcript:
+                return ''
+            pattern = r'\[(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})\]\s*([^\[]+)'
+            segments = []
+            for match in re.finditer(pattern, transcript):
+                seg_start = parse_timestamp(match.group(1))
+                seg_end = parse_timestamp(match.group(2))
+                text = match.group(3).strip()
+                if seg_end >= start and seg_start <= end:
+                    segments.append(text)
+            return ' '.join(segments)
+
+        conn = self.get_connection()
+        created_count = 0
+
+        # Find all 'confirm' corrections without a pattern_id
+        cursor = conn.execute('''
+            SELECT pc.id, pc.episode_id, pc.original_bounds, pc.podcast_title
+            FROM pattern_corrections pc
+            WHERE pc.correction_type = 'confirm'
+              AND pc.pattern_id IS NULL
+        ''')
+        corrections = cursor.fetchall()
+
+        for correction in corrections:
+            correction_id = correction['id']
+            episode_id = correction['episode_id']
+            original_bounds = correction['original_bounds']
+
+            if not episode_id or not original_bounds:
+                continue
+
+            try:
+                bounds = json.loads(original_bounds)
+                start = bounds.get('start')
+                end = bounds.get('end')
+                if start is None or end is None:
+                    continue
+
+                # Get episode with transcript - need to find by episode_id
+                # episode_id in corrections is the episode GUID, not slug
+                cursor2 = conn.execute('''
+                    SELECT e.*, p.id as podcast_db_id, p.slug, ed.transcript_text
+                    FROM episodes e
+                    JOIN podcasts p ON e.podcast_id = p.id
+                    LEFT JOIN episode_details ed ON e.id = ed.episode_id
+                    WHERE e.episode_id = ?
+                ''', (episode_id,))
+                episode = cursor2.fetchone()
+
+                if not episode:
+                    continue
+
+                transcript = episode['transcript_text'] or ''
+                podcast_id = episode['podcast_db_id']
+
+                # Extract ad text from transcript
+                ad_text = extract_transcript_segment(transcript, start, end)
+
+                if ad_text and len(ad_text) >= 50:
+                    # Check for existing pattern with same text (deduplication)
+                    existing = conn.execute(
+                        '''SELECT id FROM ad_patterns
+                           WHERE text_template = ? AND podcast_id = ?''',
+                        (ad_text, str(podcast_id))
+                    ).fetchone()
+
+                    if existing:
+                        # Link correction to existing pattern instead of creating duplicate
+                        conn.execute(
+                            'UPDATE pattern_corrections SET pattern_id = ? WHERE id = ?',
+                            (existing['id'], correction_id)
+                        )
+                        logger.info(f"Linked correction {correction_id} to existing pattern {existing['id']}")
+                    else:
+                        # Create new pattern
+                        cursor3 = conn.execute(
+                            '''INSERT INTO ad_patterns
+                               (scope, text_template, podcast_id, intro_variants, outro_variants,
+                                created_from_episode_id)
+                               VALUES (?, ?, ?, ?, ?, ?)''',
+                            ('podcast', ad_text, str(podcast_id),
+                             json.dumps([ad_text[:200]] if len(ad_text) > 200 else [ad_text]),
+                             json.dumps([ad_text[-150:]] if len(ad_text) > 150 else []),
+                             episode_id)
+                        )
+                        new_pattern_id = cursor3.lastrowid
+
+                        # Update correction to link to new pattern
+                        conn.execute(
+                            'UPDATE pattern_corrections SET pattern_id = ? WHERE id = ?',
+                            (new_pattern_id, correction_id)
+                        )
+                        created_count += 1
+                        logger.info(f"Created pattern {new_pattern_id} from correction {correction_id}")
+
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                logger.warning(f"Failed to process correction {correction_id}: {e}")
+                continue
+
+        conn.commit()
+        if created_count > 0:
+            logger.info(f"Backfilled {created_count} patterns from corrections")
+        return created_count
+
+    def deduplicate_patterns(self) -> int:
+        """Remove duplicate patterns, keeping the oldest one.
+
+        Returns count of duplicates removed."""
+        conn = self.get_connection()
+
+        # Find duplicates - patterns with same text_template and podcast_id
+        cursor = conn.execute('''
+            SELECT text_template, podcast_id, MIN(id) as keep_id, GROUP_CONCAT(id) as all_ids
+            FROM ad_patterns
+            WHERE text_template IS NOT NULL
+            GROUP BY text_template, podcast_id
+            HAVING COUNT(*) > 1
+        ''')
+        duplicates = cursor.fetchall()
+
+        removed_count = 0
+        for dup in duplicates:
+            keep_id = dup['keep_id']
+            all_ids = [int(x) for x in dup['all_ids'].split(',')]
+            remove_ids = [x for x in all_ids if x != keep_id]
+
+            if remove_ids:
+                # Update corrections to point to the kept pattern
+                placeholders = ','.join('?' * len(remove_ids))
+                conn.execute(
+                    f'''UPDATE pattern_corrections
+                        SET pattern_id = ?
+                        WHERE pattern_id IN ({placeholders})''',
+                    [keep_id] + remove_ids
+                )
+
+                # Delete duplicate patterns
+                conn.execute(
+                    f'''DELETE FROM ad_patterns WHERE id IN ({placeholders})''',
+                    remove_ids
+                )
+                removed_count += len(remove_ids)
+                logger.info(f"Removed {len(remove_ids)} duplicate patterns, kept pattern {keep_id}")
+
+        conn.commit()
+        if removed_count > 0:
+            logger.info(f"Deduplicated {removed_count} patterns total")
+        return removed_count
+
+    def extract_sponsors_for_patterns(self) -> int:
+        """Extract sponsor names for patterns that have text_template but no sponsor.
+
+        Returns count of patterns updated."""
+        import re
+
+        def extract_sponsor_from_text(ad_text: str) -> str:
+            """Extract sponsor from ad text by looking for URLs and patterns."""
+            if not ad_text:
+                return None
+
+            # Look for domains
+            domain_pattern = r'(?:visit\s+)?(?:www\.)?([a-zA-Z0-9-]+)\.(?:com|ai|io|org|net|co|gov)(?:/[^\s]*)?'
+            domains = re.findall(domain_pattern, ad_text.lower())
+
+            ignore_domains = {'example', 'website', 'podcast', 'episode', 'click', 'link'}
+            domains = [d for d in domains if d not in ignore_domains]
+
+            if domains:
+                return domains[0].replace('-', ' ').title()
+
+            # Look for sponsor phrases
+            sponsor_patterns = [
+                r'brought to you by\s+([A-Z][a-zA-Z0-9\s]+?)(?:\.|,|!|\s+is|\s+where|\s+the)',
+                r'sponsored by\s+([A-Z][a-zA-Z0-9\s]+?)(?:\.|,|!|\s+is|\s+where|\s+the)',
+                r'thanks to\s+([A-Z][a-zA-Z0-9\s]+?)(?:\s+for|\.|,|!)',
+            ]
+
+            for pattern in sponsor_patterns:
+                match = re.search(pattern, ad_text, re.IGNORECASE)
+                if match:
+                    sponsor = match.group(1).strip()
+                    if len(sponsor) < 50:
+                        return sponsor
+
+            return None
+
+        conn = self.get_connection()
+        updated_count = 0
+
+        # Find patterns without sponsors
+        cursor = conn.execute('''
+            SELECT id, text_template FROM ad_patterns
+            WHERE sponsor IS NULL AND text_template IS NOT NULL
+        ''')
+        patterns = cursor.fetchall()
+
+        for pattern in patterns:
+            sponsor = extract_sponsor_from_text(pattern['text_template'])
+            if sponsor:
+                conn.execute(
+                    'UPDATE ad_patterns SET sponsor = ? WHERE id = ?',
+                    (sponsor, pattern['id'])
+                )
+                updated_count += 1
+                logger.info(f"Extracted sponsor '{sponsor}' for pattern {pattern['id']}")
+
+        conn.commit()
+        if updated_count > 0:
+            logger.info(f"Extracted sponsors for {updated_count} patterns")
+        return updated_count
+
+    def get_processing_history(self, limit: int = 50, offset: int = 0,
+                                status_filter: str = None,
+                                podcast_slug: str = None,
+                                sort_by: str = 'processed_at',
+                                sort_dir: str = 'desc') -> Tuple[List[Dict], int]:
+        """Get processing history with pagination. Returns (entries, total_count)."""
+        conn = self.get_connection()
+
+        # Build WHERE clause
+        where_clauses = []
+        params = []
+
+        if status_filter and status_filter in ('completed', 'failed'):
+            where_clauses.append("status = ?")
+            params.append(status_filter)
+
+        if podcast_slug:
+            where_clauses.append("podcast_slug = ?")
+            params.append(podcast_slug)
+
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+        # Validate sort column
+        valid_sort_cols = ['processed_at', 'podcast_title', 'episode_title',
+                          'processing_duration_seconds', 'ads_detected',
+                          'reprocess_number', 'status']
+        if sort_by not in valid_sort_cols:
+            sort_by = 'processed_at'
+        sort_dir = 'DESC' if sort_dir.lower() == 'desc' else 'ASC'
+
+        # Get total count
+        cursor = conn.execute(
+            f"SELECT COUNT(*) FROM processing_history WHERE {where_sql}",
+            params
+        )
+        total_count = cursor.fetchone()[0]
+
+        # Get paginated results
+        query_params = params + [limit, offset]
+        cursor = conn.execute(
+            f"""SELECT * FROM processing_history
+                WHERE {where_sql}
+                ORDER BY {sort_by} {sort_dir}
+                LIMIT ? OFFSET ?""",
+            query_params
+        )
+
+        entries = [dict(row) for row in cursor.fetchall()]
+        return entries, total_count
+
+    def get_processing_history_stats(self) -> Dict:
+        """Get aggregate statistics from processing history."""
+        conn = self.get_connection()
+
+        # Total processed
+        cursor = conn.execute("SELECT COUNT(*) FROM processing_history")
+        total_processed = cursor.fetchone()[0]
+
+        # Completed count
+        cursor = conn.execute("SELECT COUNT(*) FROM processing_history WHERE status = 'completed'")
+        completed_count = cursor.fetchone()[0]
+
+        # Failed count
+        cursor = conn.execute("SELECT COUNT(*) FROM processing_history WHERE status = 'failed'")
+        failed_count = cursor.fetchone()[0]
+
+        # Average processing time (for completed only)
+        cursor = conn.execute(
+            """SELECT AVG(processing_duration_seconds)
+               FROM processing_history
+               WHERE status = 'completed' AND processing_duration_seconds IS NOT NULL"""
+        )
+        avg_time = cursor.fetchone()[0] or 0
+
+        # Total ads detected
+        cursor = conn.execute("SELECT SUM(ads_detected) FROM processing_history WHERE status = 'completed'")
+        total_ads = cursor.fetchone()[0] or 0
+
+        # Reprocess count (entries with reprocess_number > 1)
+        cursor = conn.execute("SELECT COUNT(*) FROM processing_history WHERE reprocess_number > 1")
+        reprocess_count = cursor.fetchone()[0]
+
+        # Unique episodes processed
+        cursor = conn.execute("SELECT COUNT(DISTINCT podcast_slug || '/' || episode_id) FROM processing_history")
+        unique_episodes = cursor.fetchone()[0]
+
+        return {
+            'total_processed': total_processed,
+            'completed_count': completed_count,
+            'failed_count': failed_count,
+            'avg_processing_time_seconds': round(avg_time, 2),
+            'total_ads_detected': total_ads,
+            'reprocess_count': reprocess_count,
+            'unique_episodes': unique_episodes
+        }
+
+    def get_episode_reprocess_count(self, podcast_id: int, episode_id: str) -> int:
+        """Get the number of times an episode has been processed."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            """SELECT COUNT(*) FROM processing_history
+               WHERE podcast_id = ? AND episode_id = ?""",
+            (podcast_id, episode_id)
+        )
+        return cursor.fetchone()[0]
+
+    def export_processing_history(self, status_filter: str = None,
+                                   podcast_slug: str = None) -> List[Dict]:
+        """Export all processing history (no pagination) for export."""
+        conn = self.get_connection()
+
+        # Build WHERE clause
+        where_clauses = []
+        params = []
+
+        if status_filter and status_filter in ('completed', 'failed'):
+            where_clauses.append("status = ?")
+            params.append(status_filter)
+
+        if podcast_slug:
+            where_clauses.append("podcast_slug = ?")
+            params.append(podcast_slug)
+
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+        cursor = conn.execute(
+            f"""SELECT * FROM processing_history
+                WHERE {where_sql}
+                ORDER BY processed_at DESC""",
+            params
+        )
+
+        return [dict(row) for row in cursor.fetchall()]

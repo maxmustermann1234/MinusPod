@@ -71,6 +71,7 @@ export function TranscriptEditor({
   const [audioSheetExpanded, setAudioSheetExpanded] = useState(false);
   const [swipeStartX, setSwipeStartX] = useState<number | null>(null);
   const [isDraggingProgress, setIsDraggingProgress] = useState(false);
+  const [preserveSeekPosition, setPreserveSeekPosition] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -127,6 +128,34 @@ export function TranscriptEditor({
     }
   }, [currentTime, isPlaying]);
 
+  // Scroll transcript to show selected ad
+  const scrollToAd = useCallback((ad: DetectedAd) => {
+    if (!transcriptRef.current) return;
+
+    const segmentElements = transcriptRef.current.querySelectorAll('[data-segment-start]');
+    for (const seg of segmentElements) {
+      const start = parseFloat(seg.getAttribute('data-segment-start') || '0');
+      if (start >= ad.start) {
+        seg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        break;
+      }
+    }
+  }, []);
+
+  // Scroll transcript to a specific time (for jump functionality)
+  const scrollToTime = useCallback((time: number) => {
+    if (!transcriptRef.current) return;
+
+    const segmentElements = transcriptRef.current.querySelectorAll('[data-segment-start]');
+    for (const seg of segmentElements) {
+      const start = parseFloat(seg.getAttribute('data-segment-start') || '0');
+      if (start >= time) {
+        seg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        break;
+      }
+    }
+  }, []);
+
   // Handle initial seek time (from Jump button)
   useEffect(() => {
     if (initialSeekTime !== undefined && audioRef.current) {
@@ -139,27 +168,17 @@ export function TranscriptEditor({
       }
       // Seek to the time
       audioRef.current.currentTime = initialSeekTime;
+      // Preserve this seek position so play doesn't reset it
+      setPreserveSeekPosition(true);
+      // Scroll transcript to show the jumped-to time
+      scrollToTime(initialSeekTime);
     }
-  }, [initialSeekTime, detectedAds]);
+  }, [initialSeekTime, detectedAds, scrollToTime]);
 
   // Auto-focus container when editor opens for keyboard shortcuts
   useEffect(() => {
     if (containerRef.current) {
       containerRef.current.focus();
-    }
-  }, []);
-
-  // Scroll transcript to show selected ad
-  const scrollToAd = useCallback((ad: DetectedAd) => {
-    if (!transcriptRef.current) return;
-
-    const segmentElements = transcriptRef.current.querySelectorAll('[data-segment-start]');
-    for (const seg of segmentElements) {
-      const start = parseFloat(seg.getAttribute('data-segment-start') || '0');
-      if (start >= ad.start) {
-        seg.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        break;
-      }
     }
   }, []);
 
@@ -213,13 +232,15 @@ export function TranscriptEditor({
     if (isPlaying) {
       audio.pause();
     } else {
-      // Seek to ad start if not within ad
-      if (currentTime < adjustedStart || currentTime > adjustedEnd) {
+      // Only reset to ad start if not preserving a jump position AND outside ad bounds
+      if (!preserveSeekPosition && (currentTime < adjustedStart || currentTime > adjustedEnd)) {
         audio.currentTime = adjustedStart;
       }
+      // Clear the preserve flag after use
+      setPreserveSeekPosition(false);
       audio.play();
     }
-  }, [isPlaying, currentTime, adjustedStart, adjustedEnd]);
+  }, [isPlaying, currentTime, adjustedStart, adjustedEnd, preserveSeekPosition]);
 
   const handleNudgeEndForward = useCallback(() => {
     setAdjustedEnd((prev) => Math.min(prev + NUDGE_AMOUNT, segments[segments.length - 1]?.end || prev));
@@ -788,45 +809,49 @@ export function TranscriptEditor({
                 />
               </div>
             </div>
-            {/* Icon-only action buttons */}
-            <div className="flex items-center justify-center gap-3">
+            {/* Action buttons with labels */}
+            <div className="flex items-center justify-center gap-2">
               <button
                 onClick={handleReject}
                 disabled={saveStatus === 'saving'}
-                className={`p-3 min-w-[48px] min-h-[48px] rounded-lg touch-manipulation active:scale-95 transition-all flex items-center justify-center ${
+                className={`p-2 min-w-[56px] min-h-[56px] rounded-lg touch-manipulation active:scale-95 transition-all flex flex-col items-center justify-center gap-0.5 ${
                   saveStatus === 'saving' ? 'bg-destructive/50 cursor-wait' : saveStatus === 'success' ? 'bg-green-600' : saveStatus === 'error' ? 'bg-red-600' : 'bg-destructive/10 text-destructive active:bg-destructive/20'
                 }`}
                 title="Not an Ad"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
+                <span className="text-[10px] font-medium">Not Ad</span>
               </button>
               <button
                 onClick={handleReset}
                 disabled={saveStatus === 'saving'}
-                className="p-3 min-w-[48px] min-h-[48px] rounded-lg bg-muted touch-manipulation active:scale-95 active:bg-accent transition-all flex items-center justify-center disabled:opacity-50"
+                className="p-2 min-w-[56px] min-h-[56px] rounded-lg bg-muted touch-manipulation active:scale-95 active:bg-accent transition-all flex flex-col items-center justify-center gap-0.5 disabled:opacity-50"
                 title="Reset"
               >
-                <RotateCcw className="w-5 h-5" />
+                <RotateCcw className="w-4 h-4" />
+                <span className="text-[10px] font-medium">Reset</span>
               </button>
               <button
                 onClick={handleConfirm}
                 disabled={saveStatus === 'saving'}
-                className={`p-3 min-w-[48px] min-h-[48px] rounded-lg touch-manipulation active:scale-95 transition-all flex items-center justify-center ${
+                className={`p-2 min-w-[56px] min-h-[56px] rounded-lg touch-manipulation active:scale-95 transition-all flex flex-col items-center justify-center gap-0.5 ${
                   saveStatus === 'saving' ? 'bg-green-600/50 cursor-wait' : saveStatus === 'success' ? 'bg-green-600' : saveStatus === 'error' ? 'bg-red-600' : 'bg-green-600 text-white active:bg-green-700'
                 }`}
                 title="Confirm"
               >
-                <Check className="w-5 h-5" />
+                <Check className="w-4 h-4" />
+                <span className="text-[10px] font-medium">Confirm</span>
               </button>
               <button
                 onClick={handleSave}
                 disabled={saveStatus === 'saving'}
-                className={`p-3 min-w-[48px] min-h-[48px] rounded-lg touch-manipulation active:scale-95 transition-all flex items-center justify-center ${
+                className={`p-2 min-w-[56px] min-h-[56px] rounded-lg touch-manipulation active:scale-95 transition-all flex flex-col items-center justify-center gap-0.5 ${
                   saveStatus === 'saving' ? 'bg-primary/50 cursor-wait' : saveStatus === 'success' ? 'bg-green-600' : saveStatus === 'error' ? 'bg-red-600' : 'bg-primary text-primary-foreground active:bg-primary/90'
                 }`}
                 title="Save Adjusted"
               >
-                <Save className="w-5 h-5" />
+                <Save className="w-4 h-4" />
+                <span className="text-[10px] font-medium">Save</span>
               </button>
             </div>
           </div>

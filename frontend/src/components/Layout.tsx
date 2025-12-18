@@ -56,6 +56,16 @@ function Layout() {
                   Patterns
                 </Link>
                 <Link
+                  to="/history"
+                  className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    isActive('/history')
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                  }`}
+                >
+                  History
+                </Link>
+                <Link
                   to="/settings"
                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                     isActive('/settings')
@@ -158,6 +168,17 @@ function Layout() {
                 }`}
               >
                 Patterns
+              </Link>
+              <Link
+                to="/history"
+                onClick={() => setMobileMenuOpen(false)}
+                className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  isActive('/history')
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                }`}
+              >
+                History
               </Link>
               <Link
                 to="/settings"

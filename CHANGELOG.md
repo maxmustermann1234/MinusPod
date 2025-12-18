@@ -5,6 +5,131 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.128] - 2025-12-18
+
+### Added
+- **Sponsor Extraction from Ad Text**
+  - Automatically extracts sponsor names from ad text by detecting URLs (hex.ai, thisisnewjersey.com)
+  - Also detects "brought to you by", "sponsored by" patterns
+  - Migration extracts sponsors for existing patterns on startup
+  - Real-time pattern creation now auto-extracts sponsor when not provided
+
+- **Podcast Name in Patterns**
+  - Patterns API now returns `podcast_name` and `podcast_slug` via JOIN
+  - Patterns page shows podcast name in scope badge instead of generic "Podcast"
+  - TypeScript types updated to include new fields
+
+---
+
+## [0.1.127] - 2025-12-18
+
+### Fixed
+- **Pattern Deduplication**
+  - Added `deduplicate_patterns()` migration to remove duplicate patterns on startup
+  - Real-time pattern creation now checks for existing patterns with same text before creating new ones
+  - Backfill now links corrections to existing patterns instead of creating duplicates
+  - Added `find_pattern_by_text()` method for deduplication lookups
+  - Fixes issue where confirming the same ad multiple times created duplicate patterns
+
+---
+
+## [0.1.126] - 2025-12-18
+
+### Added
+- **Pattern Backfill Migration**
+  - Retroactively creates patterns from existing 'confirm' corrections submitted before v0.1.125
+  - Runs on startup, finds corrections without pattern_id
+  - Extracts ad text from transcript using timestamps in original_bounds
+  - Links created patterns back to the original corrections
+  - Your 13 previous confirmations will now populate the Patterns page
+
+---
+
+## [0.1.125] - 2025-12-18
+
+### Added
+- **Pattern Learning from User Confirmations**
+  - When user confirms a Claude-detected ad (no pattern_id), system now creates a new pattern
+  - Extracts ad text from transcript using VTT timestamps
+  - Creates podcast-scoped pattern with intro/outro variants
+  - Minimum 50 characters required for TF-IDF matching
+  - Patterns page will now populate as users confirm ad detections
+  - Helper function `extract_transcript_segment()` for VTT transcript parsing
+
+---
+
+## [0.1.124] - 2025-12-18
+
+### Fixed
+- **History Page Crash**
+  - Fixed `TypeError: Cannot read properties of null (reading 'toFixed')` on History page
+  - Root cause: Backfilled records have `processingDurationSeconds: null` but `formatDuration()` didn't handle null
+  - Solution: Added null check to return '-' for missing duration values
+
+---
+
+## [0.1.123] - 2025-12-18
+
+### Fixed
+- **History Data Backfill Bug**
+  - Fixed backfill query that was finding zero episodes to migrate
+  - Root cause: Query required `processed_at IS NOT NULL` but this column was never populated historically
+  - Solution: Use `COALESCE(processed_at, updated_at)` for timestamp, check status `IN ('processed', 'failed')` instead of `'completed'`
+
+---
+
+## [0.1.122] - 2025-12-18
+
+### Added
+- **Button Labels on Transcript Editor**
+  - Feedback buttons now show text labels below icons: Not Ad, Reset, Confirm, Save
+  - Improved mobile discoverability with stacked icon+text layout
+  - Buttons fit on 320px+ screens with tighter spacing
+
+- **History Data Backfill**
+  - Automatically migrates existing processed episodes to processing_history table on startup
+  - History page now shows all previously processed episodes (not just new ones)
+  - Backfill runs once per startup, skipping episodes already in history
+
+---
+
+## [0.1.121] - 2025-12-18
+
+### Added
+- **Processing History Page**
+  - New `/history` page showing all episode processing history
+  - Stats summary: total processed, completed, failed, total ads detected
+  - Sortable table columns: processed date, duration, ads detected, reprocess number
+  - Filter by status (all/completed/failed) and by podcast
+  - Pagination for large history sets
+  - Links to podcast and episode detail pages
+  - Error message tooltip on failed entries
+
+- **History Export**
+  - Export CSV and JSON buttons for processing history
+  - Backend API: `GET /api/v1/history`, `GET /api/v1/history/stats`, `GET /api/v1/history/export`
+  - Database: New `processing_history` table tracking all processing attempts
+
+- **Processing History Recording**
+  - Records processing history for both successful and failed episode processing
+  - Tracks: podcast, episode, processed time, duration, ads detected, reprocess count, status, error message
+
+### Fixed
+- **Mobile Jump Button Bug**
+  - Fixed: Clicking "Jump" then "Play" would start from beginning instead of jumped position
+  - Root cause: `handlePlayPause` was resetting `currentTime` when outside ad bounds
+  - Solution: Added `preserveSeekPosition` state to preserve jump position on first play
+
+- **Transcript Scroll on Jump**
+  - Fixed: Jump button didn't scroll transcript to the jumped-to time
+  - Added `scrollToTime` helper function triggered on jump
+
+- **Mobile Ad Description Layout**
+  - Fixed: Ad description text was cramped on mobile devices
+  - Moved description to full-width row below time badges and controls
+
+---
+
 ## [0.1.120] - 2025-12-18
 
 ### Added

@@ -5,6 +5,8 @@ export interface AdPattern {
   scope: string;
   network_id: string | null;
   podcast_id: string | null;
+  podcast_name?: string | null;
+  podcast_slug?: string | null;
   dai_platform: string | null;
   text_template: string | null;
   intro_variants: string;

@@ -161,7 +161,8 @@ The server includes a web-based management UI at `/ui/`:
 - **Dashboard** - View all feeds with artwork and episode counts
 - **Add Feed** - Add new podcasts by RSS URL
 - **Feed Management** - Refresh, delete, copy feed URLs, set network override
-- **Patterns** - View and manage cross-episode ad patterns
+- **Patterns** - View and manage cross-episode ad patterns with sponsor names
+- **History** - View processing history with stats, filtering, and export
 - **Settings** - Configure ad detection prompts and Claude model
 - **System Status** - View statistics and run cleanup
 - **Real-Time Status Bar** - Shows current processing progress across all pages
@@ -211,6 +212,14 @@ The transcript editor allows you to review and adjust ad detections directly in 
 **Settings**
 
 <img src="docs/screenshots/settings.png" width="600">
+
+**Patterns**
+
+<img src="docs/screenshots/patterns.png" width="600">
+
+**History**
+
+<img src="docs/screenshots/history.png" width="600">
 
 **Mobile**
 
@@ -286,6 +295,9 @@ Key endpoints:
 - `POST /api/v1/feeds/{slug}/episodes/{id}/cancel` - Cancel stuck processing episode
 - `GET /api/v1/patterns` - List ad patterns (filter by scope)
 - `PUT /api/v1/patterns/{id}` - Update pattern
+- `GET /api/v1/history` - Get processing history with pagination
+- `GET /api/v1/history/stats` - Get processing statistics
+- `GET /api/v1/history/export` - Export history as CSV or JSON
 - `GET /api/v1/networks` - List known podcast networks
 - `GET /api/v1/status` - Get current processing status
 - `GET /api/v1/status/stream` - SSE endpoint for real-time status updates

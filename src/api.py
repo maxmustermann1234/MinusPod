@@ -1,4 +1,5 @@
 """REST API for podcast server web UI."""
+import json
 import logging
 import os
 import time
@@ -61,6 +62,85 @@ def error_response(message, status=400, details=None):
     if details:
         data['details'] = details
     return json_response(data, status)
+
+
+def extract_transcript_segment(transcript: str, start: float, end: float) -> str:
+    """Extract text from transcript between timestamps.
+
+    Transcript format (VTT-like):
+    [00:00:00.000 --> 00:00:27.580] Text content here...
+    [00:00:28.940 --> 00:00:35.120] More text...
+    """
+    import re
+
+    if not transcript:
+        return ''
+
+    def parse_timestamp(ts: str) -> float:
+        """Convert HH:MM:SS.mmm to seconds."""
+        parts = ts.split(':')
+        hours = int(parts[0])
+        mins = int(parts[1])
+        secs = float(parts[2])
+        return hours * 3600 + mins * 60 + secs
+
+    # Pattern: [HH:MM:SS.mmm --> HH:MM:SS.mmm] text
+    pattern = r'\[(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})\]\s*([^\[]+)'
+    segments = []
+
+    for match in re.finditer(pattern, transcript):
+        seg_start = parse_timestamp(match.group(1))
+        seg_end = parse_timestamp(match.group(2))
+        text = match.group(3).strip()
+
+        # Include segment if it overlaps with requested range
+        if seg_end >= start and seg_start <= end:
+            segments.append(text)
+
+    return ' '.join(segments)
+
+
+def extract_sponsor_from_text(ad_text: str) -> str:
+    """Extract sponsor name from ad text by looking for URLs and common patterns.
+
+    Looks for:
+    - Domain names (e.g., hex.ai, thisisnewjersey.com)
+    - Common sponsor phrases (e.g., "brought to you by X", "sponsored by X")
+    """
+    import re
+
+    if not ad_text:
+        return None
+
+    # Look for URLs/domains mentioned in the text
+    # Match patterns like: example.com, example.ai, visit example dot com
+    domain_pattern = r'(?:visit\s+)?(?:www\.)?([a-zA-Z0-9-]+)\.(?:com|ai|io|org|net|co|gov)(?:/[^\s]*)?'
+    domains = re.findall(domain_pattern, ad_text.lower())
+
+    # Filter out common non-sponsor domains
+    ignore_domains = {'example', 'website', 'podcast', 'episode', 'click', 'link'}
+    domains = [d for d in domains if d not in ignore_domains]
+
+    if domains:
+        # Return the first meaningful domain as sponsor
+        sponsor = domains[0].replace('-', ' ').title()
+        return sponsor
+
+    # Look for "brought to you by X" or "sponsored by X" patterns
+    sponsor_patterns = [
+        r'brought to you by\s+([A-Z][a-zA-Z0-9\s]+?)(?:\.|,|!|\s+is|\s+where|\s+the)',
+        r'sponsored by\s+([A-Z][a-zA-Z0-9\s]+?)(?:\.|,|!|\s+is|\s+where|\s+the)',
+        r'thanks to\s+([A-Z][a-zA-Z0-9\s]+?)(?:\s+for|\.|,|!)',
+    ]
+
+    for pattern in sponsor_patterns:
+        match = re.search(pattern, ad_text, re.IGNORECASE)
+        if match:
+            sponsor = match.group(1).strip()
+            if len(sponsor) < 50:  # Sanity check
+                return sponsor
+
+    return None
 
 
 # ========== Feed Endpoints ==========
@@ -748,6 +828,141 @@ def cancel_episode_processing(slug, episode_id):
     })
 
 
+# ========== Processing History Endpoints ==========
+
+@api.route('/history', methods=['GET'])
+@log_request
+def get_processing_history():
+    """Get processing history with pagination and filtering."""
+    db = get_database()
+
+    # Parse query params
+    limit = request.args.get('limit', 50, type=int)
+    offset = request.args.get('offset', 0, type=int)
+    status_filter = request.args.get('status')  # 'completed' or 'failed'
+    podcast_slug = request.args.get('podcast')
+    sort_by = request.args.get('sort_by', 'processed_at')
+    sort_dir = request.args.get('sort_dir', 'desc')
+
+    # Clamp limits
+    limit = min(max(1, limit), 100)
+    offset = max(0, offset)
+
+    entries, total_count = db.get_processing_history(
+        limit=limit,
+        offset=offset,
+        status_filter=status_filter,
+        podcast_slug=podcast_slug,
+        sort_by=sort_by,
+        sort_dir=sort_dir
+    )
+
+    # Transform for API response
+    history = []
+    for entry in entries:
+        history.append({
+            'id': entry['id'],
+            'podcastSlug': entry['podcast_slug'],
+            'podcastTitle': entry['podcast_title'],
+            'episodeId': entry['episode_id'],
+            'episodeTitle': entry['episode_title'],
+            'processedAt': entry['processed_at'],
+            'processingDurationSeconds': entry['processing_duration_seconds'],
+            'status': entry['status'],
+            'adsDetected': entry['ads_detected'],
+            'errorMessage': entry['error_message'],
+            'reprocessNumber': entry['reprocess_number']
+        })
+
+    return json_response({
+        'history': history,
+        'total': total_count,
+        'limit': limit,
+        'offset': offset
+    })
+
+
+@api.route('/history/stats', methods=['GET'])
+@log_request
+def get_processing_history_stats():
+    """Get aggregate statistics from processing history."""
+    db = get_database()
+    stats = db.get_processing_history_stats()
+
+    return json_response({
+        'totalProcessed': stats['total_processed'],
+        'completedCount': stats['completed_count'],
+        'failedCount': stats['failed_count'],
+        'avgProcessingTimeSeconds': stats['avg_processing_time_seconds'],
+        'totalAdsDetected': stats['total_ads_detected'],
+        'reprocessCount': stats['reprocess_count'],
+        'uniqueEpisodes': stats['unique_episodes']
+    })
+
+
+@api.route('/history/export', methods=['GET'])
+@log_request
+def export_processing_history():
+    """Export processing history as CSV or JSON."""
+    import csv
+    import io
+
+    db = get_database()
+
+    # Parse query params
+    export_format = request.args.get('format', 'json').lower()
+    status_filter = request.args.get('status')
+    podcast_slug = request.args.get('podcast')
+
+    entries = db.export_processing_history(
+        status_filter=status_filter,
+        podcast_slug=podcast_slug
+    )
+
+    if export_format == 'csv':
+        # Generate CSV
+        output = io.StringIO()
+        if entries:
+            fieldnames = ['id', 'podcast_slug', 'podcast_title', 'episode_id',
+                         'episode_title', 'processed_at', 'processing_duration_seconds',
+                         'status', 'ads_detected', 'error_message', 'reprocess_number']
+            writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
+            writer.writeheader()
+            for entry in entries:
+                writer.writerow(entry)
+
+        response = Response(
+            output.getvalue(),
+            mimetype='text/csv',
+            headers={'Content-Disposition': 'attachment; filename=processing_history.csv'}
+        )
+        return response
+    else:
+        # JSON format
+        history = []
+        for entry in entries:
+            history.append({
+                'id': entry['id'],
+                'podcastSlug': entry['podcast_slug'],
+                'podcastTitle': entry['podcast_title'],
+                'episodeId': entry['episode_id'],
+                'episodeTitle': entry['episode_title'],
+                'processedAt': entry['processed_at'],
+                'processingDurationSeconds': entry['processing_duration_seconds'],
+                'status': entry['status'],
+                'adsDetected': entry['ads_detected'],
+                'errorMessage': entry['error_message'],
+                'reprocessNumber': entry['reprocess_number']
+            })
+
+        response = Response(
+            json.dumps({'history': history}, indent=2),
+            mimetype='application/json',
+            headers={'Content-Disposition': 'attachment; filename=processing_history.json'}
+        )
+        return response
+
+
 # ========== Settings Endpoints ==========
 
 @api.route('/settings', methods=['GET'])
@@ -1428,6 +1643,46 @@ def submit_correction(slug, episode_id):
         # Increment confirmation count on pattern
         if pattern_id:
             pattern_service.record_pattern_match(pattern_id, episode_id)
+        else:
+            # Create new pattern from Claude detection
+            episode = db.get_episode(slug, episode_id)
+            if episode:
+                transcript = episode.get('transcript_text', '')
+
+                # Extract ad text from transcript using timestamps
+                ad_text = extract_transcript_segment(transcript, original_start, original_end)
+
+                if ad_text and len(ad_text) >= 50:  # Minimum for TF-IDF matching
+                    # Get podcast info for scope
+                    podcast = db.get_podcast_by_slug(slug)
+                    podcast_id_str = str(podcast['id']) if podcast else None
+
+                    # Check for existing pattern with same text (deduplication)
+                    existing_pattern = db.find_pattern_by_text(ad_text, podcast_id_str)
+
+                    if existing_pattern:
+                        # Use existing pattern instead of creating duplicate
+                        pattern_id = existing_pattern['id']
+                        pattern_service.record_pattern_match(pattern_id, episode_id)
+                        logger.info(f"Linked to existing pattern {pattern_id} for confirmed ad in {slug}/{episode_id}")
+                    else:
+                        # Extract sponsor from original ad or from ad text
+                        sponsor = original_ad.get('sponsor')
+                        if not sponsor:
+                            sponsor = extract_sponsor_from_text(ad_text)
+
+                        # Create new pattern with podcast scope
+                        new_pattern_id = db.create_ad_pattern(
+                            scope='podcast',
+                            podcast_id=podcast_id_str,
+                            text_template=ad_text,
+                            sponsor=sponsor,
+                            intro_variants=[ad_text[:200]] if len(ad_text) > 200 else [ad_text],
+                            outro_variants=[ad_text[-150:]] if len(ad_text) > 150 else [],
+                            created_from_episode_id=episode_id
+                        )
+                        pattern_id = new_pattern_id
+                        logger.info(f"Created new pattern {pattern_id} from confirmed ad in {slug}/{episode_id}")
 
         db.create_pattern_correction(
             correction_type='confirm',
@@ -1437,7 +1692,7 @@ def submit_correction(slug, episode_id):
             text_snippet=data.get('notes')
         )
 
-        return json_response({'message': 'Correction recorded'})
+        return json_response({'message': 'Correction recorded', 'pattern_id': pattern_id})
 
     elif correction_type == 'reject':
         # Mark as false positive
