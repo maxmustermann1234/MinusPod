@@ -121,6 +121,14 @@ sponsor_service = SponsorService(db)
 status_service = StatusService()
 pattern_service = PatternService(db)
 
+# Backfill processing history from existing episodes (runs once on startup)
+try:
+    backfilled = db.backfill_processing_history()
+    if backfilled > 0:
+        audio_logger.info(f"Backfilled {backfilled} records to processing_history")
+except Exception as e:
+    audio_logger.warning(f"History backfill failed: {e}")
+
 
 def get_feed_map():
     """Get feed map from database."""

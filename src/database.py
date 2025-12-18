@@ -1934,6 +1934,50 @@ class Database:
         logger.info(f"Recorded processing history: {podcast_slug}/{episode_id} - {status} (reprocess #{reprocess_number})")
         return cursor.lastrowid
 
+    def backfill_processing_history(self) -> int:
+        """Migrate existing processed episodes to processing_history table.
+        Only backfills episodes that don't already have history entries.
+        Returns count of records created."""
+        conn = self.get_connection()
+
+        # Only backfill episodes not already in history
+        cursor = conn.execute('''
+            INSERT INTO processing_history
+                (podcast_id, podcast_slug, podcast_title, episode_id, episode_title,
+                 processed_at, processing_duration_seconds, status, ads_detected,
+                 error_message, reprocess_number)
+            SELECT
+                e.podcast_id,
+                p.slug,
+                p.title,
+                e.episode_id,
+                e.title,
+                e.processed_at,
+                NULL,
+                CASE
+                    WHEN e.status = 'failed' THEN 'failed'
+                    ELSE 'completed'
+                END,
+                COALESCE(e.ads_removed, 0),
+                e.error_message,
+                1
+            FROM episodes e
+            JOIN podcasts p ON e.podcast_id = p.id
+            WHERE e.processed_at IS NOT NULL
+              AND e.status IN ('completed', 'failed', 'processed')
+              AND NOT EXISTS (
+                  SELECT 1 FROM processing_history h
+                  WHERE h.podcast_id = e.podcast_id
+                    AND h.episode_id = e.episode_id
+              )
+        ''')
+
+        count = cursor.rowcount
+        conn.commit()
+        if count > 0:
+            logger.info(f"Backfilled {count} records to processing_history")
+        return count
+
     def get_processing_history(self, limit: int = 50, offset: int = 0,
                                 status_filter: str = None,
                                 podcast_slug: str = None,

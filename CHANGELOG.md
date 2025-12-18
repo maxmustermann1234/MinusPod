@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.122] - 2025-12-18
+
+### Added
+- **Button Labels on Transcript Editor**
+  - Feedback buttons now show text labels below icons: Not Ad, Reset, Confirm, Save
+  - Improved mobile discoverability with stacked icon+text layout
+  - Buttons fit on 320px+ screens with tighter spacing
+
+- **History Data Backfill**
+  - Automatically migrates existing processed episodes to processing_history table on startup
+  - History page now shows all previously processed episodes (not just new ones)
+  - Backfill runs once per startup, skipping episodes already in history
+
+---
+
 ## [0.1.121] - 2025-12-18
 
 ### Added
