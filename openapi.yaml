@@ -9,7 +9,9 @@ info:
     - View and manage processed episodes
     - Configure ad detection settings including Claude model selection
     - Monitor system status and trigger cleanup operations
-  version: 0.1.119
+    - Manage cross-episode ad patterns with network and podcast scope
+    - Submit corrections to improve ad detection accuracy
+  version: 0.1.120
   contact:
     name: Podcast Server
   license:
@@ -32,8 +34,14 @@ tags:
     description: Episode data and transcripts
   - name: Processing
     description: Processing queue management
+  - name: Patterns
+    description: Cross-episode ad pattern management
+  - name: Sponsors
+    description: Sponsor name normalization
   - name: Settings
     description: Application settings and configuration
+  - name: Status
+    description: Real-time processing status
   - name: System
     description: System status and maintenance
 
@@ -323,13 +331,31 @@ paths:
         - Episodes
       summary: Force reprocess an episode
       description: |
-        Deletes all cached data (audio, transcript, ads) and immediately
-        reprocesses the episode from scratch. Use when you want to re-run
-        transcription and ad detection with updated settings.
+        Deletes all cached data (audio, transcript, ads) and reprocesses the episode.
+        Supports two modes:
+        - `reprocess` (default): Uses learned patterns from the pattern database plus Claude analysis
+        - `full`: Skips the pattern database entirely for a fresh Claude-only analysis
+
+        Reprocessed episodes are prioritized in the processing queue.
       operationId: reprocessEpisode
       parameters:
         - $ref: '#/components/parameters/slug'
         - $ref: '#/components/parameters/episodeId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: [reprocess, full]
+                  default: reprocess
+                  description: |
+                    Processing mode:
+                    - reprocess: Use pattern DB + Claude (leverages learned patterns)
+                    - full: Claude only, skip pattern DB (fresh analysis)
       responses:
         '200':
           description: Episode reprocessing started
@@ -343,6 +369,8 @@ paths:
                   status:
                     type: string
                     enum: [completed, processing]
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -421,6 +449,59 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /feeds/{slug}/episodes/{episodeId}/corrections:
+    post:
+      tags:
+        - Episodes
+      summary: Submit ad corrections
+      description: |
+        Submit corrections for detected ads in an episode. This feedback improves
+        the cross-episode pattern database for better future detection.
+
+        Actions:
+        - confirm: Mark detection as correct (creates/updates pattern)
+        - reject: Mark as false positive (increments false_positive_count)
+      operationId: submitCorrections
+      parameters:
+        - $ref: '#/components/parameters/slug'
+        - $ref: '#/components/parameters/episodeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - corrections
+              properties:
+                corrections:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/AdCorrection'
+      responses:
+        '200':
+          description: Corrections submitted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  processed:
+                    type: integer
+                    description: Number of corrections processed
+                  patternsCreated:
+                    type: integer
+                    description: New patterns created from confirmations
+                  patternsUpdated:
+                    type: integer
+                    description: Existing patterns updated
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /episodes/processing:
     get:
       tags:
@@ -437,6 +518,295 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/ProcessingEpisode'
+
+  /patterns:
+    get:
+      tags:
+        - Patterns
+      summary: List ad patterns
+      description: |
+        Returns all ad patterns from the cross-episode pattern database.
+        Patterns are organized by scope (global, network, podcast) and can be
+        filtered to show only active patterns.
+      operationId: listPatterns
+      parameters:
+        - name: scope
+          in: query
+          description: Filter by pattern scope
+          schema:
+            type: string
+            enum: [all, global, network, podcast]
+            default: all
+        - name: active_only
+          in: query
+          description: Only return active patterns
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: List of patterns
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  patterns:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Pattern'
+
+  /patterns/{patternId}:
+    get:
+      tags:
+        - Patterns
+      summary: Get a single pattern
+      description: Returns details for a specific ad pattern
+      operationId: getPattern
+      parameters:
+        - $ref: '#/components/parameters/patternId'
+      responses:
+        '200':
+          description: Pattern details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pattern'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags:
+        - Patterns
+      summary: Update a pattern
+      description: Update pattern properties like active status, sponsor, or disabled reason
+      operationId: updatePattern
+      parameters:
+        - $ref: '#/components/parameters/patternId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_active:
+                  type: boolean
+                  description: Whether the pattern is active
+                sponsor:
+                  type: string
+                  description: Sponsor name for this pattern
+                disabled_reason:
+                  type: string
+                  description: Reason for disabling the pattern
+      responses:
+        '200':
+          description: Pattern updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  pattern:
+                    $ref: '#/components/schemas/Pattern'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /patterns/export:
+    get:
+      tags:
+        - Patterns
+      summary: Export patterns
+      description: Export all patterns as JSON for backup or transfer
+      operationId: exportPatterns
+      responses:
+        '200':
+          description: Exported patterns
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exportedAt:
+                    type: string
+                    format: date-time
+                  version:
+                    type: string
+                  patterns:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Pattern'
+
+  /patterns/import:
+    post:
+      tags:
+        - Patterns
+      summary: Import patterns
+      description: Import patterns from a JSON export file
+      operationId: importPatterns
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - patterns
+              properties:
+                patterns:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Pattern'
+                merge:
+                  type: boolean
+                  default: true
+                  description: Merge with existing patterns (true) or replace all (false)
+      responses:
+        '200':
+          description: Patterns imported
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  imported:
+                    type: integer
+                  skipped:
+                    type: integer
+
+  /networks:
+    get:
+      tags:
+        - Feeds
+      summary: List known podcast networks
+      description: Returns list of known podcast networks for network-level pattern matching
+      operationId: listNetworks
+      responses:
+        '200':
+          description: List of networks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  networks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Network'
+
+  /sponsors:
+    get:
+      tags:
+        - Sponsors
+      summary: List unique sponsors
+      description: Returns list of unique sponsor names from the pattern database
+      operationId: listSponsors
+      responses:
+        '200':
+          description: List of sponsors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sponsors:
+                    type: array
+                    items:
+                      type: string
+
+  /sponsors/normalizations:
+    get:
+      tags:
+        - Sponsors
+      summary: Get sponsor normalizations
+      description: Returns mapping of sponsor name variations to canonical names
+      operationId: getSponsorNormalizations
+      responses:
+        '200':
+          description: Sponsor normalizations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  normalizations:
+                    type: object
+                    additionalProperties:
+                      type: string
+                    description: Map of variation to canonical name
+    post:
+      tags:
+        - Sponsors
+      summary: Update sponsor normalizations
+      description: Add or update sponsor name normalization mappings
+      operationId: updateSponsorNormalizations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                normalizations:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Map of variation to canonical name
+      responses:
+        '200':
+          description: Normalizations updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+  /status:
+    get:
+      tags:
+        - Status
+      summary: Get current processing status
+      description: Returns current processing status including active episode and queue depth
+      operationId: getStatus
+      responses:
+        '200':
+          description: Current status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessingStatus'
+
+  /status/stream:
+    get:
+      tags:
+        - Status
+      summary: Real-time status stream (SSE)
+      description: |
+        Server-Sent Events endpoint for real-time processing status updates.
+        Connect to receive live updates about processing progress, including
+        stage changes and percentage completion.
+      operationId: streamStatus
+      responses:
+        '200':
+          description: SSE stream of status updates
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  SSE events with JSON data containing:
+                  - processing: boolean
+                  - episode: object with title, slug, episodeId
+                  - stage: current processing stage
+                  - progress: percentage (0-100)
+                  - queue_depth: number of pending episodes
 
   /settings:
     get:
@@ -618,6 +988,15 @@ components:
       schema:
         type: string
         example: abc123def456
+
+    patternId:
+      name: patternId
+      in: path
+      required: true
+      description: Pattern identifier (integer)
+      schema:
+        type: integer
+        example: 42
 
   schemas:
     Feed:
@@ -948,6 +1327,122 @@ components:
             - 'null'
           format: date-time
           description: When processing started (if available)
+
+    Pattern:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Pattern ID
+        scope:
+          type: string
+          enum: [global, network, podcast]
+          description: Pattern scope level
+        network_id:
+          type:
+            - string
+            - 'null'
+          description: Network ID for network-scoped patterns
+        podcast_slug:
+          type:
+            - string
+            - 'null'
+          description: Podcast slug for podcast-scoped patterns
+        text_template:
+          type: string
+          description: Text pattern template for matching
+        sponsor:
+          type:
+            - string
+            - 'null'
+          description: Sponsor name associated with this pattern
+        is_active:
+          type: boolean
+          description: Whether the pattern is currently active
+        disabled_reason:
+          type:
+            - string
+            - 'null'
+          description: Reason for disabling the pattern
+        confirmation_count:
+          type: integer
+          description: Number of times pattern was confirmed correct
+        false_positive_count:
+          type: integer
+          description: Number of times pattern was marked as false positive
+        last_matched_at:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: Last time this pattern matched an ad
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Network:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Network identifier (e.g., twit, relay_fm)
+        name:
+          type: string
+          description: Human-readable network name
+
+    AdCorrection:
+      type: object
+      required:
+        - adIndex
+        - action
+      properties:
+        adIndex:
+          type: integer
+          description: Index of the ad in the episode's ad list
+        action:
+          type: string
+          enum: [confirm, reject]
+          description: |
+            - confirm: Mark detection as correct (creates/updates pattern)
+            - reject: Mark as false positive
+        sponsor:
+          type: string
+          description: Sponsor name to associate (for confirm action)
+
+    ProcessingStatus:
+      type: object
+      properties:
+        processing:
+          type: boolean
+          description: Whether an episode is currently being processed
+        episode:
+          type:
+            - object
+            - 'null'
+          properties:
+            title:
+              type: string
+            slug:
+              type: string
+            episodeId:
+              type: string
+          description: Currently processing episode details
+        stage:
+          type:
+            - string
+            - 'null'
+          description: Current processing stage (e.g., transcribing, detecting_ads)
+        progress:
+          type:
+            - number
+            - 'null'
+          description: Progress percentage (0-100)
+        queue_depth:
+          type: integer
+          description: Number of episodes waiting to be processed
 
     Error:
       type: object
