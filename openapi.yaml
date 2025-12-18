@@ -11,7 +11,7 @@ info:
     - Monitor system status and trigger cleanup operations
     - Manage cross-episode ad patterns with network and podcast scope
     - Submit corrections to improve ad detection accuracy
-  version: 0.1.120
+  version: 0.1.128
   contact:
     name: Podcast Server
   license:
@@ -42,6 +42,8 @@ tags:
     description: Application settings and configuration
   - name: Status
     description: Real-time processing status
+  - name: History
+    description: Processing history and statistics
   - name: System
     description: System status and maintenance
 
@@ -808,6 +810,141 @@ paths:
                   - progress: percentage (0-100)
                   - queue_depth: number of pending episodes
 
+  /history:
+    get:
+      tags:
+        - History
+      summary: Get processing history
+      description: Returns processing history with pagination and filtering
+      operationId: getProcessingHistory
+      parameters:
+        - name: status
+          in: query
+          description: Filter by processing status
+          schema:
+            type: string
+            enum: [all, completed, failed]
+            default: all
+        - name: podcast_id
+          in: query
+          description: Filter by podcast ID
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          description: Maximum number of entries to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: offset
+          in: query
+          description: Number of entries to skip
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Processing history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  history:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProcessingHistoryEntry'
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+
+  /history/stats:
+    get:
+      tags:
+        - History
+      summary: Get processing statistics
+      description: Returns aggregate statistics from processing history
+      operationId: getProcessingHistoryStats
+      responses:
+        '200':
+          description: Processing statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_processed:
+                    type: integer
+                  completed:
+                    type: integer
+                  failed:
+                    type: integer
+                  total_ads_detected:
+                    type: integer
+                  avg_processing_time:
+                    type:
+                      - number
+                      - 'null'
+                    description: Average processing time in seconds
+                  podcasts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        title:
+                          type: string
+
+  /history/export:
+    get:
+      tags:
+        - History
+      summary: Export processing history
+      description: Export processing history as CSV or JSON file
+      operationId: exportProcessingHistory
+      parameters:
+        - name: format
+          in: query
+          description: Export format
+          schema:
+            type: string
+            enum: [csv, json]
+            default: csv
+        - name: status
+          in: query
+          description: Filter by processing status
+          schema:
+            type: string
+            enum: [all, completed, failed]
+            default: all
+        - name: podcast_id
+          in: query
+          description: Filter by podcast ID
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Exported history file
+          content:
+            text/csv:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+                properties:
+                  history:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProcessingHistoryEntry'
+
   /settings:
     get:
       tags:
@@ -1443,6 +1580,54 @@ components:
         queue_depth:
           type: integer
           description: Number of episodes waiting to be processed
+
+    ProcessingHistoryEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: History entry ID
+        podcast_id:
+          type: integer
+          description: Podcast ID
+        podcast_slug:
+          type: string
+          description: Podcast slug
+        podcast_title:
+          type: string
+          description: Podcast title
+        episode_id:
+          type: string
+          description: Episode ID
+        episode_title:
+          type: string
+          description: Episode title
+        processed_at:
+          type: string
+          format: date-time
+          description: When processing completed
+        processing_duration_seconds:
+          type:
+            - number
+            - 'null'
+          description: Processing duration in seconds
+        status:
+          type: string
+          enum: [completed, failed]
+          description: Processing result status
+        ads_detected:
+          type: integer
+          description: Number of ads detected
+        error_message:
+          type:
+            - string
+            - 'null'
+          description: Error message if processing failed
+        reprocess_number:
+          type:
+            - integer
+            - 'null'
+          description: Reprocess number (null for first processing)
 
     Error:
       type: object
