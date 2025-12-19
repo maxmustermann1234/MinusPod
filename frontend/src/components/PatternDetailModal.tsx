@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { AdPattern, updatePattern } from '../api/patterns';
+import { getSponsors } from '../api/sponsors';
 
 interface PatternDetailModalProps {
   pattern: AdPattern;
@@ -15,6 +16,12 @@ function PatternDetailModal({ pattern, onClose, onSave }: PatternDetailModalProp
     sponsor: pattern.sponsor || '',
     is_active: pattern.is_active,
     disabled_reason: pattern.disabled_reason || '',
+  });
+
+  // Fetch sponsors for autocomplete
+  const { data: sponsors } = useQuery({
+    queryKey: ['sponsors'],
+    queryFn: getSponsors,
   });
 
   const updateMutation = useMutation({
@@ -100,10 +107,17 @@ function PatternDetailModal({ pattern, onClose, onSave }: PatternDetailModalProp
                 </label>
                 <input
                   type="text"
+                  list="sponsor-suggestions"
                   value={editedPattern.sponsor}
                   onChange={(e) => setEditedPattern(prev => ({ ...prev, sponsor: e.target.value }))}
+                  placeholder="Start typing to see suggestions..."
                   className="w-full px-3 py-2 bg-secondary border border-border rounded text-sm"
                 />
+                <datalist id="sponsor-suggestions">
+                  {sponsors?.map((s) => (
+                    <option key={s.id} value={s.name} />
+                  ))}
+                </datalist>
               </div>
 
               <div>

@@ -125,6 +125,7 @@ CREATE TABLE IF NOT EXISTS podcasts (
     network_id TEXT,
     dai_platform TEXT,
     network_id_override TEXT,
+    audio_analysis_override TEXT,
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -727,6 +728,18 @@ class Database:
             except Exception as e:
                 logger.error(f"Migration failed for network_id_override: {e}")
 
+        # Migration: Add audio_analysis_override column to podcasts if missing
+        if 'audio_analysis_override' not in podcasts_columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE podcasts
+                    ADD COLUMN audio_analysis_override TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added audio_analysis_override column to podcasts table")
+            except Exception as e:
+                logger.error(f"Migration failed for audio_analysis_override: {e}")
+
         # Migration: Add created_at column to podcasts if missing
         if 'created_at' not in podcasts_columns:
             try:
@@ -982,7 +995,7 @@ class Database:
         for key, value in kwargs.items():
             if key in ('title', 'description', 'artwork_url', 'artwork_cached',
                        'last_checked_at', 'source_url', 'network_id', 'dai_platform',
-                       'network_id_override'):
+                       'network_id_override', 'audio_analysis_override'):
                 fields.append(f"{key} = ?")
                 values.append(value)
 
@@ -1011,6 +1024,27 @@ class Database:
     def get_podcast(self, slug: str) -> Optional[Dict]:
         """Alias for get_podcast_by_slug for backwards compatibility."""
         return self.get_podcast_by_slug(slug)
+
+    def get_podcast_audio_analysis_override(self, slug: str) -> Optional[bool]:
+        """Get podcast-level audio analysis override.
+
+        Returns:
+            None - use global setting
+            True - force enable audio analysis
+            False - force disable audio analysis
+        """
+        podcast = self.get_podcast_by_slug(slug)
+        if not podcast:
+            return None
+
+        override_value = podcast.get('audio_analysis_override')
+        if override_value is None:
+            return None
+        elif override_value == 'true':
+            return True
+        elif override_value == 'false':
+            return False
+        return None
 
     # ========== Episode Methods ==========
 
@@ -2150,14 +2184,18 @@ class Database:
         return created_count
 
     def deduplicate_patterns(self) -> int:
-        """Remove duplicate patterns, keeping the oldest one.
+        """Remove duplicate patterns, merging stats into the pattern with most confirmations.
+
+        Duplicates are patterns with the same text_template and podcast_id,
+        regardless of sponsor (sponsor variations are merged together).
 
         Returns count of duplicates removed."""
         conn = self.get_connection()
 
         # Find duplicates - patterns with same text_template and podcast_id
+        # This includes patterns with same text but different sponsors
         cursor = conn.execute('''
-            SELECT text_template, podcast_id, MIN(id) as keep_id, GROUP_CONCAT(id) as all_ids
+            SELECT text_template, podcast_id, GROUP_CONCAT(id) as all_ids
             FROM ad_patterns
             WHERE text_template IS NOT NULL
             GROUP BY text_template, podcast_id
@@ -2167,27 +2205,63 @@ class Database:
 
         removed_count = 0
         for dup in duplicates:
-            keep_id = dup['keep_id']
             all_ids = [int(x) for x in dup['all_ids'].split(',')]
-            remove_ids = [x for x in all_ids if x != keep_id]
 
-            if remove_ids:
-                # Update corrections to point to the kept pattern
-                placeholders = ','.join('?' * len(remove_ids))
-                conn.execute(
-                    f'''UPDATE pattern_corrections
-                        SET pattern_id = ?
-                        WHERE pattern_id IN ({placeholders})''',
-                    [keep_id] + remove_ids
-                )
+            # Find the pattern with most confirmations to keep
+            patterns_cursor = conn.execute(
+                f'''SELECT id, sponsor, confirmation_count, false_positive_count
+                    FROM ad_patterns
+                    WHERE id IN ({','.join('?' * len(all_ids))})
+                    ORDER BY confirmation_count DESC, id ASC''',
+                all_ids
+            )
+            patterns = patterns_cursor.fetchall()
 
-                # Delete duplicate patterns
-                conn.execute(
-                    f'''DELETE FROM ad_patterns WHERE id IN ({placeholders})''',
-                    remove_ids
-                )
-                removed_count += len(remove_ids)
-                logger.info(f"Removed {len(remove_ids)} duplicate patterns, kept pattern {keep_id}")
+            if len(patterns) < 2:
+                continue
+
+            # Keep the pattern with most confirmations (first one after sort)
+            keep_pattern = patterns[0]
+            keep_id = keep_pattern['id']
+            remove_ids = [p['id'] for p in patterns[1:]]
+
+            # Sum up all confirmation and false positive counts
+            total_confirmations = sum(p['confirmation_count'] for p in patterns)
+            total_false_positives = sum(p['false_positive_count'] for p in patterns)
+
+            # If the keeper has no sponsor, try to use one from duplicates
+            final_sponsor = keep_pattern['sponsor']
+            if not final_sponsor:
+                for p in patterns[1:]:
+                    if p['sponsor']:
+                        final_sponsor = p['sponsor']
+                        break
+
+            # Update the kept pattern with merged stats
+            conn.execute(
+                '''UPDATE ad_patterns
+                   SET confirmation_count = ?, false_positive_count = ?, sponsor = ?
+                   WHERE id = ?''',
+                [total_confirmations, total_false_positives, final_sponsor, keep_id]
+            )
+
+            # Update corrections to point to the kept pattern
+            placeholders = ','.join('?' * len(remove_ids))
+            conn.execute(
+                f'''UPDATE pattern_corrections
+                    SET pattern_id = ?
+                    WHERE pattern_id IN ({placeholders})''',
+                [keep_id] + remove_ids
+            )
+
+            # Delete duplicate patterns
+            conn.execute(
+                f'''DELETE FROM ad_patterns WHERE id IN ({placeholders})''',
+                remove_ids
+            )
+            removed_count += len(remove_ids)
+            logger.info(f"Merged {len(remove_ids)} duplicate patterns into pattern {keep_id} "
+                       f"(confirmations: {total_confirmations}, fps: {total_false_positives})")
 
         conn.commit()
         if removed_count > 0:

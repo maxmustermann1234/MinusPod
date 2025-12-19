@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.142] - 2025-12-19
+
+### Added
+- **Podcast-Level Audio Analysis Override**
+  - Per-podcast setting to enable/disable audio analysis independent of global setting
+  - Three options: Use Global (default), Enable, Disable
+  - UI in podcast settings page with visual indicator badge
+  - Database migration for new `audio_analysis_override` column
+
+- **Sponsor Autocomplete in Patterns UI**
+  - Pattern detail modal now shows suggestions when editing sponsor
+  - Fetches known sponsors from database for autocomplete
+  - Still allows free text entry for new sponsors
+
+- **Expandable Ad Reason in Transcript Editor**
+  - "Show reason" button in ad header to expand detection reason
+  - Displays why the segment was flagged as an ad
+  - Collapsible to save screen space
+
+- **Confirm/Not-Ad Actions for Rejected Ads**
+  - Rejected ads section now has "Confirm as Ad" and "Not an Ad" buttons
+  - Allows overriding the validator's rejection decision
+  - Corrections are applied during reprocessing
+
+### Fixed
+- **"Not an Ad" Jumping to Beginning of Transcript**
+  - Selected ad index now preserved across query refetches
+  - Uses controlled component pattern to lift state to parent
+  - Confirming or rejecting ads now advances to next ad correctly
+
+- **Navigation Arrows (Removed Top-Left, Made Center Functional)**
+  - Removed duplicate navigation arrows from header
+  - Center navigation bar now has functional prev/next buttons
+  - Visible on desktop and landscape mobile modes
+
+- **Duplicate Patterns Display**
+  - Enhanced deduplication to merge patterns with same text but different sponsors
+  - Keeps pattern with highest confirmation count
+  - Sums confirmation and false positive counts when merging
+  - Preserves sponsor name from most confirmed pattern
+
+---
+
 ## [0.1.141] - 2025-12-19
 
 ### Added

@@ -13,6 +13,7 @@ export interface Feed {
   networkId?: string;
   daiPlatform?: string;
   networkIdOverride?: string | null;
+  audioAnalysisOverride?: boolean | null;
 }
 
 export interface Episode {

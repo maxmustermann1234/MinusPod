@@ -272,6 +272,14 @@ def get_feed(slug):
     base_url = os.environ.get('BASE_URL', 'http://localhost:8000')
     feed_url = f"{base_url}/{slug}"
 
+    # Convert audio_analysis_override from string to boolean/null
+    audio_override_value = podcast.get('audio_analysis_override')
+    audio_override_result = None
+    if audio_override_value == 'true':
+        audio_override_result = True
+    elif audio_override_value == 'false':
+        audio_override_result = False
+
     return json_response({
         'slug': podcast['slug'],
         'title': podcast['title'] or podcast['slug'],
@@ -284,7 +292,8 @@ def get_feed(slug):
         'createdAt': podcast.get('created_at'),
         'networkId': podcast.get('network_id'),
         'daiPlatform': podcast.get('dai_platform'),
-        'networkIdOverride': podcast.get('network_id_override')
+        'networkIdOverride': podcast.get('network_id_override'),
+        'audioAnalysisOverride': audio_override_result
     })
 
 
@@ -316,6 +325,16 @@ def update_feed(slug):
         if api_field in data:
             updates[db_field] = data[api_field]
 
+    # Handle audio analysis override specially (can be null, true, or false)
+    if 'audioAnalysisOverride' in data:
+        override_value = data['audioAnalysisOverride']
+        if override_value is None:
+            updates['audio_analysis_override'] = None
+        elif override_value is True:
+            updates['audio_analysis_override'] = 'true'
+        elif override_value is False:
+            updates['audio_analysis_override'] = 'false'
+
     if not updates:
         return error_response('No valid fields to update', 400)
 
@@ -326,12 +345,22 @@ def update_feed(slug):
         # Return updated feed data
         podcast = db.get_podcast_by_slug(slug)
         base_url = os.environ.get('BASE_URL', 'http://localhost:8000')
+
+        # Convert audio_analysis_override from string to boolean/null
+        audio_override_value = podcast.get('audio_analysis_override')
+        audio_override_result = None
+        if audio_override_value == 'true':
+            audio_override_result = True
+        elif audio_override_value == 'false':
+            audio_override_result = False
+
         return json_response({
             'slug': podcast['slug'],
             'title': podcast['title'] or podcast['slug'],
             'networkId': podcast.get('network_id'),
             'daiPlatform': podcast.get('dai_platform'),
             'networkIdOverride': podcast.get('network_id_override'),
+            'audioAnalysisOverride': audio_override_result,
             'feedUrl': f"{base_url}/{slug}"
         })
     except Exception as e:

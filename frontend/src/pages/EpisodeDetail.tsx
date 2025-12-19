@@ -15,6 +15,7 @@ function EpisodeDetail() {
   const [jumpToTime, setJumpToTime] = useState<number | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [showReprocessMenu, setShowReprocessMenu] = useState(false);
+  const [editorSelectedAdIndex, setEditorSelectedAdIndex] = useState(0);
   const editorRef = useRef<HTMLDivElement>(null);
 
   const queryClient = useQueryClient();
@@ -301,6 +302,8 @@ function EpisodeDetail() {
                 onClose={() => setShowEditor(false)}
                 initialSeekTime={jumpToTime ?? undefined}
                 saveStatus={saveStatus}
+                selectedAdIndex={editorSelectedAdIndex}
+                onSelectedAdIndexChange={setEditorSelectedAdIndex}
               />
             </div>
           )}
@@ -384,28 +387,60 @@ function EpisodeDetail() {
             {episode.rejectedAdMarkers.map((segment, index) => (
               <div
                 key={index}
-                className="flex items-center justify-between p-3 bg-red-500/10 rounded-lg border border-red-500/20"
+                className="p-3 bg-red-500/10 rounded-lg border border-red-500/20"
               >
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-sm">
-                    {formatTimestamp(segment.start)} - {formatTimestamp(segment.end)}
-                  </span>
-                  <span className="px-1.5 py-0.5 text-xs rounded font-medium bg-red-500/20 text-red-600 dark:text-red-400">
-                    Rejected
-                  </span>
-                </div>
-                <div className="flex flex-col items-end">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm">
+                      {formatTimestamp(segment.start)} - {formatTimestamp(segment.end)}
+                    </span>
+                    <span className="px-1.5 py-0.5 text-xs rounded font-medium bg-red-500/20 text-red-600 dark:text-red-400">
+                      Rejected
+                    </span>
+                  </div>
                   <span className="text-sm text-muted-foreground">
                     {Math.round(segment.confidence * 100)}% confidence
                   </span>
-                  {segment.validation?.flags && segment.validation.flags.length > 0 && (
-                    <p className="text-sm text-red-500 dark:text-red-400 mt-1 text-right max-w-md">
-                      {segment.validation.flags.join(', ')}
-                    </p>
-                  )}
-                  {segment.reason && (
-                    <p className="text-sm text-muted-foreground mt-1 text-right max-w-md">{segment.reason}</p>
-                  )}
+                </div>
+                {segment.validation?.flags && segment.validation.flags.length > 0 && (
+                  <p className="text-sm text-red-500 dark:text-red-400 mt-2">
+                    {segment.validation.flags.join(', ')}
+                  </p>
+                )}
+                {segment.reason && (
+                  <p className="text-sm text-muted-foreground mt-1">{segment.reason}</p>
+                )}
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={() => handleCorrection({
+                      type: 'confirm',
+                      originalAd: {
+                        start: segment.start,
+                        end: segment.end,
+                        confidence: segment.confidence,
+                        reason: segment.reason || '',
+                      },
+                    })}
+                    disabled={correctionMutation.isPending}
+                    className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-700 text-white rounded disabled:opacity-50 transition-colors"
+                  >
+                    Confirm as Ad
+                  </button>
+                  <button
+                    onClick={() => handleCorrection({
+                      type: 'reject',
+                      originalAd: {
+                        start: segment.start,
+                        end: segment.end,
+                        confidence: segment.confidence,
+                        reason: segment.reason || '',
+                      },
+                    })}
+                    disabled={correctionMutation.isPending}
+                    className="px-3 py-1.5 text-xs bg-destructive hover:bg-destructive/90 text-destructive-foreground rounded disabled:opacity-50 transition-colors"
+                  >
+                    Not an Ad
+                  </button>
                 </div>
               </div>
             ))}

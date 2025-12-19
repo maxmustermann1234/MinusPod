@@ -11,6 +11,7 @@ function FeedDetail() {
   const [isEditingNetwork, setIsEditingNetwork] = useState(false);
   const [editNetworkOverride, setEditNetworkOverride] = useState<string>('');
   const [editDaiPlatform, setEditDaiPlatform] = useState('');
+  const [editAudioAnalysisOverride, setEditAudioAnalysisOverride] = useState<string>('global');
 
   const { data: feed, isLoading: feedLoading, error: feedError } = useQuery({
     queryKey: ['feed', slug],
@@ -38,7 +39,7 @@ function FeedDetail() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: { networkIdOverride?: string | null; daiPlatform?: string }) => updateFeed(slug!, data),
+    mutationFn: (data: { networkIdOverride?: string | null; daiPlatform?: string; audioAnalysisOverride?: boolean | null }) => updateFeed(slug!, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['feed', slug] });
       setIsEditingNetwork(false);
@@ -49,14 +50,31 @@ function FeedDetail() {
     // Use networkIdOverride if set, otherwise empty for auto-detect
     setEditNetworkOverride(feed?.networkIdOverride || '');
     setEditDaiPlatform(feed?.daiPlatform || '');
+    // Initialize audio analysis override: 'global' (null), 'enable' (true), 'disable' (false)
+    if (feed?.audioAnalysisOverride === true) {
+      setEditAudioAnalysisOverride('enable');
+    } else if (feed?.audioAnalysisOverride === false) {
+      setEditAudioAnalysisOverride('disable');
+    } else {
+      setEditAudioAnalysisOverride('global');
+    }
     setIsEditingNetwork(true);
   };
 
   const saveNetworkEdit = () => {
+    // Convert audio analysis override value
+    let audioOverride: boolean | null = null;
+    if (editAudioAnalysisOverride === 'enable') {
+      audioOverride = true;
+    } else if (editAudioAnalysisOverride === 'disable') {
+      audioOverride = false;
+    }
+
     updateMutation.mutate({
       // Send null to clear override, or the selected value
       networkIdOverride: editNetworkOverride || null,
       daiPlatform: editDaiPlatform || undefined,
+      audioAnalysisOverride: audioOverride,
     });
   };
 
@@ -149,6 +167,18 @@ function FeedDetail() {
                       className="px-2 py-1 text-sm bg-secondary border border-border rounded w-32"
                     />
                   </div>
+                  <div className="flex items-center gap-1">
+                    <label className="text-muted-foreground">Audio Analysis:</label>
+                    <select
+                      value={editAudioAnalysisOverride}
+                      onChange={(e) => setEditAudioAnalysisOverride(e.target.value)}
+                      className="px-2 py-1 text-sm bg-secondary border border-border rounded"
+                    >
+                      <option value="global">Use Global</option>
+                      <option value="enable">Enable</option>
+                      <option value="disable">Disable</option>
+                    </select>
+                  </div>
                   <button
                     onClick={saveNetworkEdit}
                     disabled={updateMutation.isPending}
@@ -179,11 +209,20 @@ function FeedDetail() {
                       DAI: {feed.daiPlatform}
                     </span>
                   )}
+                  {feed.audioAnalysisOverride !== undefined && feed.audioAnalysisOverride !== null && (
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      feed.audioAnalysisOverride
+                        ? 'bg-green-500/20 text-green-600 dark:text-green-400'
+                        : 'bg-red-500/20 text-red-600 dark:text-red-400'
+                    }`}>
+                      Audio: {feed.audioAnalysisOverride ? 'Enabled' : 'Disabled'}
+                    </span>
+                  )}
                   <button
                     onClick={startEditingNetwork}
                     className="text-xs text-muted-foreground hover:text-foreground"
                   >
-                    {feed.networkId || feed.daiPlatform ? 'Edit' : '+ Add Network'}
+                    {feed.networkId || feed.daiPlatform || feed.audioAnalysisOverride !== null ? 'Edit' : '+ Add Settings'}
                   </button>
                 </div>
               )}

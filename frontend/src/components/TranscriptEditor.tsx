@@ -34,6 +34,8 @@ interface TranscriptEditorProps {
   onClose?: () => void;
   initialSeekTime?: number;
   saveStatus?: SaveStatus;
+  selectedAdIndex?: number;
+  onSelectedAdIndexChange?: (index: number) => void;
 }
 
 export interface AdCorrection {
@@ -58,8 +60,20 @@ export function TranscriptEditor({
   onClose,
   initialSeekTime,
   saveStatus = 'idle',
+  selectedAdIndex: externalSelectedAdIndex,
+  onSelectedAdIndexChange,
 }: TranscriptEditorProps) {
-  const [selectedAdIndex, setSelectedAdIndex] = useState(0);
+  // Use controlled state if external index is provided, otherwise use internal state
+  const [internalSelectedAdIndex, setInternalSelectedAdIndex] = useState(0);
+  const selectedAdIndex = externalSelectedAdIndex ?? internalSelectedAdIndex;
+
+  const setSelectedAdIndex = useCallback((index: number) => {
+    if (onSelectedAdIndexChange) {
+      onSelectedAdIndexChange(index);
+    } else {
+      setInternalSelectedAdIndex(index);
+    }
+  }, [onSelectedAdIndexChange]);
   const [adjustedStart, setAdjustedStart] = useState(0);
   const [adjustedEnd, setAdjustedEnd] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -72,6 +86,7 @@ export function TranscriptEditor({
   const [swipeStartX, setSwipeStartX] = useState<number | null>(null);
   const [isDraggingProgress, setIsDraggingProgress] = useState(false);
   const [preserveSeekPosition, setPreserveSeekPosition] = useState(false);
+  const [showReason, setShowReason] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -492,32 +507,8 @@ export function TranscriptEditor({
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Desktop prev/next navigation */}
-            <div className="hidden sm:flex items-center gap-1">
-              <button
-                onClick={goToPreviousAd}
-                disabled={selectedAdIndex === 0}
-                className="p-1.5 rounded hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                aria-label="Previous ad"
-                title="Previous ad"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <h3 className="text-sm font-medium">
-                Ad {selectedAdIndex + 1} of {detectedAds.length}
-              </h3>
-              <button
-                onClick={goToNextAd}
-                disabled={selectedAdIndex >= detectedAds.length - 1}
-                className="p-1.5 rounded hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                aria-label="Next ad"
-                title="Next ad"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-            {/* Mobile header (no arrows) */}
-            <h3 className="text-sm font-medium sm:hidden">
+            {/* Mobile header (no arrows, navigation is in center bar) */}
+            <h3 className="text-sm font-medium sm:hidden landscape:hidden">
               Ad {selectedAdIndex + 1} of {detectedAds.length}
             </h3>
             {selectedAd.sponsor && (
@@ -543,6 +534,14 @@ export function TranscriptEditor({
                 {selectedAd.detection_stage}
               </span>
             )}
+            {selectedAd.reason && (
+              <button
+                onClick={() => setShowReason(!showReason)}
+                className="px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
+              >
+                {showReason ? 'Hide reason' : 'Show reason'}
+              </button>
+            )}
           </div>
           {onClose && (
             <button
@@ -556,6 +555,12 @@ export function TranscriptEditor({
             </button>
           )}
         </div>
+        {/* Collapsible reason section */}
+        {showReason && selectedAd.reason && (
+          <div className="px-4 py-2 border-b border-border bg-muted/30 text-sm text-muted-foreground">
+            <p className="break-words">{selectedAd.reason}</p>
+          </div>
+        )}
 
         {/* Ad selector - with momentum scrolling for mobile */}
         <div className="flex gap-2 px-4 py-2 border-b border-border overflow-x-auto scroll-smooth touch-pan-x landscape:hidden">
@@ -573,11 +578,27 @@ export function TranscriptEditor({
             </button>
           ))}
         </div>
-        {/* Landscape: compact ad indicator with swipe hint */}
-        <div className="hidden landscape:flex items-center justify-center gap-2 px-4 py-1.5 border-b border-border text-xs text-muted-foreground">
-          <ChevronLeft className="w-4 h-4" />
+        {/* Center navigation - visible on desktop and landscape */}
+        <div className="hidden sm:flex landscape:flex items-center justify-center gap-2 px-4 py-1.5 border-b border-border text-sm">
+          <button
+            onClick={goToPreviousAd}
+            disabled={selectedAdIndex === 0}
+            className="p-1.5 rounded hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            aria-label="Previous ad"
+            title="Previous ad"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
           <span>Ad {selectedAdIndex + 1} of {detectedAds.length}</span>
-          <ChevronRight className="w-4 h-4" />
+          <button
+            onClick={goToNextAd}
+            disabled={selectedAdIndex >= detectedAds.length - 1}
+            className="p-1.5 rounded hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            aria-label="Next ad"
+            title="Next ad"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
         </div>
 
         {/* Boundary controls - Collapsible on mobile */}
