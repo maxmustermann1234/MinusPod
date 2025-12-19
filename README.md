@@ -57,7 +57,7 @@ When you request an episode that needs processing:
 After ad detection, a validation layer reviews each detection before audio processing:
 
 - **Duration checks** - Rejects ads shorter than 7s or longer than 5 minutes
-- **Confidence thresholds** - Rejects very low confidence detections (<0.3)
+- **Confidence thresholds** - Rejects very low confidence detections (<0.3); only cuts ads with >=80% adjusted confidence
 - **Position heuristics** - Boosts confidence for typical ad positions (pre-roll, mid-roll, post-roll)
 - **Transcript verification** - Checks for sponsor names and ad signals in the transcript
 - **Auto-correction** - Merges ads with tiny gaps, clamps boundaries to valid range
@@ -88,7 +88,7 @@ When processing new episodes, the system first checks for known patterns before 
 **User Corrections:**
 In the transcript editor, you can confirm or reject detected ads:
 - **Confirm** - Creates/updates patterns in the database, incrementing confirmation count
-- **Mark as Not Ad** - Flags as false positive, incrementing false_positive_count (auto-disables patterns with high false positive rates)
+- **Mark as Not Ad** - Flags as false positive, incrementing false_positive_count (auto-disables patterns with high false positive rates). These corrections are automatically applied during reprocessing - the segment will be kept in audio.
 
 **Pattern Management:**
 Access the Patterns page from the navigation bar to:
@@ -129,12 +129,40 @@ These signals are provided to Claude as additional context during ad detection.
 **Requirements for Speaker Analysis:**
 - HuggingFace token (HF_TOKEN env var)
 - Accept license at https://hf.co/pyannote/speaker-diarization-3.1
+- Accept license at https://hf.co/pyannote/embedding (for long episode chunked processing)
 - GPU recommended (uses pyannote speaker diarization)
 
 ## Requirements
 
 - Docker with NVIDIA GPU support (for Whisper)
 - Anthropic API key
+
+### Memory Requirements
+
+**GPU VRAM:**
+
+| Whisper Model | VRAM Required |
+|---------------|---------------|
+| tiny | ~1 GB |
+| base | ~1 GB |
+| small | ~2 GB |
+| medium | ~4 GB |
+| large-v3 | ~5-6 GB |
+
+If audio analysis with speaker diarization is enabled, add:
+- Pyannote diarization pipeline: ~2-3 GB VRAM
+- Pyannote embedding model: ~1 GB VRAM
+
+**System RAM:**
+
+| Episode Length | Without Audio Analysis | With Speaker Analysis |
+|----------------|------------------------|----------------------|
+| < 1 hour | 8 GB | 12 GB |
+| 1-2 hours | 8 GB | 16 GB |
+| 2-4 hours | 12 GB | 24 GB |
+| > 4 hours | 16 GB | 32 GB |
+
+Speaker diarization is memory-intensive for long episodes. If processing fails with OOM errors on long episodes (3+ hours), either increase system RAM or disable speaker analysis in Settings.
 
 ## Quick Start
 

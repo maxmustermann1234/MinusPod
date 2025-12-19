@@ -5,6 +5,186 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.141] - 2025-12-19
+
+### Added
+- **Apply User-Marked False Positives During Reprocessing**
+  - When you mark a segment as "not an ad" in the UI, it's now remembered
+  - On reprocess, any detected ads overlapping 50%+ with marked false positives are auto-rejected
+  - Prevents the same false positive from being cut repeatedly
+  - New database method `get_false_positive_corrections()` for loading corrections
+  - Validator logs when corrections are loaded and applied
+
+---
+
+## [0.1.140] - 2025-12-19
+
+### Fixed
+- **Auto-Reject Segments Where Reason Indicates Not an Ad**
+  - Validator now checks reason text for patterns like "not an advertisement", "episode content", "false positive"
+  - Segments with these patterns are auto-rejected regardless of confidence score
+  - Prevents false positives where Claude detected a segment but noted it's not actually an ad
+
+---
+
+## [0.1.139] - 2025-12-19
+
+### Fixed
+- **Music Detection Progress Still Showing 100% Repeatedly**
+  - Capped streaming progress at 99% during processing
+  - Single 100% message logged only after streaming loop completes
+  - Prevents confusing repeated "100%" logs during music detection
+
+---
+
+## [0.1.138] - 2025-12-19
+
+### Added
+- **Minimum Confidence Threshold for Ad Cutting (80%)**
+  - Ads with confidence below 80% are now kept in audio to prevent false positives
+  - Low-confidence ads are still stored and displayed in UI but not cut
+  - Addresses false positive cuts on long-form conversational podcasts
+
+### Fixed
+- **Music Detection Progress Calculation Bug**
+  - Fixed progress reporting showing >100% for long episodes
+  - Progress now correctly tracks actual advancement (excludes block overlap)
+  - Affected streaming analysis for episodes >1 hour
+
+---
+
+## [0.1.137] - 2025-12-19
+
+### Fixed
+- **Infinite Loop in Chunked Speaker Diarization**
+  - Fixed bug where final chunk would loop forever when chunk overlap > remaining audio
+  - Added explicit exit condition when `chunk_end >= total_duration`
+  - Affected episodes >3 hours using chunked processing with overlap
+
+---
+
+## [0.1.136] - 2025-12-19
+
+### Added
+- **Whisper Model Unloading Before Audio Analysis**
+  - Automatically unloads Whisper model after transcription completes
+  - Frees ~5-6GB memory before speaker diarization starts
+  - Model lazy-reloads on next transcription request
+  - New public `WhisperModelSingleton.unload_model()` method
+
+### Changed
+- **Reduced Chunk Size for 3-4 Hour Episodes**
+  - Speaker diarization now uses 20-minute chunks (was 30 minutes) for episodes >3 hours
+  - Reduces peak memory by ~33% per chunk
+  - Increased overlap to 60s for better speaker matching across boundaries
+  - Allows very long episodes to complete with 24GB system RAM
+
+---
+
+## [0.1.135] - 2025-12-19
+
+### Added
+- **Per-Component Timeouts for Audio Analysis**
+  - Each analysis component (volume, music, speaker) now has its own timeout
+  - Timeouts scale dynamically based on episode duration (~2s/min for volume, ~5s/min for music, ~8s/min for speaker)
+  - Prevents indefinite hangs on any single component
+
+- **Graceful Degradation in Audio Analysis**
+  - If one component fails or times out, processing continues with remaining components
+  - Partial results are still usable for ad detection
+  - Errors are logged but don't abort entire analysis
+
+- **Per-Chunk Retry Logic for Speaker Analysis**
+  - Failed chunks are retried up to 2 times before skipping
+  - CUDA OOM errors trigger memory clearing and 10s delay before retry
+  - Other errors get 5s delay between retries
+  - Logging shows retry attempts for debugging
+
+- **Enhanced Memory Management**
+  - `torch.cuda.synchronize()` called after CUDA operations to ensure completion
+  - Memory logging on retry attempts for debugging
+  - Aggressive garbage collection between chunks
+
+- **Dynamic Chunk Configuration**
+  - Chunk size and overlap now scale based on episode duration
+  - 4+ hour episodes: 40min chunks with 60s overlap
+  - 3-4 hour episodes: 30min chunks with 45s overlap
+  - Stricter speaker matching threshold for longer episodes
+
+### Changed
+- Audio analysis now uses ThreadPoolExecutor for cross-platform timeout support
+
+---
+
+## [0.1.134] - 2025-12-19
+
+### Added
+- **Desktop Transcript Editor Navigation**
+  - Added prev/next arrows to desktop header for navigating between ads
+  - Improved desktop action button visibility with distinct colors (green for Confirm, border for Reset)
+
+### Fixed
+- **Jump Button Highlighting**
+  - Jump button now correctly highlights the target ad instead of wrong section
+  - Added tolerance for floating-point precision in ad time matching
+- **Pattern Popup Podcast Name**
+  - Pattern detail modal now shows podcast name instead of numeric ID for podcast-scoped patterns
+
+---
+
+## [0.1.133] - 2025-12-19
+
+### Fixed
+- **Speaker Embedding Extraction**
+  - Handle pyannote embedding model returning numpy arrays instead of torch tensors
+  - Fixes "'numpy.ndarray' object has no attribute 'cpu'" error
+
+---
+
+## [0.1.132] - 2025-12-19
+
+### Added
+- **Granular Status Updates for Audio Analysis**
+  - Status bar now shows each analysis phase: "analyzing: volume", "analyzing: music", "analyzing: speakers"
+  - Progress updates at each phase (25% -> 30% -> 35% -> 40% -> 50%)
+  - No longer shows "transcribing" during the entire audio analysis
+
+### Fixed
+- **Streaming Music Detection Progress Calculation**
+  - Progress now tracks actual samples processed instead of assuming fixed block size
+  - Progress capped at 100% to prevent >100% display
+  - Better error logging with exception type for debugging failures
+
+---
+
+## [0.1.130] - 2025-12-18
+
+### Added
+- **Streaming Music Detection for Long Episodes**
+  - Episodes over 1 hour now use `librosa.stream()` for blockwise audio processing
+  - Avoids loading entire audio file into memory
+  - Processes in ~4-minute blocks with progress logging every 10 blocks
+  - Short episodes (< 1 hour) continue using standard loading for simplicity
+
+---
+
+## [0.1.129] - 2025-12-18
+
+### Added
+- **Chunked Speaker Analysis for Long Episodes**
+  - Episodes over 1 hour now processed in 30-minute chunks to prevent OOM crashes
+  - Uses speaker embedding similarity to match speakers across chunk boundaries
+  - Memory cleared between chunks via garbage collection and CUDA cache clearing
+  - Graceful per-chunk error handling - continues processing if a chunk fails
+  - Configurable chunk duration (1800s), overlap (30s), and duration threshold (3600s)
+
+### Fixed
+- **Mobile Episode Description Overflow**
+  - Added `break-words` CSS class to episode description text
+  - Long URLs and unbroken text now wrap correctly on mobile devices
+
+---
+
 ## [0.1.128] - 2025-12-18
 
 ### Added

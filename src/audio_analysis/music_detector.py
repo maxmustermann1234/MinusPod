@@ -15,6 +15,10 @@ from .base import AudioSegmentSignal, SignalType
 
 logger = logging.getLogger('podcast.audio_analysis.music')
 
+# Streaming configuration for long episodes
+LONG_EPISODE_THRESHOLD = 3600  # > 1 hour uses streaming
+STREAM_BLOCK_LENGTH = 256  # ~4 minutes per block at default settings
+
 # Check if librosa is available
 LIBROSA_AVAILABLE = False
 librosa = None
@@ -86,13 +90,27 @@ class MusicBedDetector:
             logger.error(f"Music detection failed: {e}")
             return []
 
+    def _get_audio_duration(self, audio_path: str) -> float:
+        """Get audio duration without loading the entire file."""
+        return librosa.get_duration(path=audio_path)
+
     def _analyze_with_librosa(self, audio_path: str) -> List[AudioSegmentSignal]:
         """Perform librosa-based spectral analysis."""
-        # Load audio
+        duration = self._get_audio_duration(audio_path)
+        logger.info(f"Audio duration: {duration:.1f}s for music detection")
+
+        if duration > LONG_EPISODE_THRESHOLD:
+            logger.info(f"Using streaming analysis for long episode ({duration/3600:.1f}h)")
+            return self._analyze_streaming(audio_path, duration)
+        else:
+            logger.info("Using standard analysis for short episode")
+            return self._analyze_standard(audio_path, duration)
+
+    def _analyze_standard(self, audio_path: str, duration: float) -> List[AudioSegmentSignal]:
+        """Standard analysis - loads entire file (for episodes < 1 hour)."""
         logger.info(f"Loading audio for music detection: {audio_path}")
         y, sr = librosa.load(audio_path, sr=self.sr, mono=True)
 
-        duration = len(y) / sr
         logger.info(f"Analyzing {duration:.1f}s audio for music beds")
 
         hop_length = int(self.sr * self.frame_duration)
@@ -138,6 +156,101 @@ class MusicBedDetector:
         regions = self._merge_frames_to_regions(music_frames)
 
         logger.info(f"Found {len(regions)} music bed regions")
+        return regions
+
+    def _analyze_streaming(self, audio_path: str, duration: float) -> List[AudioSegmentSignal]:
+        """Streaming analysis - processes in blocks (for episodes > 1 hour)."""
+        hop_length = int(self.sr * self.frame_duration)
+        frame_length = hop_length * 2
+
+        music_frames = []
+        block_count = 0
+        samples_processed = 0
+        total_samples = int(duration * self.sr)
+
+        logger.info(f"Streaming analysis: hop={hop_length}, frame={frame_length}, "
+                    f"block_length={STREAM_BLOCK_LENGTH}, total_samples={total_samples}")
+
+        # Stream audio in blocks
+        stream = librosa.stream(
+            audio_path,
+            block_length=STREAM_BLOCK_LENGTH,
+            frame_length=frame_length,
+            hop_length=hop_length,
+            mono=True
+        )
+
+        # Calculate actual advancement per block (excludes overlap)
+        # librosa.stream returns blocks with overlap for continuity,
+        # but actual advancement is block_length * hop_length samples
+        samples_per_block = STREAM_BLOCK_LENGTH * hop_length
+
+        try:
+            for block in stream:
+                block_count += 1
+
+                # Resample if needed (stream uses native sr)
+                if hasattr(stream, 'sr') and stream.sr != self.sr:
+                    block = librosa.resample(block, orig_sr=stream.sr, target_sr=self.sr)
+
+                # Process frames within this block
+                for i in range(0, len(block) - frame_length, hop_length):
+                    # Calculate absolute time position
+                    sample_pos = samples_processed + i
+                    start_time = sample_pos / self.sr
+                    end_time = (sample_pos + frame_length) / self.sr
+
+                    frame = block[i:i + frame_length]
+
+                    # Skip very quiet frames
+                    rms = np.sqrt(np.mean(frame ** 2))
+                    if rms < 0.001:
+                        continue
+
+                    # Extract features
+                    spectral_flatness = self._compute_spectral_flatness(frame)
+                    low_freq_energy = self._compute_low_freq_energy(frame)
+                    harmonic_ratio = self._compute_harmonic_ratio(frame)
+
+                    # Compute music probability
+                    music_prob = self._compute_music_probability(
+                        spectral_flatness,
+                        low_freq_energy,
+                        harmonic_ratio
+                    )
+
+                    if music_prob > self.music_threshold:
+                        music_frames.append({
+                            'start': start_time,
+                            'end': end_time,
+                            'confidence': music_prob,
+                            'spectral_flatness': spectral_flatness,
+                            'low_freq_energy': low_freq_energy,
+                            'harmonic_ratio': harmonic_ratio
+                        })
+
+                # Track actual advancement (not block size which includes overlap)
+                samples_processed += samples_per_block
+
+                if block_count % 10 == 0:
+                    # Cap at 99% during streaming - final 100% logged after loop completes
+                    progress = min(99.0, (samples_processed / total_samples) * 100)
+                    logger.info(f"Music detection progress: {progress:.1f}% "
+                                f"({len(music_frames)} music frames found)")
+
+        except Exception as e:
+            logger.error(f"Streaming analysis error at block {block_count}: "
+                         f"{type(e).__name__}: {e}")
+            raise
+
+        logger.info(f"Music detection progress: 100.0% "
+                    f"({len(music_frames)} music frames found)")
+
+        # Merge consecutive frames into regions
+        regions = self._merge_frames_to_regions(music_frames)
+
+        logger.info(f"Streaming analysis complete: processed {block_count} blocks, "
+                    f"found {len(regions)} music bed regions")
         return regions
 
     def _compute_spectral_flatness(self, frame: Any) -> float:

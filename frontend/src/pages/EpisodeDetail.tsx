@@ -251,7 +251,7 @@ function EpisodeDetail() {
         )}
 
         {episode.description && (
-          <p className="mt-4 text-muted-foreground whitespace-pre-wrap">
+          <p className="mt-4 text-muted-foreground whitespace-pre-wrap break-words">
             {episode.description
               .replace(/<br\s*\/?>/gi, '\n')
               .replace(/<\/p>/gi, '\n')

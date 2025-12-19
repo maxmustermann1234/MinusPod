@@ -1741,6 +1741,32 @@ class Database:
             results.append(item)
         return results
 
+    def get_false_positive_corrections(self, episode_id: str) -> List[Dict]:
+        """Get false_positive corrections for an episode with parsed bounds.
+
+        Returns list of dicts with 'start' and 'end' keys for easy overlap checking.
+        """
+        conn = self.get_connection()
+        cursor = conn.execute(
+            """SELECT original_bounds FROM pattern_corrections
+               WHERE episode_id = ? AND correction_type = 'false_positive'""",
+            (episode_id,)
+        )
+        results = []
+        for row in cursor.fetchall():
+            bounds = row['original_bounds']
+            if bounds:
+                try:
+                    parsed = json.loads(bounds)
+                    if 'start' in parsed and 'end' in parsed:
+                        results.append({
+                            'start': float(parsed['start']),
+                            'end': float(parsed['end'])
+                        })
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    pass
+        return results
+
     # ========== Audio Fingerprints Methods ==========
 
     def get_audio_fingerprint(self, pattern_id: int) -> Optional[Dict]:
