@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.141] - 2025-12-19
+
+### Added
+- **Apply User-Marked False Positives During Reprocessing**
+  - When you mark a segment as "not an ad" in the UI, it's now remembered
+  - On reprocess, any detected ads overlapping 50%+ with marked false positives are auto-rejected
+  - Prevents the same false positive from being cut repeatedly
+  - New database method `get_false_positive_corrections()` for loading corrections
+  - Validator logs when corrections are loaded and applied
+
+---
+
 ## [0.1.140] - 2025-12-19
 
 ### Fixed

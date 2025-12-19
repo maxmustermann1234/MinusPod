@@ -583,7 +583,19 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             # Catches errors, flags suspicious detections, auto-corrects issues
             if all_ads:
                 episode_duration = segments[-1]['end'] if segments else 0
-                validator = AdValidator(episode_duration, segments, episode_description)
+
+                # Load user-marked false positives to auto-reject during validation
+                false_positive_corrections = db.get_false_positive_corrections(episode_id)
+                if false_positive_corrections:
+                    audio_logger.info(
+                        f"[{slug}:{episode_id}] Loaded {len(false_positive_corrections)} "
+                        f"false positive corrections"
+                    )
+
+                validator = AdValidator(
+                    episode_duration, segments, episode_description,
+                    false_positive_corrections=false_positive_corrections
+                )
                 validation_result = validator.validate(all_ads)
 
                 audio_logger.info(

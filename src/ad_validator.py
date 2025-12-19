@@ -101,18 +101,25 @@ class AdValidator:
     )
 
     def __init__(self, episode_duration: float, segments: List[Dict] = None,
-                 episode_description: str = None):
+                 episode_description: str = None,
+                 false_positive_corrections: List[Dict] = None):
         """Initialize validator.
 
         Args:
             episode_duration: Total episode duration in seconds
             segments: List of transcript segments with 'start', 'end', 'text' keys
             episode_description: Episode description (may contain sponsor info)
+            false_positive_corrections: List of dicts with 'start' and 'end' keys
+                                        for user-marked false positives to auto-reject
         """
         self.episode_duration = episode_duration
         self.segments = segments or []
         self.episode_description = episode_description or ""
         self.description_sponsors = self._extract_sponsors_from_description()
+        self.false_positive_corrections = false_positive_corrections or []
+
+        if self.false_positive_corrections:
+            logger.info(f"Loaded {len(self.false_positive_corrections)} false positive corrections")
 
     def _extract_sponsors_from_description(self) -> set:
         """Extract sponsor names from episode description.
@@ -177,6 +184,43 @@ class AdValidator:
             if sponsor in ad_text:
                 logger.info(f"Sponsor '{sponsor}' found in ad transcript, confirmed in description")
                 return True
+
+        return False
+
+    def _overlaps_false_positive(self, start: float, end: float,
+                                  overlap_threshold: float = 0.5) -> bool:
+        """Check if a time range overlaps with any user-marked false positive.
+
+        Args:
+            start: Segment start time in seconds
+            end: Segment end time in seconds
+            overlap_threshold: Minimum overlap ratio to consider a match (0.0-1.0)
+                              Default 0.5 means 50% overlap required
+
+        Returns:
+            True if segment overlaps significantly with a false positive correction
+        """
+        if not self.false_positive_corrections:
+            return False
+
+        segment_duration = end - start
+        if segment_duration <= 0:
+            return False
+
+        for fp in self.false_positive_corrections:
+            fp_start = fp['start']
+            fp_end = fp['end']
+
+            # Calculate overlap
+            overlap_start = max(start, fp_start)
+            overlap_end = min(end, fp_end)
+            overlap_duration = max(0, overlap_end - overlap_start)
+
+            if overlap_duration > 0:
+                # Check if overlap is significant relative to the detected segment
+                overlap_ratio = overlap_duration / segment_duration
+                if overlap_ratio >= overlap_threshold:
+                    return True
 
         return False
 
@@ -250,6 +294,23 @@ class AdValidator:
 
         duration = ad['end'] - ad['start']
         position = ad['start'] / self.episode_duration if self.episode_duration > 0 else 0
+
+        # Check for user-marked false positives first (highest priority)
+        if self._overlaps_false_positive(ad['start'], ad['end']):
+            flags.append("ERROR: User marked as false positive")
+            logger.info(
+                f"Auto-rejecting segment {ad['start']:.1f}s-{ad['end']:.1f}s: "
+                f"overlaps with user-marked false positive"
+            )
+            # Return early with REJECT decision
+            ad['validation'] = {
+                'decision': Decision.REJECT.value,
+                'adjusted_confidence': 0.0,
+                'original_confidence': ad.get('confidence', 1.0),
+                'flags': flags,
+                'corrections': corrections
+            }
+            return ad
 
         # Duration checks
         if duration < self.MIN_AD_DURATION:
