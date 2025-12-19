@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.144] - 2025-12-19
+
+### Added
+- **Delete Pattern UI**
+  - Pattern detail modal now has Delete button with confirmation
+  - Allows removing duplicate or unwanted patterns from the database
+
+### Fixed
+- **Rejected Ads Section Badges**
+  - Rejected ads now show "Confirmed" or "Not Ad" badges when corrections applied
+  - Buttons hidden after correction is made
+  - Consistent with badge styling in detected ads section
+
+---
+
 ## [0.1.143] - 2025-12-19
 
 ### Added

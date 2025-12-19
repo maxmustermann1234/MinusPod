@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AdPattern, updatePattern } from '../api/patterns';
+import { AdPattern, updatePattern, deletePattern } from '../api/patterns';
 import { getSponsors, addSponsor } from '../api/sponsors';
 
 interface PatternDetailModalProps {
@@ -12,6 +12,7 @@ interface PatternDetailModalProps {
 function PatternDetailModal({ pattern, onClose, onSave }: PatternDetailModalProps) {
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [editedPattern, setEditedPattern] = useState({
     text_template: pattern.text_template || '',
     sponsor: pattern.sponsor || '',
@@ -55,6 +56,14 @@ function PatternDetailModal({ pattern, onClose, onSave }: PatternDetailModalProp
     onSuccess: () => {
       setIsEditing(false);
       onSave();
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deletePattern(pattern.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['patterns'] });
+      onClose();
     },
   });
 
@@ -280,46 +289,75 @@ function PatternDetailModal({ pattern, onClose, onSave }: PatternDetailModalProp
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-2 p-4 border-t border-border">
-          {isEditing ? (
-            <>
+        <div className="flex justify-between gap-2 p-4 border-t border-border">
+          <div>
+            {showDeleteConfirm ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-destructive">Delete this pattern?</span>
+                <button
+                  onClick={() => deleteMutation.mutate()}
+                  disabled={deleteMutation.isPending}
+                  className="px-3 py-1.5 text-sm bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 disabled:opacity-50"
+                >
+                  {deleteMutation.isPending ? 'Deleting...' : 'Yes, Delete'}
+                </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="px-3 py-1.5 text-sm bg-muted text-muted-foreground rounded hover:bg-accent"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
               <button
-                onClick={() => setIsEditing(false)}
-                className="px-4 py-2 text-sm bg-muted text-muted-foreground rounded hover:bg-accent"
+                onClick={() => setShowDeleteConfirm(true)}
+                className="px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10 rounded"
               >
-                Cancel
+                Delete
               </button>
-              <button
-                onClick={() => updateMutation.mutate()}
-                disabled={updateMutation.isPending}
-                className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
-              >
-                {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={onClose}
-                className="px-4 py-2 text-sm bg-muted text-muted-foreground rounded hover:bg-accent"
-              >
-                Close
-              </button>
-              <button
-                onClick={() => setIsEditing(true)}
-                className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90"
-              >
-                Edit
-              </button>
-            </>
-          )}
+            )}
+          </div>
+          <div className="flex gap-2">
+            {isEditing ? (
+              <>
+                <button
+                  onClick={() => setIsEditing(false)}
+                  className="px-4 py-2 text-sm bg-muted text-muted-foreground rounded hover:bg-accent"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => updateMutation.mutate()}
+                  disabled={updateMutation.isPending}
+                  className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm bg-muted text-muted-foreground rounded hover:bg-accent"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90"
+                >
+                  Edit
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Error Display */}
-        {updateMutation.isError && (
+        {(updateMutation.isError || deleteMutation.isError) && (
           <div className="px-4 pb-4">
             <div className="text-sm text-red-600 dark:text-red-400 bg-red-500/10 rounded p-2">
-              Failed to save changes. Please try again.
+              {deleteMutation.isError ? 'Failed to delete pattern.' : 'Failed to save changes.'} Please try again.
             </div>
           </div>
         )}
