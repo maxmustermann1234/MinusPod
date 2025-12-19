@@ -57,7 +57,7 @@ When you request an episode that needs processing:
 After ad detection, a validation layer reviews each detection before audio processing:
 
 - **Duration checks** - Rejects ads shorter than 7s or longer than 5 minutes
-- **Confidence thresholds** - Rejects very low confidence detections (<0.3)
+- **Confidence thresholds** - Rejects very low confidence detections (<0.3); only cuts ads with >=80% adjusted confidence
 - **Position heuristics** - Boosts confidence for typical ad positions (pre-roll, mid-roll, post-roll)
 - **Transcript verification** - Checks for sponsor names and ad signals in the transcript
 - **Auto-correction** - Merges ads with tiny gaps, clamps boundaries to valid range
@@ -88,7 +88,7 @@ When processing new episodes, the system first checks for known patterns before 
 **User Corrections:**
 In the transcript editor, you can confirm or reject detected ads:
 - **Confirm** - Creates/updates patterns in the database, incrementing confirmation count
-- **Mark as Not Ad** - Flags as false positive, incrementing false_positive_count (auto-disables patterns with high false positive rates)
+- **Mark as Not Ad** - Flags as false positive, incrementing false_positive_count (auto-disables patterns with high false positive rates). These corrections are automatically applied during reprocessing - the segment will be kept in audio.
 
 **Pattern Management:**
 Access the Patterns page from the navigation bar to:
