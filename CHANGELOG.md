@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.137] - 2025-12-19
+
+### Fixed
+- **Infinite Loop in Chunked Speaker Diarization**
+  - Fixed bug where final chunk would loop forever when chunk overlap > remaining audio
+  - Added explicit exit condition when `chunk_end >= total_duration`
+  - Affected episodes >3 hours using chunked processing with overlap
+
+---
+
 ## [0.1.136] - 2025-12-19
 
 ### Added

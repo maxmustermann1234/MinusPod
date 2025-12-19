@@ -721,6 +721,11 @@ class SpeakerAnalyzer:
                 # Clear memory before next chunk
                 self._clear_memory()
 
+            # Check if we've processed the last chunk
+            if chunk_end >= total_duration:
+                # We've reached the end of the audio, exit the loop
+                break
+
             # Move to next chunk (with overlap for continuity)
             chunk_start = chunk_end - chunk_overlap
             chunk_idx += 1
