@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.138] - 2025-12-19
+
+### Added
+- **Minimum Confidence Threshold for Ad Cutting (80%)**
+  - Ads with confidence below 80% are now kept in audio to prevent false positives
+  - Low-confidence ads are still stored and displayed in UI but not cut
+  - Addresses false positive cuts on long-form conversational podcasts
+
+### Fixed
+- **Music Detection Progress Calculation Bug**
+  - Fixed progress reporting showing >100% for long episodes
+  - Progress now correctly tracks actual advancement (excludes block overlap)
+  - Affected streaming analysis for episodes >1 hour
+
+---
+
 ## [0.1.137] - 2025-12-19
 
 ### Fixed

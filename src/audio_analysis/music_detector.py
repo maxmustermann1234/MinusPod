@@ -180,15 +180,18 @@ class MusicBedDetector:
             mono=True
         )
 
+        # Calculate actual advancement per block (excludes overlap)
+        # librosa.stream returns blocks with overlap for continuity,
+        # but actual advancement is block_length * hop_length samples
+        samples_per_block = STREAM_BLOCK_LENGTH * hop_length
+
         try:
             for block in stream:
                 block_count += 1
-                block_samples = len(block)
 
                 # Resample if needed (stream uses native sr)
                 if hasattr(stream, 'sr') and stream.sr != self.sr:
                     block = librosa.resample(block, orig_sr=stream.sr, target_sr=self.sr)
-                    block_samples = len(block)
 
                 # Process frames within this block
                 for i in range(0, len(block) - frame_length, hop_length):
@@ -226,8 +229,8 @@ class MusicBedDetector:
                             'harmonic_ratio': harmonic_ratio
                         })
 
-                # Track actual samples processed from this block
-                samples_processed += block_samples
+                # Track actual advancement (not block size which includes overlap)
+                samples_processed += samples_per_block
 
                 if block_count % 10 == 0:
                     progress = min(100.0, (samples_processed / total_samples) * 100)

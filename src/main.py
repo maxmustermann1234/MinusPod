@@ -57,6 +57,10 @@ feed_logger = logging.getLogger('podcast.feed')
 refresh_logger = logging.getLogger('podcast.refresh')
 audio_logger = logging.getLogger('podcast.audio')
 
+# Minimum confidence threshold to cut an ad from audio
+# Ads below this threshold are kept in audio to avoid false positives
+MIN_CUT_CONFIDENCE = 0.80
+
 
 def log_request_detailed(f):
     """Decorator to log requests with detailed info (IP, user-agent, response time)."""
@@ -593,17 +597,30 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 all_ads_with_validation = validation_result.ads
                 storage.save_combined_ads(slug, episode_id, all_ads_with_validation)
 
-                # Only remove ACCEPT and REVIEW ads from audio
-                # REJECT ads stay in audio but are stored for display
-                ads_to_remove = [
-                    ad for ad in validation_result.ads
-                    if ad.get('validation', {}).get('decision') != 'REJECT'
-                ]
+                # Only remove ACCEPT and REVIEW ads from audio that meet confidence threshold
+                # REJECT ads and low-confidence ads stay in audio but are stored for display
+                ads_to_remove = []
+                low_confidence_count = 0
+                for ad in validation_result.ads:
+                    validation = ad.get('validation', {})
+                    if validation.get('decision') == 'REJECT':
+                        continue
+                    # Check confidence - use adjusted_confidence if available, else original
+                    confidence = validation.get('adjusted_confidence', ad.get('confidence', 1.0))
+                    if confidence < MIN_CUT_CONFIDENCE:
+                        low_confidence_count += 1
+                        audio_logger.info(
+                            f"[{slug}:{episode_id}] Keeping low-confidence ad in audio: "
+                            f"{ad['start']:.1f}s-{ad['end']:.1f}s ({confidence:.0%} < {MIN_CUT_CONFIDENCE:.0%})"
+                        )
+                        continue
+                    ads_to_remove.append(ad)
 
                 rejected_count = validation_result.rejected
-                if rejected_count > 0:
+                if rejected_count > 0 or low_confidence_count > 0:
                     audio_logger.info(
-                        f"[{slug}:{episode_id}] {rejected_count} ads rejected (kept in audio)"
+                        f"[{slug}:{episode_id}] Kept in audio: {rejected_count} rejected, "
+                        f"{low_confidence_count} low-confidence (<{MIN_CUT_CONFIDENCE:.0%})"
                     )
             else:
                 ads_to_remove = []
