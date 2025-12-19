@@ -165,10 +165,11 @@ class MusicBedDetector:
 
         music_frames = []
         block_count = 0
-        current_sample = 0
+        samples_processed = 0
+        total_samples = int(duration * self.sr)
 
         logger.info(f"Streaming analysis: hop={hop_length}, frame={frame_length}, "
-                    f"block_length={STREAM_BLOCK_LENGTH}")
+                    f"block_length={STREAM_BLOCK_LENGTH}, total_samples={total_samples}")
 
         # Stream audio in blocks
         stream = librosa.stream(
@@ -179,57 +180,64 @@ class MusicBedDetector:
             mono=True
         )
 
-        for block in stream:
-            block_count += 1
+        try:
+            for block in stream:
+                block_count += 1
+                block_samples = len(block)
 
-            # Resample if needed (stream uses native sr)
-            if hasattr(stream, 'sr') and stream.sr != self.sr:
-                block = librosa.resample(block, orig_sr=stream.sr, target_sr=self.sr)
+                # Resample if needed (stream uses native sr)
+                if hasattr(stream, 'sr') and stream.sr != self.sr:
+                    block = librosa.resample(block, orig_sr=stream.sr, target_sr=self.sr)
+                    block_samples = len(block)
 
-            # Process frames within this block
-            for i in range(0, len(block) - frame_length, hop_length):
-                # Calculate absolute time position
-                sample_pos = current_sample + i
-                start_time = sample_pos / self.sr
-                end_time = (sample_pos + frame_length) / self.sr
+                # Process frames within this block
+                for i in range(0, len(block) - frame_length, hop_length):
+                    # Calculate absolute time position
+                    sample_pos = samples_processed + i
+                    start_time = sample_pos / self.sr
+                    end_time = (sample_pos + frame_length) / self.sr
 
-                frame = block[i:i + frame_length]
+                    frame = block[i:i + frame_length]
 
-                # Skip very quiet frames
-                rms = np.sqrt(np.mean(frame ** 2))
-                if rms < 0.001:
-                    continue
+                    # Skip very quiet frames
+                    rms = np.sqrt(np.mean(frame ** 2))
+                    if rms < 0.001:
+                        continue
 
-                # Extract features
-                spectral_flatness = self._compute_spectral_flatness(frame)
-                low_freq_energy = self._compute_low_freq_energy(frame)
-                harmonic_ratio = self._compute_harmonic_ratio(frame)
+                    # Extract features
+                    spectral_flatness = self._compute_spectral_flatness(frame)
+                    low_freq_energy = self._compute_low_freq_energy(frame)
+                    harmonic_ratio = self._compute_harmonic_ratio(frame)
 
-                # Compute music probability
-                music_prob = self._compute_music_probability(
-                    spectral_flatness,
-                    low_freq_energy,
-                    harmonic_ratio
-                )
+                    # Compute music probability
+                    music_prob = self._compute_music_probability(
+                        spectral_flatness,
+                        low_freq_energy,
+                        harmonic_ratio
+                    )
 
-                if music_prob > self.music_threshold:
-                    music_frames.append({
-                        'start': start_time,
-                        'end': end_time,
-                        'confidence': music_prob,
-                        'spectral_flatness': spectral_flatness,
-                        'low_freq_energy': low_freq_energy,
-                        'harmonic_ratio': harmonic_ratio
-                    })
+                    if music_prob > self.music_threshold:
+                        music_frames.append({
+                            'start': start_time,
+                            'end': end_time,
+                            'confidence': music_prob,
+                            'spectral_flatness': spectral_flatness,
+                            'low_freq_energy': low_freq_energy,
+                            'harmonic_ratio': harmonic_ratio
+                        })
 
-            # Update sample position for next block
-            # Each block advances by (block_length * hop_length) samples
-            current_sample += STREAM_BLOCK_LENGTH * hop_length
+                # Track actual samples processed from this block
+                samples_processed += block_samples
 
-            if block_count % 10 == 0:
-                progress = (current_sample / self.sr) / duration * 100
-                logger.info(f"Music detection progress: {progress:.1f}% "
-                            f"({len(music_frames)} music frames found)")
+                if block_count % 10 == 0:
+                    progress = min(100.0, (samples_processed / total_samples) * 100)
+                    logger.info(f"Music detection progress: {progress:.1f}% "
+                                f"({len(music_frames)} music frames found)")
+
+        except Exception as e:
+            logger.error(f"Streaming analysis error at block {block_count}: "
+                         f"{type(e).__name__}: {e}")
+            raise
 
         # Merge consecutive frames into regions
         regions = self._merge_frames_to_regions(music_frames)
