@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.134] - 2025-12-19
+
+### Added
+- **Desktop Transcript Editor Navigation**
+  - Added prev/next arrows to desktop header for navigating between ads
+  - Improved desktop action button visibility with distinct colors (green for Confirm, border for Reset)
+
+### Fixed
+- **Jump Button Highlighting**
+  - Jump button now correctly highlights the target ad instead of wrong section
+  - Added tolerance for floating-point precision in ad time matching
+- **Pattern Popup Podcast Name**
+  - Pattern detail modal now shows podcast name instead of numeric ID for podcast-scoped patterns
+
+---
+
 ## [0.1.133] - 2025-12-19
 
 ### Fixed

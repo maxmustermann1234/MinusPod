@@ -159,9 +159,10 @@ export function TranscriptEditor({
   // Handle initial seek time (from Jump button)
   useEffect(() => {
     if (initialSeekTime !== undefined && audioRef.current) {
-      // Find the ad that contains this time
+      // Find the ad that contains this time (with tolerance for floating-point precision)
       const adIndex = detectedAds.findIndex(
-        (ad) => initialSeekTime >= ad.start && initialSeekTime <= ad.end
+        (ad) => Math.abs(initialSeekTime - ad.start) < 0.5 ||
+                (initialSeekTime > ad.start && initialSeekTime <= ad.end)
       );
       if (adIndex !== -1) {
         setSelectedAdIndex(adIndex);
@@ -491,7 +492,32 @@ export function TranscriptEditor({
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-sm font-medium">
+            {/* Desktop prev/next navigation */}
+            <div className="hidden sm:flex items-center gap-1">
+              <button
+                onClick={goToPreviousAd}
+                disabled={selectedAdIndex === 0}
+                className="p-1.5 rounded hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                aria-label="Previous ad"
+                title="Previous ad"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <h3 className="text-sm font-medium">
+                Ad {selectedAdIndex + 1} of {detectedAds.length}
+              </h3>
+              <button
+                onClick={goToNextAd}
+                disabled={selectedAdIndex >= detectedAds.length - 1}
+                className="p-1.5 rounded hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                aria-label="Next ad"
+                title="Next ad"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+            {/* Mobile header (no arrows) */}
+            <h3 className="text-sm font-medium sm:hidden">
               Ad {selectedAdIndex + 1} of {detectedAds.length}
             </h3>
             {selectedAd.sponsor && (
@@ -745,12 +771,40 @@ export function TranscriptEditor({
             </div>
           </div>
         )}
-        {/* Desktop action buttons with text - Not an Ad is prominent */}
-        <div className="flex items-center justify-between gap-2 px-4 py-3 bg-muted/30">
-          <div className="flex items-center gap-2">
-            <button onClick={handleReset} disabled={saveStatus === 'saving'} className="px-4 py-2 text-sm bg-muted rounded hover:bg-accent disabled:opacity-50">Reset</button>
-            <button onClick={handleConfirm} disabled={saveStatus === 'saving'} className={`px-4 py-2 text-sm rounded transition-colors ${saveStatus === 'saving' ? 'bg-muted cursor-wait' : 'bg-muted hover:bg-accent'} text-muted-foreground`}>{getConfirmButtonText()}</button>
-            <button onClick={handleSave} disabled={saveStatus === 'saving'} className={`px-4 py-2 text-sm rounded transition-colors ${saveStatus === 'saving' ? 'bg-primary/50 cursor-wait' : 'bg-primary hover:bg-primary/90'} text-primary-foreground`}>{getSaveButtonText()}</button>
+        {/* Desktop action buttons with text - styled like mobile for visibility */}
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-muted/30">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleReset}
+              disabled={saveStatus === 'saving'}
+              className="px-4 py-2 text-sm font-medium rounded-lg border border-border bg-background hover:bg-accent disabled:opacity-50 transition-colors"
+            >
+              Reset
+            </button>
+            <button
+              onClick={handleConfirm}
+              disabled={saveStatus === 'saving'}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                saveStatus === 'saving'
+                  ? 'bg-green-600/50 cursor-wait'
+                  : saveStatus === 'success'
+                  ? 'bg-green-600'
+                  : 'bg-green-600 hover:bg-green-700'
+              } text-white`}
+            >
+              {getConfirmButtonText()}
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saveStatus === 'saving'}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                saveStatus === 'saving'
+                  ? 'bg-primary/50 cursor-wait'
+                  : 'bg-primary hover:bg-primary/90'
+              } text-primary-foreground`}
+            >
+              {getSaveButtonText()}
+            </button>
           </div>
           {/* NOT AN AD button - prominent, larger, right side */}
           <button
