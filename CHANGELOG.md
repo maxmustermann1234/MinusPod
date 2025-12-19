@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.133] - 2025-12-19
+
+### Fixed
+- **Speaker Embedding Extraction**
+  - Handle pyannote embedding model returning numpy arrays instead of torch tensors
+  - Fixes "'numpy.ndarray' object has no attribute 'cpu'" error
+
+---
+
 ## [0.1.132] - 2025-12-19
 
 ### Added

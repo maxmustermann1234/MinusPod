@@ -290,7 +290,12 @@ class SpeakerAnalyzer:
                     "waveform": speaker_waveform,
                     "sample_rate": sample_rate
                 })
-                speaker_embeddings[speaker] = embedding.cpu().numpy()
+                # Handle both torch tensor and numpy array returns
+                if hasattr(embedding, 'cpu'):
+                    embedding = embedding.cpu().numpy()
+                elif not isinstance(embedding, np.ndarray):
+                    embedding = np.array(embedding)
+                speaker_embeddings[speaker] = embedding
             except Exception as e:
                 logger.warning(f"Failed to extract embedding for {speaker}: {e}")
                 continue
