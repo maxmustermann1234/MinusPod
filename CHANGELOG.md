@@ -5,6 +5,111 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.145] - 2025-12-20
+
+### Changed
+- **Theme Update: Bootswatch Slate**
+  - Dark mode now uses Slate theme colors (#272b30 background, cyan accents)
+  - Light mode updated to Slate-inspired light variant
+  - Added Roboto font from Google Fonts
+  - Responsive design applies to all screen sizes including mobile
+
+- **Documentation Screenshots Updated**
+  - New desktop and mobile screenshots for all major pages
+  - README now shows side-by-side desktop/mobile views
+  - Screenshots reflect new Slate theme
+
+---
+
+## [0.1.144] - 2025-12-19
+
+### Added
+- **Delete Pattern UI**
+  - Pattern detail modal now has Delete button with confirmation
+  - Allows removing duplicate or unwanted patterns from the database
+
+### Fixed
+- **Rejected Ads Section Badges**
+  - Rejected ads now show "Confirmed" or "Not Ad" badges when corrections applied
+  - Buttons hidden after correction is made
+  - Consistent with badge styling in detected ads section
+
+---
+
+## [0.1.143] - 2025-12-19
+
+### Added
+- **Add New Sponsors on the Fly**
+  - Pattern detail modal now has "Add New" button when entering unknown sponsor
+  - Creates sponsor in database immediately for autocomplete
+  - Shows helper text when sponsor doesn't exist in list
+
+- **Pattern Management API Endpoints**
+  - DELETE `/patterns/<id>` to remove individual patterns
+  - POST `/patterns/deduplicate` for manual deduplication trigger
+  - POST `/patterns/merge` to merge similar patterns into one
+
+### Fixed
+- **Navigation Arrows Only Work Once**
+  - Fixed stale closure issue in transcript editor navigation
+  - Arrow buttons now correctly use current selected ad index
+  - Uses ref pattern to avoid capturing stale state in callbacks
+
+- **Rejected Ads Buttons No Visual Feedback**
+  - "Confirm as Ad" and "Not an Ad" buttons now show save status
+  - Dynamic text: "Saving...", "Saved!", "Error!" based on state
+  - Visual styling changes to indicate success/error states
+
+- **Audio Analysis Override Not Visible**
+  - Moved audio analysis control out of "Edit" mode
+  - Now always visible as inline dropdown on podcast detail page
+  - Shows status badge when override is active
+
+---
+
+## [0.1.142] - 2025-12-19
+
+### Added
+- **Podcast-Level Audio Analysis Override**
+  - Per-podcast setting to enable/disable audio analysis independent of global setting
+  - Three options: Use Global (default), Enable, Disable
+  - UI in podcast settings page with visual indicator badge
+  - Database migration for new `audio_analysis_override` column
+
+- **Sponsor Autocomplete in Patterns UI**
+  - Pattern detail modal now shows suggestions when editing sponsor
+  - Fetches known sponsors from database for autocomplete
+  - Still allows free text entry for new sponsors
+
+- **Expandable Ad Reason in Transcript Editor**
+  - "Show reason" button in ad header to expand detection reason
+  - Displays why the segment was flagged as an ad
+  - Collapsible to save screen space
+
+- **Confirm/Not-Ad Actions for Rejected Ads**
+  - Rejected ads section now has "Confirm as Ad" and "Not an Ad" buttons
+  - Allows overriding the validator's rejection decision
+  - Corrections are applied during reprocessing
+
+### Fixed
+- **"Not an Ad" Jumping to Beginning of Transcript**
+  - Selected ad index now preserved across query refetches
+  - Uses controlled component pattern to lift state to parent
+  - Confirming or rejecting ads now advances to next ad correctly
+
+- **Navigation Arrows (Removed Top-Left, Made Center Functional)**
+  - Removed duplicate navigation arrows from header
+  - Center navigation bar now has functional prev/next buttons
+  - Visible on desktop and landscape mobile modes
+
+- **Duplicate Patterns Display**
+  - Enhanced deduplication to merge patterns with same text but different sponsors
+  - Keeps pattern with highest confirmation count
+  - Sums confirmation and false positive counts when merging
+  - Preserves sponsor name from most confirmed pattern
+
+---
+
 ## [0.1.141] - 2025-12-19
 
 ### Added

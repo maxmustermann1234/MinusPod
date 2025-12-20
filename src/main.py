@@ -463,9 +463,9 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             WhisperModelSingleton.unload_model()
             audio_logger.info(f"[{slug}:{episode_id}] Unloaded Whisper model before audio analysis")
 
-        # Step 1.5: Run audio analysis (if enabled)
+        # Step 1.5: Run audio analysis (if enabled for this podcast)
         audio_analysis_result = None
-        if audio_analyzer.is_enabled():
+        if audio_analyzer.is_enabled_for_podcast(slug):
             status_service.update_job_stage("analyzing", 25)
             audio_logger.info(f"[{slug}:{episode_id}] Running audio analysis")
             try:

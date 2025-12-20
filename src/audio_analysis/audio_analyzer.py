@@ -162,6 +162,25 @@ class AudioAnalyzer:
                 pass
         return self._enabled
 
+    def is_enabled_for_podcast(self, slug: str) -> bool:
+        """Check if audio analysis is enabled for a specific podcast.
+
+        Respects podcast-level override if set, otherwise falls back to global setting.
+        """
+        if not self.db:
+            return self._enabled
+
+        try:
+            # Check for podcast-level override
+            override = self.db.get_podcast_audio_analysis_override(slug)
+            if override is not None:
+                return override
+        except Exception:
+            pass
+
+        # Fall back to global setting
+        return self.is_enabled()
+
     def get_availability(self) -> Dict[str, bool]:
         """Get availability status of each analyzer."""
         return {

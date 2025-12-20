@@ -80,6 +80,12 @@ export async function updatePattern(
   });
 }
 
+export async function deletePattern(id: number): Promise<void> {
+  await apiRequest(`/patterns/${id}`, {
+    method: 'DELETE',
+  });
+}
+
 // Correction API
 
 export async function submitCorrection(
