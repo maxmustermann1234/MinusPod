@@ -203,6 +203,14 @@ def is_transient_error(error: Exception) -> bool:
 # Initialize Flask app
 app = Flask(__name__)
 
+# Session configuration for authentication
+import secrets
+app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = int(os.environ.get('SESSION_LIFETIME_HOURS', '24')) * 3600
+
 # Enable gzip compression for responses
 from flask_compress import Compress
 compress = Compress()

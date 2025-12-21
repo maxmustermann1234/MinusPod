@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.156] - 2025-12-21
+
+### Added
+- **Phase 6: Missing Features Implementation**
+
+- **OPML Import UI**
+  - File drag-and-drop support on Add Feed page
+  - Visual feedback for import progress
+  - Import results display (success/failed counts)
+  - Podcast Index search link moved to Add Feed page
+
+- **Batch Reprocess Dropdown**
+  - Dropdown menu with two reprocess modes:
+    - Patterns + Claude (uses learned patterns)
+    - Claude Only (fresh analysis)
+  - Mode passed to backend, stored in episode for processing
+  - Confirmation modal shows selected mode
+  - Results modal shows mode used
+
+- **Simple Password Authentication**
+  - Optional single password protection for entire app
+  - Flask session-based authentication with configurable expiry
+  - Auth endpoints: /auth/status, /auth/login, /auth/logout, /auth/password
+  - Before-request middleware checks auth on all API routes
+  - Exempt paths: /health, /auth/*, RSS feeds, audio files
+  - Login page with password input
+  - Settings page security section for password management
+  - Logout button when password is set
+  - 401 redirect handling in API client
+
+- **Full-Text Search with SQLite FTS5**
+  - FTS5 virtual table for search indexing
+  - Indexes: episodes (transcripts), podcasts, patterns, sponsors
+  - Search endpoint: GET /api/v1/search?q=query&type=episode&limit=50
+  - Index rebuild endpoint: POST /api/v1/search/rebuild
+  - Index stats endpoint: GET /api/v1/search/stats
+  - Search page with real-time search and debouncing
+  - Filter tabs for content types (All, Episodes, Podcasts, Patterns, Sponsors)
+  - Grouped results view with highlighted snippets
+  - Nav search icon now links to global search (was Podcast Index)
+
+### Changed
+- Reprocess All button changed to dropdown with mode selection
+- Search icon in navigation now opens global search
+
+---
+
 ## [0.1.155] - 2025-12-21
 
 ### Added
