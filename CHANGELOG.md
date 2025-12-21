@@ -6,6 +6,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.159] - 2025-12-21
+
+### Added
+- **Transcript Editor Manual Time Entry**
+  - Start and end times now editable via direct text input
+  - Supports MM:SS format (e.g., "1:30") or seconds only (e.g., "90")
+  - Click to edit, Enter to confirm, Escape to cancel
+  - Auto-select on focus for easy replacement
+
+### Changed
+- **Transcript Editor Mobile Improvements**
+  - Increased mobile viewport height from 75vh to 85vh (more transcript visible)
+  - Increased max-height from 600px to 750px
+  - Reduced segment padding and min-height for tighter layout
+  - Smaller font sizes on mobile: timestamps 10px, text xs
+  - Boundary time display now uses smaller font on mobile
+
+---
+
 ## [0.1.158] - 2025-12-21
 
 ### Added
