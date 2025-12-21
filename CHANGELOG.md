@@ -6,6 +6,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.162] - 2025-12-21
+
+### Fixed
+- **Mobile Keyboard No Longer Resizes Viewport**
+  - Added `interactive-widget=overlays-content` to viewport meta tag
+  - Keyboard now overlays content instead of pushing UI elements off screen
+  - Supported in Chrome 108+, Firefox 132+ (Safari falls back gracefully)
+  - Removed previous workaround that hid transcript during time input editing
+
+- **Desktop Boundary Controls Spacing**
+  - Start/End time fields now centered with consistent spacing
+  - Changed from `justify-between` to `justify-center` layout
+
+---
+
 ## [0.1.161] - 2025-12-21
 
 ### Fixed

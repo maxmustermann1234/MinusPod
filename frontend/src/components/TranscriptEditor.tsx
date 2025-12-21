@@ -665,7 +665,7 @@ export function TranscriptEditor({
 
           {/* Controls - always visible on sm+, conditionally on mobile */}
           <div className={`px-4 py-3 ${mobileControlsExpanded ? 'block' : 'hidden'} sm:block`}>
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-center gap-3 sm:gap-6">
               <div className="flex items-center gap-3 sm:gap-2 justify-center sm:justify-start">
                 <span className="text-xs text-muted-foreground">Start:</span>
                 <button
@@ -822,12 +822,9 @@ export function TranscriptEditor({
       </div>
 
       {/* SCROLLABLE: Transcript only - with swipe gestures for ad navigation */}
-      {/* Hidden on mobile when editing time inputs to keep boundary controls visible above keyboard */}
       <div
         ref={transcriptRef}
-        className={`flex-1 overflow-y-auto p-4 space-y-2 min-h-0 ${
-          (isEditingStart || isEditingEnd) ? 'hidden sm:block' : ''
-        }`}
+        className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0"
         onTouchStart={handleSwipeStart}
         onTouchEnd={handleSwipeEnd}
       >
