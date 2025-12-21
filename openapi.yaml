@@ -12,7 +12,7 @@ info:
     - Monitor system status and trigger cleanup operations
     - Manage cross-episode ad patterns with network and podcast scope
     - Submit corrections to improve ad detection accuracy
-  version: 0.1.147
+  version: 0.1.158
   contact:
     name: Podcast Server
   license:
@@ -29,6 +29,8 @@ servers:
         description: Base URL of the podcast server
 
 tags:
+  - name: Auth
+    description: Authentication management (optional password protection)
   - name: Feeds
     description: Podcast feed management
   - name: Episodes
@@ -49,6 +51,143 @@ tags:
     description: System status and maintenance
 
 paths:
+  /auth/status:
+    get:
+      tags:
+        - Auth
+      summary: Check authentication status
+      description: |
+        Returns whether password protection is enabled and if the current session is authenticated.
+        This endpoint is always accessible without authentication.
+      operationId: getAuthStatus
+      responses:
+        '200':
+          description: Authentication status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  passwordSet:
+                    type: boolean
+                    description: Whether a password is configured
+                  authenticated:
+                    type: boolean
+                    description: Whether current session is authenticated
+
+  /auth/login:
+    post:
+      tags:
+        - Auth
+      summary: Login with password
+      description: Authenticate with the configured password. Rate limited to 5 attempts per minute.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - password
+              properties:
+                password:
+                  type: string
+                  description: The application password
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authenticated:
+                    type: boolean
+                  message:
+                    type: string
+        '401':
+          description: Invalid password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/logout:
+    post:
+      tags:
+        - Auth
+      summary: Logout and clear session
+      description: Clears the current session, requiring re-authentication.
+      operationId: logout
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authenticated:
+                    type: boolean
+                  message:
+                    type: string
+
+  /auth/password:
+    put:
+      tags:
+        - Auth
+      summary: Set or change password
+      description: |
+        Set or change the application password. Rate limited to 3 attempts per hour.
+
+        - If no password is set, creates a new password
+        - If password is set, requires current password for verification
+        - Set newPassword to empty string to remove password protection
+        - Minimum password length: 8 characters
+      operationId: setPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - newPassword
+              properties:
+                currentPassword:
+                  type: string
+                  description: Current password (required if password is already set)
+                newPassword:
+                  type: string
+                  description: New password (min 8 chars, or empty to remove protection)
+      responses:
+        '200':
+          description: Password updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  passwordSet:
+                    type: boolean
+        '400':
+          description: Invalid request (password too short)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Current password incorrect
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /feeds:
     get:
       tags:

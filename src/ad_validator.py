@@ -5,6 +5,14 @@ from typing import List, Dict
 from dataclasses import dataclass, field
 from enum import Enum
 
+from config import (
+    MIN_AD_DURATION, SHORT_AD_WARN, LONG_AD_WARN, MAX_AD_DURATION,
+    MAX_AD_DURATION_CONFIRMED, HIGH_CONFIDENCE, LOW_CONFIDENCE,
+    REJECT_CONFIDENCE, HIGH_CONFIDENCE_OVERRIDE, PRE_ROLL, MID_ROLL_1,
+    MID_ROLL_2, MID_ROLL_3, POST_ROLL, MAX_AD_PERCENTAGE, MAX_ADS_PER_5MIN,
+    MERGE_GAP_THRESHOLD
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,32 +43,11 @@ class AdValidator:
     - Verify ads against transcript content
     """
 
-    # Duration thresholds (seconds)
-    MIN_AD_DURATION = 7.0       # ERROR if less (quick mentions are ~10s minimum)
-    SHORT_AD_WARN = 30.0        # WARN if less
-    LONG_AD_WARN = 180.0        # WARN if more (3 min)
-    MAX_AD_DURATION = 300.0     # ERROR if more (5 min)
-    MAX_AD_DURATION_CONFIRMED = 900.0  # 15 min if sponsor confirmed in description
-
-    # Confidence thresholds (0.0 - 1.0 scale)
-    HIGH_CONFIDENCE = 0.85      # Auto-accept threshold
-    LOW_CONFIDENCE = 0.5        # Warn threshold
-    REJECT_CONFIDENCE = 0.3     # Auto-reject threshold
-    HIGH_CONFIDENCE_OVERRIDE = 0.90  # Override long-duration errors if confidence above this
-
-    # Position windows (as % of episode duration)
-    PRE_ROLL = (0.0, 0.05)      # First 5%
-    MID_ROLL_1 = (0.20, 0.35)   # Common mid-roll positions
-    MID_ROLL_2 = (0.45, 0.55)
-    MID_ROLL_3 = (0.65, 0.80)
-    POST_ROLL = (0.95, 1.0)     # Last 5%
-
-    # Ad density limits
-    MAX_AD_PERCENTAGE = 0.30    # 30% of episode is suspicious
-    MAX_ADS_PER_5MIN = 1        # More than 1 ad per 5 min is suspicious
-
-    # Gap thresholds
-    MERGE_GAP_THRESHOLD = 5.0   # Merge ads within 5s
+    # Thresholds imported from config.py:
+    # MIN_AD_DURATION, SHORT_AD_WARN, LONG_AD_WARN, MAX_AD_DURATION,
+    # MAX_AD_DURATION_CONFIRMED, HIGH_CONFIDENCE, LOW_CONFIDENCE,
+    # REJECT_CONFIDENCE, HIGH_CONFIDENCE_OVERRIDE, PRE_ROLL, MID_ROLL_*,
+    # POST_ROLL, MAX_AD_PERCENTAGE, MAX_ADS_PER_5MIN, MERGE_GAP_THRESHOLD
 
     # Sponsor patterns for verification
     SPONSOR_PATTERNS = re.compile(
@@ -313,27 +300,27 @@ class AdValidator:
             return ad
 
         # Duration checks
-        if duration < self.MIN_AD_DURATION:
+        if duration < MIN_AD_DURATION:
             flags.append(f"ERROR: Very short ({duration:.1f}s)")
-        elif duration < self.SHORT_AD_WARN:
+        elif duration < SHORT_AD_WARN:
             flags.append(f"WARN: Short duration ({duration:.1f}s)")
 
         # Check if sponsor is confirmed in episode description
         sponsor_confirmed = self._is_sponsor_confirmed(ad)
-        max_duration = self.MAX_AD_DURATION_CONFIRMED if sponsor_confirmed else self.MAX_AD_DURATION
+        max_duration = MAX_AD_DURATION_CONFIRMED if sponsor_confirmed else MAX_AD_DURATION
 
         if duration > max_duration:
             flags.append(f"ERROR: Very long ({duration:.1f}s)")
-        elif duration > self.LONG_AD_WARN:
+        elif duration > LONG_AD_WARN:
             if sponsor_confirmed:
                 flags.append(f"INFO: Long ({duration:.1f}s) but sponsor confirmed in description")
             else:
                 flags.append(f"WARN: Long duration ({duration:.1f}s)")
 
         # Confidence checks (on original confidence)
-        if confidence < self.REJECT_CONFIDENCE:
+        if confidence < REJECT_CONFIDENCE:
             flags.append(f"ERROR: Very low confidence ({confidence:.2f})")
-        elif confidence < self.LOW_CONFIDENCE:
+        elif confidence < LOW_CONFIDENCE:
             flags.append(f"WARN: Low confidence ({confidence:.2f})")
 
         # Position heuristics - adjust confidence
@@ -368,14 +355,14 @@ class AdValidator:
         Returns:
             Adjusted confidence
         """
-        if self.PRE_ROLL[0] <= position <= self.PRE_ROLL[1]:
+        if PRE_ROLL[0] <= position <= PRE_ROLL[1]:
             # Pre-roll is very common - strong boost
             return min(1.0, confidence + 0.10)
-        elif self.POST_ROLL[0] <= position <= self.POST_ROLL[1]:
+        elif POST_ROLL[0] <= position <= POST_ROLL[1]:
             # Post-roll is common
             return min(1.0, confidence + 0.05)
         elif any(start <= position <= end for start, end in
-                 [self.MID_ROLL_1, self.MID_ROLL_2, self.MID_ROLL_3]):
+                 [MID_ROLL_1, MID_ROLL_2, MID_ROLL_3]):
             # Mid-roll positions are common
             return min(1.0, confidence + 0.05)
         return confidence
@@ -442,7 +429,7 @@ class AdValidator:
             return min(1.0, confidence + 0.05)
 
         # No signals found - only flag if not already high confidence
-        if confidence < self.HIGH_CONFIDENCE:
+        if confidence < HIGH_CONFIDENCE:
             flags.append("WARN: No ad signals in transcript")
 
         # Verify end_text exists in transcript
@@ -489,16 +476,16 @@ class AdValidator:
         has_long_error = any('Very long' in f for f in flags)
 
         # High confidence (>0.9) overrides long-duration errors up to 15 minutes
-        if has_long_error and confidence >= self.HIGH_CONFIDENCE_OVERRIDE:
-            if duration <= self.MAX_AD_DURATION_CONFIRMED:
+        if has_long_error and confidence >= HIGH_CONFIDENCE_OVERRIDE:
+            if duration <= MAX_AD_DURATION_CONFIRMED:
                 logger.info(
                     f"Accepting long ad ({duration:.1f}s) due to high confidence ({confidence:.2f})"
                 )
                 return Decision.ACCEPT
 
-        if has_errors or confidence < self.REJECT_CONFIDENCE:
+        if has_errors or confidence < REJECT_CONFIDENCE:
             return Decision.REJECT
-        elif confidence >= self.HIGH_CONFIDENCE and not any('WARN' in f for f in flags):
+        elif confidence >= HIGH_CONFIDENCE and not any('WARN' in f for f in flags):
             return Decision.ACCEPT
         elif confidence >= 0.6 and not has_errors:
             return Decision.ACCEPT
@@ -551,7 +538,7 @@ class AdValidator:
             last = merged[-1]
             gap = current['start'] - last['end']
 
-            if 0 <= gap < self.MERGE_GAP_THRESHOLD:
+            if 0 <= gap < MERGE_GAP_THRESHOLD:
                 # Merge: extend last ad to cover current
                 last['end'] = max(last['end'], current['end'])
                 last['validation_merged'] = True
@@ -584,7 +571,7 @@ class AdValidator:
 
         ad_percentage = total_ad_time / self.episode_duration
 
-        if ad_percentage > self.MAX_AD_PERCENTAGE:
+        if ad_percentage > MAX_AD_PERCENTAGE:
             result.warnings.append(
                 f"High ad density: {ad_percentage:.1%} of episode "
                 f"({total_ad_time:.0f}s of {self.episode_duration:.0f}s)"
@@ -598,7 +585,7 @@ class AdValidator:
                 if ad['start'] >= window_start and ad['start'] < window_end
                 and ad.get('validation', {}).get('decision') != Decision.REJECT.value
             )
-            if ads_in_window > self.MAX_ADS_PER_5MIN:
+            if ads_in_window > MAX_ADS_PER_5MIN:
                 result.warnings.append(
                     f"Multiple ads ({ads_in_window}) in window "
                     f"{window_start // 60}-{window_end // 60} min"

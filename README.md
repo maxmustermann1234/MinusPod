@@ -13,6 +13,17 @@ Removes ads from podcasts using Whisper transcription. Serves modified RSS feeds
 
 Processing happens on-demand when you play an episode. First play takes a few minutes, subsequent plays are instant (cached).
 
+## Advanced Features (Quick Reference)
+
+| Feature | Description | Enable In |
+|---------|-------------|-----------|
+| **Multi-Pass Detection** | Two independent Claude passes with different prompts catch more ads | Settings |
+| **Pattern Learning** | System learns from corrections, patterns promote from podcast to network to global scope | Automatic |
+| **Audio Analysis** | Volume, music, and speaker analysis provide additional detection signals | Settings |
+| **Confidence Thresholds** | >=80% confidence: cut; 50-79%: kept for review; <50%: rejected | Automatic |
+
+See detailed sections below for configuration and usage.
+
 ### Multi-Pass Detection
 
 Enable dual-pass ad detection in Settings for improved accuracy:
@@ -235,6 +246,16 @@ The transcript editor allows you to review and adjust ad detections directly in 
 | Desktop | Mobile |
 |---------|--------|
 | <img src="docs/screenshots/episode-detail-desktop.png" width="500"> | <img src="docs/screenshots/episode-detail-mobile.png" width="200"> |
+
+#### Detected Ads
+| Desktop | Mobile |
+|---------|--------|
+| <img src="docs/screenshots/ads-detected-desktop.png" width="500"> | <img src="docs/screenshots/ads-detected-mobile.png" width="200"> |
+
+#### Ad Editor
+| Desktop | Mobile |
+|---------|--------|
+| <img src="docs/screenshots/ad-editor-desktop.png" width="500"> | <img src="docs/screenshots/ad-editor-mobile.png" width="200"> |
 
 #### Ad Patterns
 | Desktop | Mobile |

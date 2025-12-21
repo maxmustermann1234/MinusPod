@@ -9,6 +9,12 @@ import hashlib
 from typing import List, Dict, Optional
 from anthropic import Anthropic, APIError, APIConnectionError, RateLimitError, InternalServerError
 
+from config import (
+    MIN_TYPICAL_AD_DURATION, MIN_SPONSOR_READ_DURATION, SHORT_GAP_THRESHOLD,
+    MAX_MERGED_DURATION, MAX_REALISTIC_SIGNAL, MIN_OVERLAP_TOLERANCE,
+    MAX_AD_DURATION_WINDOW
+)
+
 logger = logging.getLogger('podcast.claude')
 
 # Default model - Claude Sonnet 4.5
@@ -141,8 +147,7 @@ def merge_and_deduplicate(first_pass: List[Dict], second_pass: List[Dict]) -> Li
                 logger.info(f"Second pass found new ad: {current['start']:.1f}s - {current['end']:.1f}s ({current.get('reason', 'unknown')})")
 
     # Validate ad durations and extend short ads that likely ended too early
-    MIN_TYPICAL_AD_DURATION = 30.0  # Most sponsor reads are 60-120 seconds
-    MIN_SPONSOR_READ_DURATION = 90.0  # Threshold for extension consideration
+    # Constants imported from config.py: MIN_TYPICAL_AD_DURATION, MIN_SPONSOR_READ_DURATION
     URL_EXTENSION_SECONDS = 45.0  # Extension when URL detected in end_text
 
     for ad in merged:
@@ -427,8 +432,7 @@ def merge_same_sponsor_ads(ads: List[Dict], segments: List[Dict], max_gap: float
     if not ads or len(ads) < 2 or not segments:
         return ads
 
-    # Short gap threshold - merge same-sponsor ads unconditionally if gap is short
-    SHORT_GAP_THRESHOLD = 120.0  # 2 minutes
+    # SHORT_GAP_THRESHOLD imported from config.py
 
     # Sort ads by start time
     ads = sorted(ads, key=lambda x: x['start'])
@@ -484,9 +488,9 @@ def merge_same_sponsor_ads(ads: List[Dict], segments: List[Dict], max_gap: float
                         merge_reason = "sponsor in gap"
 
                 if should_merge:
-                    # Safety check: don't merge if result would be too long (>5 min)
+                    # Safety check: don't merge if result would be too long
+                    # MAX_MERGED_DURATION imported from config.py
                     merged_duration = next_ad['end'] - current_ad['start']
-                    MAX_MERGED_DURATION = 300.0  # 5 minutes max
                     if merged_duration > MAX_MERGED_DURATION:
                         logger.info(
                             f"Skipping merge: {current_ad['start']:.1f}s-{current_ad['end']:.1f}s + "
@@ -749,7 +753,7 @@ class AdDetector:
         if not audio_analysis or not audio_analysis.signals:
             return ""
 
-        MAX_REALISTIC_SIGNAL = 180.0  # 3 minutes - anything longer is suspect
+        # MAX_REALISTIC_SIGNAL imported from config.py
 
         # Get signals that overlap with this window AND are realistic length
         window_signals = [
@@ -1095,15 +1099,14 @@ class AdDetector:
 
                 # Filter ads to window bounds - Claude sometimes hallucinates start=0.0
                 # when no ads found, speculating about "beginning of episode"
-                MIN_OVERLAP_TOLERANCE = 120.0  # 2 min tolerance for boundary ads
-                MAX_AD_DURATION = 420.0  # 7 min max (longest reasonable sponsor read)
+                # MIN_OVERLAP_TOLERANCE, MAX_AD_DURATION_WINDOW imported from config.py
 
                 valid_window_ads = []
                 for ad in window_ads:
                     duration = ad['end'] - ad['start']
                     in_window = (ad['start'] >= window_start - MIN_OVERLAP_TOLERANCE and
                                  ad['start'] <= window_end + MIN_OVERLAP_TOLERANCE)
-                    reasonable_length = duration <= MAX_AD_DURATION
+                    reasonable_length = duration <= MAX_AD_DURATION_WINDOW
 
                     if in_window and reasonable_length:
                         valid_window_ads.append(ad)
@@ -1495,15 +1498,14 @@ class AdDetector:
 
                 # Filter ads to window bounds - Claude sometimes hallucinates start=0.0
                 # when no ads found, speculating about "beginning of episode"
-                MIN_OVERLAP_TOLERANCE = 120.0  # 2 min tolerance for boundary ads
-                MAX_AD_DURATION = 420.0  # 7 min max (longest reasonable sponsor read)
+                # MIN_OVERLAP_TOLERANCE, MAX_AD_DURATION_WINDOW imported from config.py
 
                 valid_window_ads = []
                 for ad in window_ads:
                     duration = ad['end'] - ad['start']
                     in_window = (ad['start'] >= window_start - MIN_OVERLAP_TOLERANCE and
                                  ad['start'] <= window_end + MIN_OVERLAP_TOLERANCE)
-                    reasonable_length = duration <= MAX_AD_DURATION
+                    reasonable_length = duration <= MAX_AD_DURATION_WINDOW
 
                     if in_window and reasonable_length:
                         valid_window_ads.append(ad)
