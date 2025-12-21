@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.164] - 2025-12-21
+
+### Changed
+- **Mobile Time Input UX Improvements**
+  - Hide ad selector chips when editing time inputs to free up screen space
+  - Hide audio player and action buttons when editing time inputs
+  - Show Start and End fields side-by-side when editing (row layout)
+  - Transcript segments now visible while editing, providing context
+  - UI elements restore automatically when done editing (on blur)
+  - Desktop layout unchanged (uses responsive breakpoints)
+
+---
+
 ## [0.1.163] - 2025-12-21
 
 ### Fixed

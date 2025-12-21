@@ -608,8 +608,8 @@ export function TranscriptEditor({
           </div>
         )}
 
-        {/* Ad selector - with momentum scrolling for mobile */}
-        <div className="flex gap-2 px-4 py-2 border-b border-border overflow-x-auto scroll-smooth touch-pan-x landscape:hidden">
+        {/* Ad selector - with momentum scrolling for mobile, hidden when editing time inputs */}
+        <div className={`flex gap-2 px-4 py-2 border-b border-border overflow-x-auto scroll-smooth touch-pan-x landscape:hidden ${(isEditingStart || isEditingEnd) ? 'hidden' : ''}`}>
           {detectedAds.map((ad, index) => (
             <button
               key={index}
@@ -665,7 +665,7 @@ export function TranscriptEditor({
 
           {/* Controls - always visible on sm+, conditionally on mobile */}
           <div className={`px-4 py-3 ${mobileControlsExpanded ? 'block' : 'hidden'} sm:block`}>
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-center gap-3 sm:gap-6">
+            <div className={`flex ${(isEditingStart || isEditingEnd) ? 'flex-row flex-wrap items-center justify-center' : 'flex-col'} sm:flex-row sm:items-center sm:justify-center gap-3 sm:gap-6`}>
               <div className="flex items-center gap-3 sm:gap-2 justify-center sm:justify-start">
                 <span className="text-xs text-muted-foreground">Start:</span>
                 <button
@@ -936,8 +936,8 @@ export function TranscriptEditor({
         </div>
       </div>
 
-      {/* Mobile: Bottom sheet audio player */}
-      <div className="sm:hidden sticky bottom-0 z-20 bg-card border-t border-border flex-shrink-0">
+      {/* Mobile: Bottom sheet audio player - hidden when editing time inputs */}
+      <div className={`sm:hidden sticky bottom-0 z-20 bg-card border-t border-border flex-shrink-0 ${(isEditingStart || isEditingEnd) ? 'hidden' : ''}`}>
         <audio ref={audioRef} src={audioUrl} className="hidden" />
 
         {/* Grab handle */}
