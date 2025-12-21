@@ -1,9 +1,48 @@
 # Changelog
 
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.158] - 2025-12-21
+
+### Added
+- **Phase 6: Documentation and Code Quality**
+
+- **Centralized Configuration**
+  - New `src/config.py` with all magic numbers and thresholds
+  - Consolidated constants from ad_validator.py, ad_detector.py, pattern_service.py
+  - Includes confidence thresholds, duration limits, pattern matching settings
+
+- **Documentation**
+  - `frontend/README.md` - Frontend development guide with tech stack and patterns
+  - `docs/DEPLOYMENT.md` - Deployment runbook with prerequisites and troubleshooting
+  - Added Advanced Features quick reference table to main README.md
+  - Updated UI screenshots (dark mode, desktop + mobile views)
+
+- **OpenAPI Specification Updates**
+  - Added authentication endpoints (GET /auth/status, POST /auth/login, POST /auth/logout, PUT /auth/password)
+  - Enhanced patterns and corrections endpoint descriptions
+  - Updated version to 0.1.158
+
+### Fixed
+- **Status Service Multi-Worker Consistency**
+  - Fixed status endpoint returning inconsistent results with multiple Gunicorn workers
+  - Processing status (current job, queue, feed refreshes) now stored in shared file
+  - All workers read from same source for consistent /api/v1/status responses
+  - File-based storage with proper locking for cross-process synchronization
+
+- **CLAUDE.md Path Reference**
+  - Fixed hardcoded `/Users/` path to generic reference
+
+- **Transcript Editor Arrow Navigation**
+  - Fixed arrow buttons losing highlighting after navigation
+  - Memoized detectedAds and transcriptSegments to prevent stale closure issues
+  - Navigation between ads now works consistently
+
+---
 
 ## [0.1.157] - 2025-12-21
 

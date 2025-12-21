@@ -14,13 +14,14 @@ from dataclasses import dataclass
 from typing import List, Optional, Dict, Tuple
 from datetime import datetime
 
-logger = logging.getLogger('podcast.patterns')
+from config import (
+    PODCAST_TO_NETWORK_THRESHOLD,
+    NETWORK_TO_GLOBAL_THRESHOLD,
+    PROMOTION_SIMILARITY_THRESHOLD,
+    SPONSOR_GLOBAL_THRESHOLD
+)
 
-# Promotion thresholds
-PODCAST_TO_NETWORK_THRESHOLD = 3  # 3+ podcasts in same network match
-NETWORK_TO_GLOBAL_THRESHOLD = 2   # 2+ networks match
-PROMOTION_SIMILARITY_THRESHOLD = 0.75  # Text similarity for pattern merging (lowered for better cross-podcast matching)
-SPONSOR_GLOBAL_THRESHOLD = 3  # 3+ podcasts with same sponsor -> promote to global
+logger = logging.getLogger('podcast.patterns')
 
 # Known DAI platforms and their RSS signatures
 DAI_PLATFORMS = {

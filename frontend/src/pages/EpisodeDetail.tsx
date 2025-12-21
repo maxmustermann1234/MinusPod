@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getEpisode, reprocessEpisode } from '../api/feeds';
@@ -81,8 +81,8 @@ function EpisodeDetail() {
     }, 100);
   };
 
-  // Convert ad markers to TranscriptEditor format
-  const getDetectedAds = () => {
+  // Convert ad markers to TranscriptEditor format - memoized to prevent stale closures in editor
+  const detectedAds = useMemo(() => {
     if (!episode?.adMarkers) return [];
     return episode.adMarkers.map((marker) => ({
       start: marker.start,
@@ -93,11 +93,11 @@ function EpisodeDetail() {
       pattern_id: undefined,
       detection_stage: marker.pass === 1 ? 'first_pass' : marker.pass === 2 ? 'second_pass' : 'merged',
     }));
-  };
+  }, [episode?.adMarkers]);
 
-  // Generate approximate transcript segments from plain text
+  // Generate approximate transcript segments from plain text - memoized for performance
   // This is a placeholder - ideally we'd have timestamped segments from the API
-  const getTranscriptSegments = () => {
+  const transcriptSegments = useMemo(() => {
     if (!episode?.transcript || !episode.originalDuration) return [];
 
     // Split transcript into sentences/chunks
@@ -115,7 +115,7 @@ function EpisodeDetail() {
       end: (index + 1) * segmentDuration,
       text: sentence.trim(),
     }));
-  };
+  }, [episode?.transcript, episode?.originalDuration]);
 
   const formatDuration = (seconds?: number) => {
     if (!seconds) return '';
@@ -305,8 +305,8 @@ function EpisodeDetail() {
           {showEditor && episode.status === 'completed' && (
             <div className="mb-4" ref={editorRef}>
               <TranscriptEditor
-                segments={getTranscriptSegments()}
-                detectedAds={getDetectedAds()}
+                segments={transcriptSegments}
+                detectedAds={detectedAds}
                 audioUrl={`/episodes/${slug}/${episode.id}.mp3`}
                 onCorrection={handleCorrection}
                 onClose={() => setShowEditor(false)}
