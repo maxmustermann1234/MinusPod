@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.163] - 2025-12-21
+
+### Fixed
+- **iOS Safari Mobile Keyboard Fix**
+  - Changed container height from `vh` to `dvh` (dynamic viewport height)
+  - `dvh` automatically adjusts when iOS keyboard opens
+  - Time input fields now remain visible and usable on iOS Safari
+  - Supported on iOS Safari 15.4+, Chrome 108+, Firefox 101+
+
+---
+
 ## [0.1.162] - 2025-12-21
 
 ### Fixed

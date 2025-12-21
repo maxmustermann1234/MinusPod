@@ -546,7 +546,7 @@ export function TranscriptEditor({
     <div
       ref={containerRef}
       tabIndex={0}
-      className="flex flex-col h-[85vh] sm:h-[70vh] max-h-[750px] sm:max-h-[800px] landscape:h-[90vh] landscape:max-h-none bg-card rounded-lg border border-border outline-none focus:ring-2 focus:ring-primary/50 overflow-hidden"
+      className="flex flex-col h-[85dvh] sm:h-[70vh] max-h-[750px] sm:max-h-[800px] landscape:h-[90dvh] landscape:max-h-none bg-card rounded-lg border border-border outline-none focus:ring-2 focus:ring-primary/50 overflow-hidden"
     >
       {/* STICKY TOP: Header, Ad Selector, Boundary Controls */}
       <div className="sticky top-0 z-20 bg-card flex-shrink-0">
