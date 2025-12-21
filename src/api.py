@@ -527,7 +527,7 @@ def list_episodes(slug):
             'title': ep['title'],
             'description': ep.get('description'),
             'status': status,
-            'published': ep['created_at'],
+            'published': ep.get('published_at') or ep['created_at'],
             'duration': ep['original_duration'],
             'ad_count': ep['ads_removed'],
             # Additional fields for backward compatibility
@@ -605,7 +605,7 @@ def get_episode(slug, episode_id):
         'title': episode['title'],
         'description': episode.get('description'),
         'status': status,
-        'published': episode['created_at'],
+        'published': episode.get('published_at') or episode['created_at'],
         'createdAt': episode['created_at'],
         'processedAt': episode['processed_at'],
         'duration': episode['original_duration'],
@@ -683,8 +683,9 @@ def reprocess_episode(slug, episode_id):
         podcast = db.get_podcast_by_slug(slug)
         podcast_name = podcast.get('title', slug) if podcast else slug
 
-        # Fetch episode description from RSS if available
+        # Fetch episode description and published date from RSS if available
         episode_description = None
+        episode_published_at = None
         if podcast and podcast.get('source_url'):
             try:
                 rss_parser = RSSParser()
@@ -694,12 +695,21 @@ def reprocess_episode(slug, episode_id):
                     for ep in episodes:
                         if ep['id'] == episode_id:
                             episode_description = ep.get('description')
+                            # Get published date from RSS and convert to ISO format
+                            published_str = ep.get('published', '')
+                            if published_str:
+                                try:
+                                    from email.utils import parsedate_to_datetime
+                                    parsed_pub = parsedate_to_datetime(published_str)
+                                    episode_published_at = parsed_pub.strftime('%Y-%m-%dT%H:%M:%SZ')
+                                except (ValueError, TypeError):
+                                    pass
                             break
             except Exception as e:
-                logger.warning(f"Could not fetch episode description: {e}")
+                logger.warning(f"Could not fetch episode metadata: {e}")
 
         logger.info(f"Starting reprocess: {slug}:{episode_id}")
-        success = process_episode(slug, episode_id, episode_url, episode_title, podcast_name, episode_description)
+        success = process_episode(slug, episode_id, episode_url, episode_title, podcast_name, episode_description, None, episode_published_at)
 
         if success:
             return json_response({

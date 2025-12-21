@@ -691,6 +691,18 @@ class Database:
             except Exception as e:
                 logger.error(f"Migration failed for reprocess_requested_at: {e}")
 
+        # Migration: Add published_at column if missing (RSS pubDate)
+        if 'published_at' not in columns:
+            try:
+                conn.execute("""
+                    ALTER TABLE episodes
+                    ADD COLUMN published_at TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added published_at column to episodes table")
+            except Exception as e:
+                logger.error(f"Migration failed for published_at: {e}")
+
         # Refresh details_columns list before checking for new columns
         cursor = conn.execute("PRAGMA table_info(episode_details)")
         details_columns = [row['name'] for row in cursor.fetchall()]
@@ -825,6 +837,20 @@ class Database:
             logger.info("Migration: Created auto_process_queue table")
         except Exception as e:
             logger.debug(f"auto_process_queue table creation (may already exist): {e}")
+
+        # Migration: Add published_at to auto_process_queue if missing
+        try:
+            cursor = conn.execute("PRAGMA table_info(auto_process_queue)")
+            queue_columns = [row['name'] for row in cursor.fetchall()]
+            if 'published_at' not in queue_columns:
+                conn.execute("""
+                    ALTER TABLE auto_process_queue
+                    ADD COLUMN published_at TEXT
+                """)
+                conn.commit()
+                logger.info("Migration: Added published_at column to auto_process_queue table")
+        except Exception as e:
+            logger.debug(f"auto_process_queue published_at migration: {e}")
 
         # Create new indexes for podcasts table (will fail silently if already exist)
         try:
@@ -1226,7 +1252,7 @@ class Database:
                                'processed_at', 'original_duration', 'new_duration',
                                'ads_removed', 'ads_removed_firstpass', 'ads_removed_secondpass',
                                'error_message', 'ad_detection_status', 'artwork_url',
-                               'reprocess_mode', 'reprocess_requested_at', 'retry_count'):
+                               'reprocess_mode', 'reprocess_requested_at', 'retry_count', 'published_at'):
                         fields.append(f"{key} = ?")
                         values.append(value)
 
@@ -1245,8 +1271,8 @@ class Database:
                    (podcast_id, episode_id, original_url, title, description, status,
                     processed_file, processed_at, original_duration,
                     new_duration, ads_removed, ads_removed_firstpass, ads_removed_secondpass,
-                    error_message, ad_detection_status, artwork_url, retry_count)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    error_message, ad_detection_status, artwork_url, retry_count, published_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     podcast_id,
                     episode_id,
@@ -1264,7 +1290,8 @@ class Database:
                     kwargs.get('error_message'),
                     kwargs.get('ad_detection_status'),
                     kwargs.get('artwork_url'),
-                    kwargs.get('retry_count', 0)
+                    kwargs.get('retry_count', 0),
+                    kwargs.get('published_at')
                 )
             )
             db_id = cursor.lastrowid
@@ -2577,7 +2604,8 @@ class Database:
             return global_enabled
 
     def queue_episode_for_processing(self, slug: str, episode_id: str,
-                                      original_url: str, title: str = None) -> Optional[int]:
+                                      original_url: str, title: str = None,
+                                      published_at: str = None) -> Optional[int]:
         """Add an episode to the auto-process queue. Returns queue ID or None if already queued."""
         conn = self.get_connection()
 
@@ -2592,10 +2620,10 @@ class Database:
         try:
             cursor = conn.execute(
                 """INSERT INTO auto_process_queue
-                   (podcast_id, episode_id, original_url, title)
-                   VALUES (?, ?, ?, ?)
+                   (podcast_id, episode_id, original_url, title, published_at)
+                   VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(podcast_id, episode_id) DO NOTHING""",
-                (podcast_id, episode_id, original_url, title)
+                (podcast_id, episode_id, original_url, title, published_at)
             )
             conn.commit()
             return cursor.lastrowid if cursor.rowcount > 0 else None

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.148] - 2025-12-21
+
+### Fixed
+- **Episode Published Dates Now Show Correct Values**
+  - Previously, all episodes showed their database creation date as the published date
+  - Now stores and displays actual RSS pubDate (when episode was originally published)
+  - Added `published_at` column to episodes table
+  - API returns `published_at` with fallback to `created_at` for backward compatibility
+
+### Changed
+- **Auto-Process Queue**
+  - Queue now stores episode published date for passing through to processing
+  - Added `published_at` column to auto_process_queue table
+  - Reprocess endpoint now fetches and stores pubDate from RSS
+
+---
+
 ## [0.1.147] - 2025-12-21
 
 ### Fixed

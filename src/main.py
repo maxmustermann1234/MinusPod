@@ -259,8 +259,16 @@ def refresh_rss_feed(slug: str, feed_url: str):
 
                     if is_recent:
                         # New recent episode - queue for processing
+                        # Convert pubDate to ISO format for storage
+                        iso_published = None
+                        if published_str:
+                            try:
+                                parsed_pub = parsedate_to_datetime(published_str)
+                                iso_published = parsed_pub.strftime('%Y-%m-%dT%H:%M:%SZ')
+                            except (ValueError, TypeError):
+                                pass
                         queue_id = db.queue_episode_for_processing(
-                            slug, ep['id'], ep['url'], ep.get('title')
+                            slug, ep['id'], ep['url'], ep.get('title'), iso_published
                         )
                         if queue_id:
                             queued_count += 1
@@ -361,6 +369,7 @@ def background_queue_processor():
                 original_url = queued['original_url']
                 title = queued.get('title', 'Unknown')
                 podcast_name = queued.get('podcast_title', slug)
+                published_at = queued.get('published_at')
 
                 refresh_logger.info(f"[{slug}:{episode_id}] Auto-processing queued episode: {title}")
 
@@ -370,7 +379,7 @@ def background_queue_processor():
                 try:
                     # Try to start background processing using the existing queue
                     started, reason = start_background_processing(
-                        slug, episode_id, original_url, title, podcast_name, None, None
+                        slug, episode_id, original_url, title, podcast_name, None, None, published_at
                     )
 
                     if started:
@@ -445,18 +454,18 @@ def reset_stuck_processing_episodes():
         refresh_logger.info(f"Reset {len(stuck)} stuck episodes to pending")
 
 
-def _process_episode_background(slug, episode_id, original_url, title, podcast_name, description, artwork_url):
+def _process_episode_background(slug, episode_id, original_url, title, podcast_name, description, artwork_url, published_at=None):
     """Background thread wrapper for process_episode with queue management."""
     queue = ProcessingQueue()
     try:
-        process_episode(slug, episode_id, original_url, title, podcast_name, description, artwork_url)
+        process_episode(slug, episode_id, original_url, title, podcast_name, description, artwork_url, published_at)
     except Exception as e:
         audio_logger.error(f"[{slug}:{episode_id}] Background processing failed: {e}")
     finally:
         queue.release()
 
 
-def start_background_processing(slug, episode_id, original_url, title, podcast_name, description, artwork_url):
+def start_background_processing(slug, episode_id, original_url, title, podcast_name, description, artwork_url, published_at=None):
     """
     Start processing in background thread.
 
@@ -482,7 +491,7 @@ def start_background_processing(slug, episode_id, original_url, title, podcast_n
     # Start background thread
     processing_thread = threading.Thread(
         target=_process_episode_background,
-        args=(slug, episode_id, original_url, title, podcast_name, description, artwork_url),
+        args=(slug, episode_id, original_url, title, podcast_name, description, artwork_url, published_at),
         daemon=True
     )
     processing_thread.start()
@@ -492,7 +501,8 @@ def start_background_processing(slug, episode_id, original_url, title, podcast_n
 
 def process_episode(slug: str, episode_id: str, episode_url: str,
                    episode_title: str = "Unknown", podcast_name: str = "Unknown",
-                   episode_description: str = None, episode_artwork_url: str = None):
+                   episode_description: str = None, episode_artwork_url: str = None,
+                   episode_published_at: str = None):
     """Process a single episode (transcribe, detect ads, remove ads)."""
     start_time = time.time()
 
@@ -517,6 +527,7 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             title=episode_title,
             description=episode_description,
             artwork_url=episode_artwork_url,
+            published_at=episode_published_at,
             status='processing')
 
         # Step 1: Check if transcript exists in database
