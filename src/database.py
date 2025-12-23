@@ -1994,6 +1994,45 @@ class Database:
                     pass
         return results
 
+    def get_podcast_false_positive_texts(self, podcast_slug: str, limit: int = 100) -> List[Dict]:
+        """Get all false positive texts for a podcast for cross-episode matching.
+
+        Returns list of dicts with:
+        - text: The rejected segment text
+        - episode_id: Which episode it came from
+        - start, end: Original time bounds
+        """
+        conn = self.get_connection()
+        cursor = conn.execute('''
+            SELECT pc.text_snippet, pc.episode_id, pc.original_bounds, pc.created_at
+            FROM pattern_corrections pc
+            JOIN episodes e ON pc.episode_id = e.episode_id
+            JOIN podcasts p ON e.podcast_id = p.id
+            WHERE p.slug = ?
+            AND pc.correction_type = 'false_positive'
+            AND pc.text_snippet IS NOT NULL
+            AND length(pc.text_snippet) >= 50
+            ORDER BY pc.created_at DESC
+            LIMIT ?
+        ''', (podcast_slug, limit))
+
+        results = []
+        for row in cursor.fetchall():
+            bounds = {}
+            if row['original_bounds']:
+                try:
+                    bounds = json.loads(row['original_bounds'])
+                except (json.JSONDecodeError, ValueError):
+                    pass
+            results.append({
+                'text': row['text_snippet'],
+                'episode_id': row['episode_id'],
+                'start': bounds.get('start'),
+                'end': bounds.get('end'),
+                'created_at': row['created_at']
+            })
+        return results
+
     # ========== Audio Fingerprints Methods ==========
 
     def get_audio_fingerprint(self, pattern_id: int) -> Optional[Dict]:
