@@ -2890,7 +2890,7 @@ class Database:
 
         # Index patterns
         cursor = conn.execute("""
-            SELECT id, text, sponsor, scope
+            SELECT id, text_template, sponsor, scope
             FROM ad_patterns
             WHERE is_active = 1
         """)
@@ -2899,7 +2899,7 @@ class Database:
                 INSERT INTO search_index (content_type, content_id, podcast_slug, title, body, metadata)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, ('pattern', str(row['id']), row['scope'] or 'global',
-                  row['sponsor'] or 'Unknown', row['text'] or '', ''))
+                  row['sponsor'] or 'Unknown', row['text_template'] or '', ''))
             count += 1
 
         # Index sponsors
