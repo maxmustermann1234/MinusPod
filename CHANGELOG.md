@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.170] - 2025-12-24
+
+### Fixed
+- **Search Index Query Bug**
+  - Fixed incorrect column name (`transcript` -> `transcript_text`) in search index rebuild
+  - Fixed incorrect JOIN condition for episode_details table
+  - Search now properly indexes episode transcripts
+
+---
+
 ## [0.1.169] - 2025-12-24
 
 ### Fixed

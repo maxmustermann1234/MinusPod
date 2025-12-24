@@ -2872,15 +2872,15 @@ class Database:
 
         # Index episodes with transcripts
         cursor = conn.execute("""
-            SELECT e.episode_id, e.title, e.description, p.slug, ed.transcript
+            SELECT e.episode_id, e.title, e.description, p.slug, ed.transcript_text
             FROM episodes e
             JOIN podcasts p ON e.podcast_id = p.id
-            LEFT JOIN episode_details ed ON e.podcast_id = ed.podcast_id AND e.episode_id = ed.episode_id
+            LEFT JOIN episode_details ed ON e.id = ed.episode_id
             WHERE e.status = 'processed'
         """)
         for row in cursor:
             # Limit transcript size to avoid huge index entries
-            transcript = (row['transcript'] or '')[:100000]  # ~100k chars max
+            transcript = (row['transcript_text'] or '')[:100000]  # ~100k chars max
             conn.execute("""
                 INSERT INTO search_index (content_type, content_id, podcast_slug, title, body, metadata)
                 VALUES (?, ?, ?, ?, ?, ?)
