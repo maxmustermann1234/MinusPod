@@ -922,6 +922,16 @@ class Database:
         except Exception as e:
             logger.debug(f"FTS5 search_index creation (may already exist): {e}")
 
+        # Auto-populate search index if empty
+        try:
+            cursor = conn.execute("SELECT COUNT(*) FROM search_index")
+            if cursor.fetchone()[0] == 0:
+                logger.info("Search index is empty, rebuilding...")
+                count = self.rebuild_search_index()
+                logger.info(f"Search index populated with {count} items")
+        except Exception as e:
+            logger.warning(f"Failed to auto-populate search index: {e}")
+
     def _migrate_from_json(self):
         """Migrate data from JSON files to SQLite."""
         conn = self.get_connection()
@@ -2862,15 +2872,15 @@ class Database:
 
         # Index episodes with transcripts
         cursor = conn.execute("""
-            SELECT e.episode_id, e.title, e.description, p.slug, ed.transcript
+            SELECT e.episode_id, e.title, e.description, p.slug, ed.transcript_text
             FROM episodes e
             JOIN podcasts p ON e.podcast_id = p.id
-            LEFT JOIN episode_details ed ON e.podcast_id = ed.podcast_id AND e.episode_id = ed.episode_id
+            LEFT JOIN episode_details ed ON e.id = ed.episode_id
             WHERE e.status = 'processed'
         """)
         for row in cursor:
             # Limit transcript size to avoid huge index entries
-            transcript = (row['transcript'] or '')[:100000]  # ~100k chars max
+            transcript = (row['transcript_text'] or '')[:100000]  # ~100k chars max
             conn.execute("""
                 INSERT INTO search_index (content_type, content_id, podcast_slug, title, body, metadata)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -2880,7 +2890,7 @@ class Database:
 
         # Index patterns
         cursor = conn.execute("""
-            SELECT id, text, sponsor, scope
+            SELECT id, text_template, sponsor, scope
             FROM ad_patterns
             WHERE is_active = 1
         """)
@@ -2889,7 +2899,7 @@ class Database:
                 INSERT INTO search_index (content_type, content_id, podcast_slug, title, body, metadata)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, ('pattern', str(row['id']), row['scope'] or 'global',
-                  row['sponsor'] or 'Unknown', row['text'] or '', ''))
+                  row['sponsor'] or 'Unknown', row['text_template'] or '', ''))
             count += 1
 
         # Index sponsors

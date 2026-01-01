@@ -6,6 +6,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.171] - 2025-12-24
+
+### Fixed
+- **Search Index Pattern Column Bug**
+  - Fixed incorrect column name (`text` -> `text_template`) for ad_patterns indexing
+
+---
+
+## [0.1.170] - 2025-12-24
+
+### Fixed
+- **Search Index Query Bug**
+  - Fixed incorrect column name (`transcript` -> `transcript_text`) in search index rebuild
+  - Fixed incorrect JOIN condition for episode_details table
+  - Search now properly indexes episode transcripts
+
+---
+
+## [0.1.169] - 2025-12-24
+
+### Fixed
+- **Search Index Auto-Population**
+  - FTS5 search index now auto-populates on startup if empty
+  - Fixes search returning 0 results after fresh deployment or migration
+  - Index is rebuilt automatically during database initialization
+
+- **Mobile Transcript Editor Scroll Position**
+  - Closing the transcript editor now restores the previous scroll position
+  - Fixes the issue where page would jump to "Detected Ads" section header on mobile
+  - Saves scroll position when opening editor, restores on close
+
+---
+
 ## [0.1.168] - 2025-12-23
 
 ### Added
