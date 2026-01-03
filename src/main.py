@@ -1518,7 +1518,7 @@ def serve_chapters_json(slug, episode_id):
 
     import json
     feed_logger.info(f"[{slug}:{episode_id}] Serving chapters JSON")
-    response = Response(json.dumps(chapters), mimetype='application/json')
+    response = Response(json.dumps(chapters), mimetype='application/json+chapters')
     response.headers['Access-Control-Allow-Origin'] = '*'
     return response
 

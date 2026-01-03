@@ -217,7 +217,7 @@ class RSSParser:
                 # Add chapters tag if chapters JSON exists
                 if storage.has_chapters_json(slug, episode_id):
                     chapters_url = f"{self.base_url}/episodes/{slug}/{episode_id}/chapters.json"
-                    lines.append(f'  <podcast:chapters url="{chapters_url}" type="application/json" />')
+                    lines.append(f'  <podcast:chapters url="{chapters_url}" type="application/json+chapters" />')
 
             lines.append('</item>')
 

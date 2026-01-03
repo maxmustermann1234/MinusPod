@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.186] - 2026-01-03
+
+### Fixed
+- **Podcasting 2.0 chapters not appearing in podcast apps**: Fixed incorrect MIME type for chapters. The spec requires `application/json+chapters` but we were using `application/json`. Updated both the RSS tag type attribute and HTTP Content-Type header.
+
+---
+
 ## [0.1.185] - 2026-01-03
 
 ### Fixed
