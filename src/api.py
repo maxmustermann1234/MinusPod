@@ -1007,8 +1007,8 @@ def reprocess_episode(slug, episode_id):
 def regenerate_chapters(slug, episode_id):
     """Regenerate chapters for an episode without full reprocessing.
 
-    Uses existing transcript and ad markers to regenerate chapters.
-    Useful when chapter generation logic has been updated.
+    Uses existing VTT transcript to regenerate chapters with AI topic detection.
+    VTT segments are already adjusted (ads removed), so we don't use ad boundaries.
     """
     db = get_database()
     storage = get_storage()
@@ -1027,18 +1027,6 @@ def regenerate_chapters(slug, episode_id):
     if not segments:
         return error_response('Failed to parse VTT transcript', 500)
 
-    # Get ad markers
-    ad_markers = episode.get('ad_markers', [])
-    if isinstance(ad_markers, str):
-        import json
-        try:
-            ad_markers = json.loads(ad_markers)
-        except json.JSONDecodeError:
-            ad_markers = []
-
-    # Filter to only ads that were cut
-    ads_removed = [ad for ad in ad_markers if ad.get('was_cut', False)]
-
     # Get episode info
     episode_description = episode.get('description', '')
     podcast = db.get_podcast_by_slug(slug)
@@ -1049,14 +1037,17 @@ def regenerate_chapters(slug, episode_id):
         from chapters_generator import ChaptersGenerator
 
         chapters_gen = ChaptersGenerator()
-        chapters = chapters_gen.generate_chapters(
-            segments, ads_removed, episode_description,
-            podcast_name, episode_title
+
+        # VTT segments are ALREADY adjusted (ads removed), so pass empty ads_removed
+        # This prevents double-adjustment of timestamps
+        # The AI topic detection will find natural chapter points in the content
+        chapters = chapters_gen.generate_chapters_from_vtt(
+            segments, episode_description, podcast_name, episode_title
         )
 
         if chapters and chapters.get('chapters'):
             storage.save_chapters_json(slug, episode_id, chapters)
-            logger.info(f"[{slug}:{episode_id}] Regenerated {len(chapters['chapters'])} chapters")
+            logger.info(f"[{slug}:{episode_id}] Regenerated {len(chapters['chapters'])} chapters from VTT")
             return json_response({
                 'message': 'Chapters regenerated',
                 'episodeId': episode_id,

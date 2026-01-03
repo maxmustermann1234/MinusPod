@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.181] - 2026-01-03
+
+### Fixed
+- **VTT chapter regeneration**: Fixed critical bug where regenerating chapters from VTT caused double timestamp adjustment. VTT segments are already adjusted for removed ads, so the regenerate endpoint now uses a new `generate_chapters_from_vtt` method that works directly with VTT timestamps and uses AI topic detection without ad-based adjustment.
+
+### Changed
+- **UI improvement**: Moved "Regenerate Chapters" into the Reprocess dropdown menu for cleaner UI
+
+---
+
 ## [0.1.179] - 2026-01-03
 
 ### Added

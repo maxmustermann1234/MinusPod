@@ -1065,3 +1065,100 @@ Transcript:
             'version': '1.2.0',
             'chapters': output_chapters
         }
+
+    def generate_chapters_from_vtt(
+        self,
+        segments: List[Dict],
+        episode_description: str = None,
+        podcast_name: str = "Unknown",
+        episode_title: str = "Unknown"
+    ) -> Dict:
+        """
+        Generate chapters from VTT segments (already adjusted for ad removal).
+
+        This is used for regenerating chapters without full reprocessing.
+        VTT timestamps are already adjusted, so no ad-based adjustment is done.
+        Uses AI to detect topic changes in the content.
+
+        Args:
+            segments: VTT transcript segments (already adjusted)
+            episode_description: Episode description (optional)
+            podcast_name: Podcast name
+            episode_title: Episode title
+
+        Returns:
+            Chapters dict ready for JSON serialization
+        """
+        logger.info(f"Generating chapters from VTT for '{episode_title}'")
+
+        if not segments:
+            return {'version': '1.2.0', 'chapters': []}
+
+        episode_duration = segments[-1].get('end', 0)
+
+        # Start with intro chapter
+        chapters = [{
+            'startTime': 0,
+            'title': None,
+            'source': 'auto',
+            'needs_title': True
+        }]
+
+        # Use AI to detect topic changes if episode is long enough
+        if episode_duration > 900:  # > 15 minutes
+            self._initialize_client()
+            if self.client:
+                # Get full transcript with timestamps
+                transcript_text = self._get_full_transcript_range(segments, 0, episode_duration)
+
+                if transcript_text and len(transcript_text) > 500:
+                    # Calculate how many topic splits we want
+                    num_splits = min(int(episode_duration / 600), 6)  # ~10 min chunks, max 6
+
+                    logger.info(f"VTT regeneration: Requesting {num_splits} topic boundaries from AI for {episode_duration:.0f}s episode")
+
+                    try:
+                        new_chapters = self._detect_topic_boundaries(
+                            transcript_text, 0, episode_duration, num_splits
+                        )
+
+                        for ch in new_chapters:
+                            # VTT times are already adjusted, use original_time directly
+                            chapters.append({
+                                'startTime': ch['original_time'],
+                                'title': ch.get('title'),
+                                'source': 'ai_vtt',
+                                'needs_title': not ch.get('title')
+                            })
+                    except Exception as e:
+                        logger.warning(f"Failed to detect topic boundaries: {e}")
+
+        # Sort and deduplicate
+        chapters.sort(key=lambda x: x['startTime'])
+
+        # Remove chapters too close together (< 60 seconds)
+        deduplicated = []
+        for ch in chapters:
+            if not deduplicated or ch['startTime'] - deduplicated[-1]['startTime'] >= 60:
+                deduplicated.append(ch)
+        chapters = deduplicated
+
+        # Generate titles for chapters that need them
+        chapters = self.generate_chapter_titles(
+            chapters, segments, podcast_name, episode_title, []  # No ads for VTT
+        )
+
+        # Build output
+        output_chapters = []
+        for chapter in chapters:
+            output_chapters.append({
+                'startTime': max(1, int(round(chapter['startTime']))),
+                'title': chapter.get('title', 'Untitled')
+            })
+
+        logger.info(f"Generated {len(output_chapters)} chapters from VTT")
+
+        return {
+            'version': '1.2.0',
+            'chapters': output_chapters
+        }
