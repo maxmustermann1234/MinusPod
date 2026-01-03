@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.183] - 2026-01-03
+
+### Fixed
+- **AI topic detection prompt**: Made Claude output format explicit with "OUTPUT FORMAT: Return ONLY topic lines, one per line. No introduction, no explanation, no numbering." and added examples. This prevents Claude from adding preamble like "Here are the 6 major topic changes:" that caused parsing to fail.
+
+---
+
 ## [0.1.181] - 2026-01-03
 
 ### Fixed

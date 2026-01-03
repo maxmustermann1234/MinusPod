@@ -652,12 +652,15 @@ Transcript:
 
 The segment runs from {int(start_time//60)}:{int(start_time%60):02d} to {int(end_time//60)}:{int(end_time%60):02d}.
 
-For each topic change, provide:
-1. The timestamp where the new topic begins (from the [MM:SS] markers)
-2. A short title (3-7 words) for the new topic
+For each topic change, provide the timestamp (from the [MM:SS] markers) and a short title (3-7 words).
 
-Format your response as one topic per line:
-MM:SS Topic Title Here
+OUTPUT FORMAT:
+Return ONLY topic lines, one per line. No introduction, no explanation, no numbering.
+Each line must be exactly: MM:SS Topic Title Here
+
+Example:
+05:30 Discussion of AI Trends
+12:45 New Product Announcements
 
 Only include clear topic transitions, not minor tangents. Skip the very beginning since that's already a chapter.
 
@@ -673,7 +676,7 @@ Transcript:
             )
 
             result_text = response.content[0].text.strip()
-            logger.info(f"Claude topic detection response ({len(result_text)} chars): {result_text[:300]}")
+            logger.info(f"Claude topic detection response ({len(result_text)} chars):\n{result_text}")
             chapters = []
 
             for line in result_text.split('\n'):
@@ -681,27 +684,35 @@ Transcript:
                 if not line:
                     continue
 
-                # Parse "MM:SS Title" format - also handle with dashes or colons after timestamp
-                match = re.match(r'^(\d{1,2}:\d{2}(?::\d{2})?)\s*[-:.]?\s*(.+)$', line)
+                # Skip any preamble (Claude sometimes ignores instructions)
+                if line.lower().startswith(('here', 'based', 'the ', 'i ', 'these')):
+                    logger.debug(f"Skipping preamble: {line[:50]}")
+                    continue
+
+                # Strip any leading markers Claude might add despite instructions
+                cleaned = re.sub(r'^[\d]+[.)]\s*', '', line)  # "1." or "1)"
+                cleaned = re.sub(r'^[-*]+\s*', '', cleaned)   # "-" or "*"
+                cleaned = cleaned.strip()
+
+                # Parse "MM:SS Title" format (what we asked for)
+                # Also handle minor variations Claude might produce
+                match = re.match(r'^(\d{1,2}:\d{2}(?::\d{2})?)\s*[-:]?\s*(.+)$', cleaned)
                 if match:
                     timestamp_str, title = match.groups()
                     try:
                         seconds = self.parse_timestamp_to_seconds(timestamp_str)
-                        # Validate time is within range
-                        if start_time < seconds < end_time:
+                        if start_time <= seconds < end_time:
                             chapters.append({
                                 'original_time': seconds,
                                 'title': title.strip()
                             })
-                            logger.debug(f"Accepted topic: {timestamp_str} ({seconds}s) - {title.strip()}")
+                            logger.info(f"Accepted topic: {timestamp_str} ({seconds}s) - {title.strip()}")
                         else:
-                            logger.debug(f"Rejected topic outside range: {timestamp_str} ({seconds}s) not in {start_time}-{end_time}")
+                            logger.info(f"Rejected outside range: {timestamp_str} ({seconds}s) not in {start_time}-{end_time}")
                     except (ValueError, IndexError) as e:
-                        logger.debug(f"Failed to parse timestamp {timestamp_str}: {e}")
-                        continue
+                        logger.warning(f"Failed to parse timestamp {timestamp_str}: {e}")
                 else:
-                    if line and not line.startswith('#'):
-                        logger.debug(f"Line didn't match timestamp pattern: {line[:80]}")
+                    logger.info(f"Line didn't match pattern: {cleaned[:80]}")
 
             logger.info(f"AI detected {len(chapters)} topic boundaries in long segment")
             return chapters
