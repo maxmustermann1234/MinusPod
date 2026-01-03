@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.179] - 2026-01-03
+
+### Added
+- **Regenerate chapters endpoint**: New API endpoint `POST /feeds/<slug>/episodes/<episode_id>/regenerate-chapters` to regenerate chapters without full reprocessing. Uses existing VTT transcript and ad markers.
+- **UI button for regenerate chapters**: Added "Regenerate Chapters" button to episode detail page for episodes with VTT transcripts
+
+---
+
+## [0.1.178] - 2026-01-03
+
+### Fixed
+- **Chapter generation debugging**: Added detailed logging to see Claude's response when detecting topic boundaries. This will help diagnose why AI split is returning 0 topics.
+- Improved regex pattern to handle various timestamp formats (MM:SS, MM:SS:, MM:SS -)
+
+---
+
 ## [0.1.177] - 2026-01-03
 
 ### Fixed

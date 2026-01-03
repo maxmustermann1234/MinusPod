@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getEpisode, reprocessEpisode } from '../api/feeds';
+import { getEpisode, reprocessEpisode, regenerateChapters } from '../api/feeds';
 import { submitCorrection } from '../api/patterns';
 import LoadingSpinner from '../components/LoadingSpinner';
 import TranscriptEditor, { AdCorrection } from '../components/TranscriptEditor';
@@ -32,6 +32,13 @@ function EpisodeDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['episode', slug, episodeId] });
       setShowReprocessMenu(false);
+    },
+  });
+
+  const regenerateChaptersMutation = useMutation({
+    mutationFn: () => regenerateChapters(slug!, episodeId!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['episode', slug, episodeId] });
     },
   });
 
@@ -278,6 +285,15 @@ function EpisodeDetail() {
                   >
                     Download Chapters
                   </a>
+                )}
+                {episode.transcriptVttAvailable && (
+                  <button
+                    onClick={() => regenerateChaptersMutation.mutate()}
+                    disabled={regenerateChaptersMutation.isPending}
+                    className="px-3 py-1 text-sm bg-orange-500/20 text-orange-600 dark:text-orange-400 rounded hover:bg-orange-500/30 transition-colors disabled:opacity-50"
+                  >
+                    {regenerateChaptersMutation.isPending ? 'Regenerating...' : 'Regenerate Chapters'}
+                  </button>
                 )}
               </div>
             )}

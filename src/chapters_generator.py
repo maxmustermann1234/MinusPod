@@ -381,7 +381,7 @@ class ChaptersGenerator:
                 logger.debug(f"Chapter {i}: num_splits < 1, skipping")
                 continue
 
-            logger.info(f"Chapter {i}: Requesting {num_splits} topic boundaries from AI (original {original_start:.0f}-{original_end:.0f})")
+            logger.info(f"Chapter {i}: Requesting {num_splits} topic boundaries from AI (original {original_start:.0f}-{original_end:.0f}, transcript {len(transcript_text)} chars)")
 
             try:
                 new_chapters = self._detect_topic_boundaries(
@@ -673,6 +673,7 @@ Transcript:
             )
 
             result_text = response.content[0].text.strip()
+            logger.info(f"Claude topic detection response ({len(result_text)} chars): {result_text[:300]}")
             chapters = []
 
             for line in result_text.split('\n'):
@@ -680,8 +681,8 @@ Transcript:
                 if not line:
                     continue
 
-                # Parse "MM:SS Title" format
-                match = re.match(r'^(\d{1,2}:\d{2})\s+(.+)$', line)
+                # Parse "MM:SS Title" format - also handle with dashes or colons after timestamp
+                match = re.match(r'^(\d{1,2}:\d{2}(?::\d{2})?)\s*[-:.]?\s*(.+)$', line)
                 if match:
                     timestamp_str, title = match.groups()
                     try:
@@ -692,8 +693,15 @@ Transcript:
                                 'original_time': seconds,
                                 'title': title.strip()
                             })
-                    except (ValueError, IndexError):
+                            logger.debug(f"Accepted topic: {timestamp_str} ({seconds}s) - {title.strip()}")
+                        else:
+                            logger.debug(f"Rejected topic outside range: {timestamp_str} ({seconds}s) not in {start_time}-{end_time}")
+                    except (ValueError, IndexError) as e:
+                        logger.debug(f"Failed to parse timestamp {timestamp_str}: {e}")
                         continue
+                else:
+                    if line and not line.startswith('#'):
+                        logger.debug(f"Line didn't match timestamp pattern: {line[:80]}")
 
             logger.info(f"AI detected {len(chapters)} topic boundaries in long segment")
             return chapters

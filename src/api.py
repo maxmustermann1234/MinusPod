@@ -1001,6 +1001,106 @@ def reprocess_episode(slug, episode_id):
         return error_response(f'Failed to reprocess: {str(e)}', 500)
 
 
+@api.route('/feeds/<slug>/episodes/<episode_id>/regenerate-chapters', methods=['POST'])
+@limiter.limit("10 per minute")
+@log_request
+def regenerate_chapters(slug, episode_id):
+    """Regenerate chapters for an episode without full reprocessing.
+
+    Uses existing transcript and ad markers to regenerate chapters.
+    Useful when chapter generation logic has been updated.
+    """
+    db = get_database()
+    storage = get_storage()
+
+    episode = db.get_episode(slug, episode_id)
+    if not episode:
+        return error_response('Episode not found', 404)
+
+    # Get VTT transcript
+    vtt_content = storage.get_transcript_vtt(slug, episode_id)
+    if not vtt_content:
+        return error_response('No VTT transcript available - full reprocess required', 400)
+
+    # Parse VTT back to segments
+    segments = _parse_vtt_to_segments(vtt_content)
+    if not segments:
+        return error_response('Failed to parse VTT transcript', 500)
+
+    # Get ad markers
+    ad_markers = episode.get('ad_markers', [])
+    if isinstance(ad_markers, str):
+        import json
+        try:
+            ad_markers = json.loads(ad_markers)
+        except json.JSONDecodeError:
+            ad_markers = []
+
+    # Filter to only ads that were cut
+    ads_removed = [ad for ad in ad_markers if ad.get('was_cut', False)]
+
+    # Get episode info
+    episode_description = episode.get('description', '')
+    podcast = db.get_podcast_by_slug(slug)
+    podcast_name = podcast.get('title', slug) if podcast else slug
+    episode_title = episode.get('title', 'Unknown')
+
+    try:
+        from chapters_generator import ChaptersGenerator
+
+        chapters_gen = ChaptersGenerator()
+        chapters = chapters_gen.generate_chapters(
+            segments, ads_removed, episode_description,
+            podcast_name, episode_title
+        )
+
+        if chapters and chapters.get('chapters'):
+            storage.save_chapters_json(slug, episode_id, chapters)
+            logger.info(f"[{slug}:{episode_id}] Regenerated {len(chapters['chapters'])} chapters")
+            return json_response({
+                'message': 'Chapters regenerated',
+                'episodeId': episode_id,
+                'chapterCount': len(chapters['chapters']),
+                'chapters': chapters['chapters']
+            })
+        else:
+            return error_response('Failed to generate chapters', 500)
+
+    except Exception as e:
+        logger.error(f"Failed to regenerate chapters for {slug}:{episode_id}: {e}")
+        return error_response(f'Failed to regenerate chapters: {str(e)}', 500)
+
+
+def _parse_vtt_to_segments(vtt_content: str) -> list:
+    """Parse VTT content back to segment list."""
+    import re
+    segments = []
+
+    # VTT format: HH:MM:SS.mmm --> HH:MM:SS.mmm or MM:SS.mmm --> MM:SS.mmm
+    pattern = r'(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})\s*\n(.+?)(?=\n\n|\n\d|\Z)'
+
+    for match in re.finditer(pattern, vtt_content, re.DOTALL):
+        start_str, end_str, text = match.groups()
+
+        # Parse timestamp to seconds
+        def parse_vtt_time(time_str):
+            parts = time_str.split(':')
+            if len(parts) == 3:
+                h, m, s = parts
+                return int(h) * 3600 + int(m) * 60 + float(s)
+            else:
+                m, s = parts
+                return int(m) * 60 + float(s)
+
+        segments.append({
+            'start': parse_vtt_time(start_str),
+            'end': parse_vtt_time(end_str),
+            'text': text.strip()
+        })
+
+    return segments
+
+
 @api.route('/feeds/<slug>/reprocess-all', methods=['POST'])
 @limiter.limit("2 per minute")
 @log_request
