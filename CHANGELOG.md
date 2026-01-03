@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.174] - 2026-01-03
+
+### Fixed
+- **End-of-episode ad handling**: When the last ad has less than 30 seconds of content remaining after it, the episode now ends with a beep instead of including the trailing content (which is often post-roll ad residue)
+
+---
+
 ## [0.1.173] - 2026-01-03
 
 ### Added
