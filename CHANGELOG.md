@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.188] - 2026-01-09
+
+### Fixed
+- **RSS 503 errors after episode processing**: RSS cache was being deleted after processing, but when upstream returned 304 Not Modified there was no content to regenerate. Now regenerates RSS immediately after processing completes, and forces full fetch when cache is missing as a fallback.
+- **Auto-process timeout incorrectly marked as failure**: When processing takes longer than 10 minutes (common for 1-2 hour episodes), the auto-process queue was marking the episode as "failed" with no error message, even though processing was still running. Now correctly detects ongoing processing and re-queues for later status check instead of failing.
+
+---
+
 ## [0.1.187] - 2026-01-07
 
 ### Fixed

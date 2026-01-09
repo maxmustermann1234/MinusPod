@@ -442,8 +442,15 @@ def get_parsed_feed(slug: str, source_url: str):
     return None
 
 
-def refresh_rss_feed(slug: str, feed_url: str):
-    """Refresh RSS feed for a podcast."""
+def refresh_rss_feed(slug: str, feed_url: str, force: bool = False):
+    """Refresh RSS feed for a podcast.
+
+    Args:
+        slug: Podcast slug
+        feed_url: URL of the original RSS feed
+        force: If True, bypass conditional GET (ETag/Last-Modified) to force full fetch.
+               Use this when the RSS cache was deleted and needs regeneration.
+    """
     try:
         # Get podcast name and etag for conditional fetch
         podcast = db.get_podcast(slug)
@@ -455,8 +462,9 @@ def refresh_rss_feed(slug: str, feed_url: str):
         refresh_logger.info(f"[{slug}] Starting RSS refresh from: {feed_url}")
 
         # Fetch original RSS with conditional GET (ETag/Last-Modified)
-        existing_etag = podcast.get('etag') if podcast else None
-        existing_last_modified = podcast.get('last_modified_header') if podcast else None
+        # Skip conditional GET if force=True (cache was deleted, need full content)
+        existing_etag = None if force else (podcast.get('etag') if podcast else None)
+        existing_last_modified = None if force else (podcast.get('last_modified_header') if podcast else None)
 
         feed_content, new_etag, new_last_modified = rss_parser.fetch_feed_conditional(
             feed_url,
@@ -702,8 +710,16 @@ def background_queue_processor():
                         if episode and episode['status'] == 'processed':
                             db.update_queue_status(queue_id, 'completed')
                             refresh_logger.info(f"[{slug}:{episode_id}] Auto-process completed successfully")
+                        elif episode and episode['status'] == 'processing':
+                            # Still processing after timeout - don't mark as failed, let it continue
+                            # Put back in queue to check again later
+                            db.update_queue_status(queue_id, 'pending')
+                            refresh_logger.info(f"[{slug}:{episode_id}] Still processing after {max_wait}s, will check again later")
                         else:
-                            error_msg = episode.get('error_message', 'Processing failed') if episode else 'Unknown error'
+                            # Actually failed - get the real error message
+                            error_msg = episode.get('error_message') if episode else None
+                            if not error_msg:
+                                error_msg = f"Processing ended with status: {episode.get('status') if episode else 'unknown'}"
                             db.update_queue_status(queue_id, 'failed', error_msg)
                             refresh_logger.warning(f"[{slug}:{episode_id}] Auto-process failed: {error_msg}")
                     elif reason == "already_processing":
@@ -1156,14 +1172,14 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 reprocess_mode=None,
                 reprocess_requested_at=None)
 
-            # Invalidate RSS cache so it regenerates with new Podcasting 2.0 tags
+            # Regenerate RSS cache to include new Podcasting 2.0 tags (transcript/chapters)
             try:
-                rss_cache_path = storage.get_podcast_dir(slug) / "modified-rss.xml"
-                if rss_cache_path.exists():
-                    rss_cache_path.unlink()
-                    audio_logger.debug(f"[{slug}:{episode_id}] Invalidated RSS cache")
+                feed_map = get_feed_map()
+                if slug in feed_map:
+                    refresh_rss_feed(slug, feed_map[slug]['in'], force=True)
+                    audio_logger.debug(f"[{slug}:{episode_id}] Regenerated RSS cache with Podcasting 2.0 tags")
             except Exception as cache_err:
-                audio_logger.warning(f"[{slug}:{episode_id}] Failed to invalidate RSS cache: {cache_err}")
+                audio_logger.warning(f"[{slug}:{episode_id}] Failed to regenerate RSS cache: {cache_err}")
 
             processing_time = time.time() - start_time
 
@@ -1357,8 +1373,10 @@ def serve_rss(slug):
     last_checked = data.get('last_checked')
 
     should_refresh = False
+    force_refresh = False  # Force full fetch bypasses 304 - use when cache is missing
     if not cached_rss:
         should_refresh = True
+        force_refresh = True  # No cache, must get full content (can't use 304)
         feed_logger.info(f"[{slug}] No RSS cache, refreshing")
     elif last_checked:
         try:
@@ -1371,7 +1389,7 @@ def serve_rss(slug):
             should_refresh = True
 
     if should_refresh:
-        refresh_rss_feed(slug, feed_map[slug]['in'])
+        refresh_rss_feed(slug, feed_map[slug]['in'], force=force_refresh)
         cached_rss = storage.get_rss(slug)
 
     if cached_rss:
