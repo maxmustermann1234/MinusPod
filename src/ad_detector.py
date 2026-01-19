@@ -792,6 +792,7 @@ class AdDetector:
         self._audio_fingerprinter = None
         self._text_pattern_matcher = None
         self._pattern_service = None
+        self._sponsor_service = None
 
     @property
     def db(self):
@@ -836,6 +837,18 @@ class AdDetector:
                 logger.warning("Pattern service not available")
                 self._pattern_service = None
         return self._pattern_service
+
+    @property
+    def sponsor_service(self):
+        """Lazy load sponsor service for sponsor lookup."""
+        if self._sponsor_service is None:
+            try:
+                from sponsor_service import SponsorService
+                self._sponsor_service = SponsorService(db=self.db)
+            except ImportError:
+                logger.warning("Sponsor service not available")
+                self._sponsor_service = None
+        return self._sponsor_service
 
     def initialize_client(self):
         """Initialize Anthropic client."""
@@ -1548,6 +1561,25 @@ class AdDetector:
                 text_parts.append(seg.get('text', ''))
         return ' '.join(text_parts).strip()
 
+    def _extract_sponsor_from_reason(self, reason: str) -> Optional[str]:
+        """Extract sponsor name from ad detection reason using known sponsors DB.
+
+        Args:
+            reason: Ad detection reason text (e.g., "ZipRecruiter host-read sponsor segment")
+
+        Returns:
+            Extracted sponsor name (normalized) or None
+        """
+        if not reason or not self.sponsor_service:
+            return None
+
+        # Use sponsor service to find canonical sponsor name from DB
+        sponsor = self.sponsor_service.find_sponsor_in_text(reason)
+        if sponsor:
+            # Normalize: lowercase, remove spaces (for pattern storage consistency)
+            return sponsor.lower().replace(' ', '')
+        return None
+
     def _learn_from_detections(
         self, ads: List[Dict], segments: List[Dict], podcast_id: str
     ) -> int:
@@ -1580,8 +1612,10 @@ class AdDetector:
             if confidence < min_confidence:
                 continue
 
-            # Require sponsor information for meaningful patterns
+            # Get sponsor from ad dict or extract from reason
             sponsor = ad.get('sponsor')
+            if not sponsor:
+                sponsor = self._extract_sponsor_from_reason(ad.get('reason', ''))
             if not sponsor:
                 continue
 
