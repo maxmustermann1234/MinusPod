@@ -978,6 +978,7 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 segments, podcast_name, episode_title, slug, episode_id, episode_description,
                 audio_analysis=audio_analysis_result,
                 audio_path=audio_path,
+                podcast_id=slug,  # Pass slug as podcast_id for pattern matching
                 skip_patterns=skip_patterns  # Gap 3: 'full' mode skips pattern DB
             )
             storage.save_ads_json(slug, episode_id, ad_result, pass_number=1)

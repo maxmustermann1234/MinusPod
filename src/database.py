@@ -979,6 +979,49 @@ class Database:
             except Exception as e:
                 logger.error(f"Migration failed for chapters_json: {e}")
 
+        # Migration: Convert numeric podcast_ids to slugs in ad_patterns table
+        # This fixes a bug where auto-created patterns stored numeric IDs instead of slugs
+        self._migrate_pattern_podcast_ids()
+
+    def _migrate_pattern_podcast_ids(self):
+        """Convert numeric podcast_ids to slugs in ad_patterns table for consistency.
+
+        This fixes a bug where auto-created patterns stored numeric podcast IDs,
+        but the pattern matching code compares against slug strings.
+        """
+        conn = self.get_connection()
+
+        try:
+            # Get mapping of numeric IDs to slugs
+            podcasts = conn.execute("SELECT id, slug FROM podcasts").fetchall()
+            id_to_slug = {str(p['id']): p['slug'] for p in podcasts}
+
+            if not id_to_slug:
+                return  # No podcasts yet
+
+            # Find patterns with numeric podcast_ids that need migration
+            patterns = conn.execute(
+                "SELECT id, podcast_id FROM ad_patterns WHERE podcast_id IS NOT NULL"
+            ).fetchall()
+
+            migrated_count = 0
+            for pattern in patterns:
+                pid = pattern['podcast_id']
+                # Check if this looks like a numeric ID (and we have a mapping for it)
+                if pid in id_to_slug:
+                    conn.execute(
+                        "UPDATE ad_patterns SET podcast_id = ? WHERE id = ?",
+                        (id_to_slug[pid], pattern['id'])
+                    )
+                    migrated_count += 1
+
+            if migrated_count > 0:
+                conn.commit()
+                logger.info(f"Migration: Converted {migrated_count} pattern podcast_ids from numeric to slug")
+
+        except Exception as e:
+            logger.error(f"Migration failed for pattern podcast_ids: {e}")
+
     def _migrate_from_json(self):
         """Migrate data from JSON files to SQLite."""
         conn = self.get_connection()

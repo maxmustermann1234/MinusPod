@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.194] - 2026-01-20
+
+### Fixed
+- **Podcast-scoped text patterns not matching**: Fixed three related bugs preventing podcast-scoped patterns from working:
+  1. `podcast_id` was never passed to `process_transcript()`, so pattern matching always received `None` and filtered out all podcast-scoped patterns
+  2. Auto-created patterns stored numeric database IDs instead of slug strings
+  3. Added database migration to convert existing numeric podcast_ids to slugs for consistency
+
+---
+
 ## [0.1.193] - 2026-01-19
 
 ### Fixed

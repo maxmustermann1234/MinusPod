@@ -1211,7 +1211,8 @@ def retry_ad_detection(slug, episode_id):
         from ad_detector import AdDetector
         ad_detector = AdDetector()
         ad_result = ad_detector.process_transcript(
-            segments, podcast_name, episode.get('title', 'Unknown'), slug, episode_id
+            segments, podcast_name, episode.get('title', 'Unknown'), slug, episode_id,
+            podcast_id=slug  # Pass slug as podcast_id for pattern matching
         )
 
         ad_detection_status = ad_result.get('status', 'failed')
