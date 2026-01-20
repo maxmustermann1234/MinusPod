@@ -2293,6 +2293,54 @@ def get_pattern_stats():
     return json_response(stats)
 
 
+@api.route('/patterns/health', methods=['GET'])
+@log_request
+def get_pattern_health():
+    """Check pattern health - identify contaminated/oversized patterns.
+
+    Returns patterns with text templates that exceed reasonable lengths,
+    indicating they likely contain multiple merged ads and will never match.
+    """
+    db = get_database()
+    patterns = db.get_ad_patterns(active_only=True)
+
+    # Thresholds for identifying problematic patterns
+    OVERSIZED_THRESHOLD = 2500  # Chars - patterns this large rarely match
+    VERY_OVERSIZED_THRESHOLD = 3500  # Chars - almost certainly contaminated
+
+    issues = []
+    for p in patterns:
+        template = p.get('text_template', '')
+        template_len = len(template) if template else 0
+
+        if template_len > OVERSIZED_THRESHOLD:
+            severity = 'critical' if template_len > VERY_OVERSIZED_THRESHOLD else 'warning'
+            issues.append({
+                'id': p['id'],
+                'sponsor': p.get('sponsor'),
+                'podcast_id': p.get('podcast_id'),
+                'podcast_name': p.get('podcast_name'),
+                'template_len': template_len,
+                'confirmation_count': p.get('confirmation_count', 0),
+                'severity': severity,
+                'issue': 'oversized',
+                'recommendation': 'delete' if severity == 'critical' else 'review'
+            })
+
+    # Sort by template_len descending (worst first)
+    issues.sort(key=lambda x: x['template_len'], reverse=True)
+
+    healthy_count = len(patterns) - len(issues)
+    return json_response({
+        'total_patterns': len(patterns),
+        'healthy': healthy_count,
+        'issues_count': len(issues),
+        'critical_count': sum(1 for i in issues if i['severity'] == 'critical'),
+        'warning_count': sum(1 for i in issues if i['severity'] == 'warning'),
+        'issues': issues[:50]  # Limit response size
+    })
+
+
 @api.route('/patterns/<int:pattern_id>', methods=['GET'])
 @log_request
 def get_pattern(pattern_id):

@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.196] - 2026-01-20
+
+### Fixed
+- **Text pattern matching ineffective due to contaminated patterns**: Patterns were being created from merged multi-ad spans (3-8K+ chars) that could never match the 1500-char TF-IDF window. Added validation to reject patterns with duration >180s or text >3500 chars.
+- **Auto-learning creating patterns from merged ads**: Adjacent ads within 3 seconds were merged before pattern learning, contaminating patterns with multiple ads. Added higher confidence threshold (0.92) for ads >90 seconds to prevent learning from merged spans.
+- **Database lock race condition on startup**: Multiple gunicorn workers initializing simultaneously caused "database is locked" errors. Added retry logic with exponential backoff (5 attempts, 0.5s-8s delays) to handle concurrent schema initialization.
+
+### Added
+- **Pattern health check API** (`/api/v1/patterns/health`): New endpoint to identify oversized/contaminated patterns with severity levels (warning >2500 chars, critical >3500 chars) and recommendations
+- **Enhanced pattern matching debug logging**: Lower threshold (0.4) for debug logging with pattern length vs window length comparison to help diagnose why patterns fail to match
+
+### Changed
+- **Database migration cleans contaminated patterns**: One-time migration deletes patterns with text_template >3500 chars on startup, removing patterns that were polluting the database and could never match
+
+---
+
 ## [0.1.195] - 2026-01-20
 
 ### Fixed

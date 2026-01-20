@@ -1613,6 +1613,17 @@ class AdDetector:
             if confidence < min_confidence:
                 continue
 
+            # For longer detections, require higher confidence to avoid learning
+            # from merged multi-ad spans which contaminate patterns
+            duration = ad['end'] - ad['start']
+            if duration > 90:  # > 90 seconds
+                if confidence < 0.92:  # Require very high confidence for long ads
+                    logger.debug(
+                        f"Skipping pattern for long ad ({duration:.0f}s) with "
+                        f"confidence {confidence:.2f} (threshold 0.92 for >90s ads)"
+                    )
+                    continue
+
             # Get sponsor from ad dict or extract from reason
             sponsor = ad.get('sponsor')
             if not sponsor:

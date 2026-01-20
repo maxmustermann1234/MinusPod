@@ -373,7 +373,28 @@ class Database:
         return self._local.connection
 
     def _init_schema(self):
-        """Initialize database schema."""
+        """Initialize database schema with retry logic for concurrent workers."""
+        import time
+        max_retries = 5
+        base_delay = 0.5  # seconds
+
+        for attempt in range(max_retries):
+            try:
+                self._init_schema_inner()
+                return
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(
+                        f"Database locked during schema init, retrying in {delay:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(delay)
+                else:
+                    raise
+
+    def _init_schema_inner(self):
+        """Initialize database schema (inner method called with retry wrapper)."""
         conn = self.get_connection()
 
         # Check if database already has tables (existing database)
@@ -982,6 +1003,43 @@ class Database:
         # Migration: Convert numeric podcast_ids to slugs in ad_patterns table
         # This fixes a bug where auto-created patterns stored numeric IDs instead of slugs
         self._migrate_pattern_podcast_ids()
+
+        # Migration: Clean up contaminated patterns (>3500 chars)
+        # These are patterns created from merged multi-ad spans and will never match
+        self._cleanup_contaminated_patterns()
+
+    def _cleanup_contaminated_patterns(self):
+        """Delete patterns with text_template > 3500 chars (contaminated).
+
+        These patterns were created from merged multi-ad spans where adjacent ads
+        within 3 seconds were combined. The resulting patterns are too long to
+        ever match the TF-IDF window and pollute the pattern database.
+        """
+        conn = self.get_connection()
+        MAX_PATTERN_CHARS = 3500
+
+        try:
+            # Get count first
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM ad_patterns WHERE length(text_template) > ?",
+                (MAX_PATTERN_CHARS,)
+            )
+            count = cursor.fetchone()[0]
+
+            if count > 0:
+                logger.info(
+                    f"Migration: Cleaning up {count} contaminated patterns "
+                    f"(>{MAX_PATTERN_CHARS} chars)"
+                )
+                conn.execute(
+                    "DELETE FROM ad_patterns WHERE length(text_template) > ?",
+                    (MAX_PATTERN_CHARS,)
+                )
+                conn.commit()
+                logger.info(f"Migration: Deleted {count} contaminated patterns")
+
+        except Exception as e:
+            logger.error(f"Migration failed for contaminated pattern cleanup: {e}")
 
     def _migrate_pattern_podcast_ids(self):
         """Convert numeric podcast_ids to slugs in ad_patterns table for consistency.

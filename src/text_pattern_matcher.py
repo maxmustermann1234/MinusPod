@@ -311,14 +311,16 @@ class TextPatternMatcher:
                 best_idx = np.argmax(similarities)
                 best_score = similarities[best_idx]
 
-                # Log potential matches for debugging
-                if best_score >= 0.5:
+                # Log potential matches for debugging - helps diagnose why patterns fail
+                if best_score >= 0.4:  # Lower threshold to catch near-misses
                     pattern_preview = patterns[best_idx] if best_idx < len(patterns) else None
                     if pattern_preview:
+                        pattern_len = len(pattern_preview.text_template) if pattern_preview.text_template else 0
                         logger.debug(
-                            f"Pattern match candidate: score={best_score:.2f} "
-                            f"pattern_id={pattern_preview.id} "
-                            f"sponsor={pattern_preview.sponsor}"
+                            f"Pattern match attempt: score={best_score:.3f} "
+                            f"threshold={TFIDF_THRESHOLD} pattern_id={pattern_preview.id} "
+                            f"sponsor={pattern_preview.sponsor} "
+                            f"pattern_len={pattern_len} window_len={len(window_text)}"
                         )
 
                 if best_score >= TFIDF_THRESHOLD:
@@ -643,11 +645,30 @@ class TextPatternMatcher:
         if not self.db:
             return None
 
+        # Validate ad duration - reject contaminated multi-ad spans
+        MAX_PATTERN_DURATION = 180  # 3 minutes - longest reasonable ad read
+        duration = end - start
+        if duration > MAX_PATTERN_DURATION:
+            logger.warning(
+                f"Skipping pattern creation: duration {duration:.0f}s exceeds "
+                f"max {MAX_PATTERN_DURATION}s (likely multi-ad contamination)"
+            )
+            return None
+
         # Extract text for the ad segment
         ad_text = self._get_text_around_time(segments, start, end)
 
         if len(ad_text) < MIN_TEXT_LENGTH:
             logger.debug("Ad text too short for pattern creation")
+            return None
+
+        # Sanity check on extracted text length to catch contaminated patterns
+        MAX_PATTERN_CHARS = 3500  # ~230 seconds at 15 chars/sec
+        if len(ad_text) > MAX_PATTERN_CHARS:
+            logger.warning(
+                f"Skipping pattern creation: text length {len(ad_text)} exceeds "
+                f"max {MAX_PATTERN_CHARS} chars (likely contaminated with multiple ads)"
+            )
             return None
 
         # Extract intro (first ~50 words)
