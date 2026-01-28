@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.198] - 2026-01-28
+
+### Fixed
+- **ProcessingQueue staleness causing permanent queue_busy**: When a worker is SIGKILL'd (OOM), StatusService correctly auto-clears stale jobs after 30 minutes, but ProcessingQueue (in-memory, per-worker) retained stale `_current_episode` state forever. Added timestamp tracking and staleness detection to ProcessingQueue, matching StatusService behavior. Also added cross-check with StatusService as truth source - if StatusService says no job is running but ProcessingQueue thinks one is, ProcessingQueue clears its state.
+
+---
+
 ## [0.1.197] - 2026-01-27
 
 ### Fixed
