@@ -18,18 +18,14 @@ logger = logging.getLogger('podcast.api')
 
 # Track server start time for uptime calculation
 # Stored in shared file so all gunicorn workers report the same uptime
-def _get_start_time():
-    """Get server start time from shared status file for multi-worker consistency."""
-    from status_service import STATUS_FILE
-    try:
-        if os.path.exists(STATUS_FILE):
-            with open(STATUS_FILE, 'r') as f:
-                status = json.load(f)
-                if status.get('server_start_time'):
-                    return status['server_start_time']
-    except (json.JSONDecodeError, IOError, KeyError):
-        pass
-    # First worker to start - record the time
+def _init_server_start_time():
+    """Initialize server start time in shared status file.
+
+    Always writes the current time on module load (server start).
+    This ensures uptime resets on deploy/container restart even when
+    the status file persists. Multiple workers may race to write,
+    but the difference is negligible (milliseconds).
+    """
     start_time = time.time()
     try:
         from status_service import StatusService
@@ -39,7 +35,7 @@ def _get_start_time():
         pass
     return start_time
 
-_start_time = _get_start_time()
+_start_time = _init_server_start_time()
 
 api = Blueprint('api', __name__, url_prefix='/api/v1')
 

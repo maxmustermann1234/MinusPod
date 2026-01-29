@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.201] - 2026-01-29
+
+### Fixed
+- **Uptime not resetting on container restart**: The `_get_start_time()` function in `api.py` was returning the stale value from the status file without calling `set_server_start_time()`. Renamed to `_init_server_start_time()` and now always writes the current time on module load, ensuring uptime resets on every server restart.
+
+---
+
 ## [0.1.200] - 2026-01-29
 
 ### Added
