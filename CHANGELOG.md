@@ -6,6 +6,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.200] - 2026-01-29
+
+### Added
+- **Dynamic memory-aware chunked transcription**: Long episodes are now transcribed in dynamically-sized chunks based on available system RAM and GPU VRAM. The system:
+  1. Queries available memory before each episode using `/proc/meminfo` and `torch.cuda`
+  2. Uses model-specific memory profiles (base memory + MB/minute coefficients for each Whisper model size)
+  3. Calculates optimal chunk duration with 70% safety margin
+  4. Catches OOM errors during transcription and automatically retries with smaller chunks (halving up to 3 times)
+  - Chunk sizes range from 5-60 minutes, with 30-second overlap for boundary alignment
+  - Configurable via `CHUNK_*` and `WHISPER_MEMORY_PROFILES` in `config.py`
+- **Memory cleanup on all failure paths**: Both `transcriber.py` and `main.py` now clear GPU memory and unload the Whisper model when transcription fails for any reason, preventing memory leaks during retry cycles.
+- **Memory utility functions**: New `get_available_system_memory_gb()`, `get_available_gpu_memory_gb()`, and `get_available_memory_gb()` in `utils/gpu.py` for runtime memory detection.
+
+### Fixed
+- **OOM retry loops causing repeated failures**: OOM errors are now classified as permanent (non-transient) in `is_transient_error()`, preventing the 3x3=9 retry attempts that were causing the same episodes to fail repeatedly. OOM episodes are now immediately marked as `permanently_failed` instead of retrying at the episode level (chunk-level retries still occur with smaller chunks).
+
+---
+
+## [0.1.199] - 2026-01-28
+
+### Fixed
+- **Uptime persists across deploys**: The `server_start_time` in the shared status file was never overwritten on container restart because `set_server_start_time()` only wrote if no value existed. Now always overwrites, ensuring uptime resets on deploy.
+
+---
+
 ## [0.1.198] - 2026-01-28
 
 ### Fixed

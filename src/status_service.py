@@ -165,14 +165,15 @@ class StatusService:
     def set_server_start_time(self, start_time: float):
         """Store server start time in shared status file.
 
-        Only writes if no start time is already recorded, so the first
-        worker to start sets the canonical time for all workers.
+        Always overwrites the existing value. This ensures uptime resets
+        on deploy/container restart (when the status file persists but
+        the server did restart). Workers starting at slightly different
+        times will overwrite each other, but the difference is negligible.
         """
         with self._status_lock:
             status = self._read_status_file()
-            if not status.get('server_start_time'):
-                status['server_start_time'] = start_time
-                self._write_status_file(status)
+            status['server_start_time'] = start_time
+            self._write_status_file(status)
 
     def _empty_status(self) -> dict:
         """Return empty status dict."""

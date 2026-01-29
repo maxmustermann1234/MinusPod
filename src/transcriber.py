@@ -11,7 +11,16 @@ from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 
 from utils.audio import get_audio_duration as _get_audio_duration
-from utils.gpu import clear_gpu_memory
+from utils.gpu import clear_gpu_memory, get_available_memory_gb
+from config import (
+    CHUNK_OVERLAP_SECONDS,
+    CHUNK_MIN_DURATION_SECONDS,
+    CHUNK_MAX_DURATION_SECONDS,
+    CHUNK_DEFAULT_DURATION_SECONDS,
+    MEMORY_SAFETY_MARGIN,
+    WHISPER_MEMORY_PROFILES,
+    WHISPER_DEFAULT_PROFILE,
+)
 
 # Suppress ONNX Runtime warnings before importing faster_whisper
 os.environ.setdefault('ORT_LOG_LEVEL', 'ERROR')
@@ -120,6 +129,198 @@ def split_long_segments(segments: List[Dict]) -> List[Dict]:
             result.append(segment)
 
     return result
+
+
+def extract_audio_chunk(audio_path: str, start_time: float, end_time: float) -> Optional[str]:
+    """Extract a time range from an audio file using ffmpeg.
+
+    Args:
+        audio_path: Path to source audio file
+        start_time: Start time in seconds
+        end_time: End time in seconds
+
+    Returns:
+        Path to temporary chunk file, or None on failure.
+        Caller is responsible for cleaning up the temp file.
+    """
+    output_path = tempfile.mktemp(suffix='.wav')
+
+    try:
+        duration = end_time - start_time
+        cmd = [
+            'ffmpeg', '-y',
+            '-ss', str(start_time),
+            '-i', audio_path,
+            '-t', str(duration),
+            '-ar', '16000',  # Whisper native sample rate
+            '-ac', '1',      # Mono
+            '-c:a', 'pcm_s16le',  # Uncompressed for faster processing
+            output_path
+        ]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=120  # 2 minutes should be enough for any chunk
+        )
+
+        if result.returncode == 0 and os.path.exists(output_path):
+            logger.debug(f"Extracted chunk {start_time:.1f}s-{end_time:.1f}s to {output_path}")
+            return output_path
+
+        logger.warning(
+            f"Chunk extraction failed (returncode={result.returncode}): "
+            f"{result.stderr.decode('utf-8', errors='replace')[:200] if result.stderr else 'no error'}"
+        )
+        return None
+
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Chunk extraction timed out for {start_time:.1f}s-{end_time:.1f}s")
+        return None
+    except Exception as e:
+        logger.warning(f"Chunk extraction error: {e}")
+        return None
+    finally:
+        # Clean up on failure
+        if os.path.exists(output_path) and os.path.getsize(output_path) == 0:
+            try:
+                os.unlink(output_path)
+            except OSError:
+                pass
+
+
+def merge_overlapping_segments(
+    existing_segments: List[Dict],
+    new_segments: List[Dict],
+    chunk_start: float,
+    overlap_duration: float
+) -> List[Dict]:
+    """Merge new segments into existing, handling overlap deduplication.
+
+    At chunk boundaries, we have overlap_duration seconds of audio that was
+    transcribed in both chunks. We need to:
+    1. Keep segments from the previous chunk up to the overlap zone
+    2. Discard duplicate segments in the overlap zone from the new chunk
+    3. Add remaining segments from the new chunk
+
+    Args:
+        existing_segments: Segments from previous chunks
+        new_segments: Segments from current chunk (timestamps already adjusted)
+        chunk_start: Start time of the current chunk in the full audio
+        overlap_duration: Duration of overlap in seconds
+
+    Returns:
+        Merged list of segments with duplicates removed
+    """
+    if not existing_segments:
+        return new_segments
+
+    if not new_segments:
+        return existing_segments
+
+    # The overlap zone is at the beginning of the new chunk
+    overlap_start = chunk_start
+    overlap_end = chunk_start + overlap_duration
+
+    result = existing_segments.copy()
+
+    # Find the last segment end time from existing segments
+    # to avoid adding duplicates
+    last_existing_end = max(seg['end'] for seg in existing_segments) if existing_segments else 0
+
+    for seg in new_segments:
+        # Skip segments that are entirely in the overlap zone AND
+        # have a corresponding segment in existing (based on end time)
+        if seg['end'] <= overlap_end:
+            # This segment is in the overlap zone
+            # Check if there's already a segment covering this time
+            overlap_covered = any(
+                existing_seg['start'] <= seg['start'] and
+                existing_seg['end'] >= seg['end'] - 1.0  # 1s tolerance
+                for existing_seg in existing_segments
+            )
+            if overlap_covered:
+                logger.debug(f"Skipping duplicate segment in overlap zone: {seg['start']:.1f}-{seg['end']:.1f}")
+                continue
+
+        # Skip segments that end before our last known position
+        # (they're duplicates from the overlap)
+        if seg['end'] <= last_existing_end:
+            continue
+
+        # For segments that span the overlap boundary, we keep them
+        # since they extend beyond what we have
+        result.append(seg)
+
+    return result
+
+
+def calculate_optimal_chunk_duration(
+    model_name: str,
+    device: str = "cuda"
+) -> Tuple[int, str]:
+    """Calculate optimal chunk duration based on available memory and model size.
+
+    Uses model-specific memory profiles and current available memory to
+    determine how much audio can be safely processed in one chunk.
+
+    Args:
+        model_name: Whisper model name (e.g., "small", "large-v3")
+        device: "cuda" or "cpu"
+
+    Returns:
+        Tuple of (chunk_duration_seconds, reasoning_message)
+    """
+    # Get model memory profile
+    profile = WHISPER_MEMORY_PROFILES.get(model_name, WHISPER_DEFAULT_PROFILE)
+    base_memory_gb, memory_per_minute_gb = profile
+
+    # Get available memory
+    available_gb, memory_type = get_available_memory_gb(device)
+
+    if available_gb is None:
+        logger.warning("Could not determine available memory, using default chunk size")
+        return CHUNK_DEFAULT_DURATION_SECONDS, "memory detection failed, using default"
+
+    # Apply safety margin
+    usable_gb = available_gb * MEMORY_SAFETY_MARGIN
+
+    # Calculate how much memory is available for audio processing
+    # (total usable minus base model memory)
+    available_for_audio_gb = usable_gb - base_memory_gb
+
+    if available_for_audio_gb <= 0:
+        # Not enough memory even for base model - use minimum chunk size
+        logger.warning(
+            f"Available memory ({available_gb:.1f}GB) barely covers model base "
+            f"({base_memory_gb:.1f}GB), using minimum chunk size"
+        )
+        return CHUNK_MIN_DURATION_SECONDS, f"low memory ({available_gb:.1f}GB {memory_type})"
+
+    # Calculate max duration that fits in available memory
+    # available_for_audio = duration_minutes * memory_per_minute
+    # duration_minutes = available_for_audio / memory_per_minute
+    max_duration_minutes = available_for_audio_gb / memory_per_minute_gb
+    max_duration_seconds = int(max_duration_minutes * 60)
+
+    # Clamp to configured min/max
+    chunk_duration = max(
+        CHUNK_MIN_DURATION_SECONDS,
+        min(max_duration_seconds, CHUNK_MAX_DURATION_SECONDS)
+    )
+
+    reason = (
+        f"{available_gb:.1f}GB {memory_type} available, "
+        f"model '{model_name}' ({base_memory_gb:.1f}GB base + {memory_per_minute_gb*1000:.0f}MB/min)"
+    )
+
+    logger.info(
+        f"Calculated chunk duration: {chunk_duration/60:.0f} min "
+        f"(max safe: {max_duration_minutes:.0f} min) - {reason}"
+    )
+
+    return chunk_duration, reason
+
 
 class WhisperModelSingleton:
     _instance = None
@@ -709,6 +910,14 @@ class Transcriber:
 
         except Exception as e:
             logger.error(f"Transcription failed: {e}")
+            # Clean up GPU memory on ANY failure to prevent memory leaks
+            # This is critical for OOM recovery - free memory before retry
+            try:
+                clear_gpu_memory()
+                WhisperModelSingleton.unload_model()
+                logger.info("Cleaned up GPU memory after transcription failure")
+            except Exception as cleanup_err:
+                logger.warning(f"Failed to clean up GPU memory: {cleanup_err}")
             return None
         finally:
             # Clean up preprocessed file
@@ -718,6 +927,190 @@ class Transcriber:
                     logger.debug(f"Cleaned up preprocessed file: {preprocessed_path}")
                 except:
                     pass
+
+    def transcribe_chunked(self, audio_path: str, podcast_name: str = None) -> List[Dict]:
+        """Transcribe audio files with dynamic chunking to prevent OOM errors.
+
+        This method:
+        1. Checks available memory and model size to calculate optimal chunk duration
+        2. Processes audio in appropriately-sized chunks
+        3. Catches OOM errors and retries with smaller chunks
+        4. Clears GPU memory between chunks to limit peak usage
+
+        Args:
+            audio_path: Path to the audio file to transcribe
+            podcast_name: Optional podcast name for context-aware prompting
+
+        Returns:
+            List of transcript segments with timestamps, or None on failure
+        """
+        # Get audio duration
+        duration = self.get_audio_duration(audio_path)
+        if duration is None:
+            logger.error("Cannot determine audio duration for chunked transcription")
+            return None
+
+        # Get current model and device for memory calculation
+        model_name = WhisperModelSingleton.get_configured_model()
+        device = os.getenv("WHISPER_DEVICE", "cpu")
+
+        # Calculate optimal chunk duration based on available memory
+        chunk_duration, memory_reason = calculate_optimal_chunk_duration(model_name, device)
+        overlap = CHUNK_OVERLAP_SECONDS
+
+        # If calculated chunk can handle the entire audio, try regular transcription first
+        if duration <= chunk_duration:
+            logger.info(
+                f"Audio duration {duration/60:.1f}min fits in calculated chunk "
+                f"({chunk_duration/60:.0f}min), trying regular transcription"
+            )
+            try:
+                result = self.transcribe(audio_path, podcast_name)
+                if result is not None:
+                    return result
+                # If transcribe returns None but didn't raise, fall through to chunked
+                logger.warning("Regular transcription returned None, falling back to chunked")
+            except Exception as e:
+                error_str = str(e).lower()
+                if 'out of memory' in error_str or 'oom' in error_str or 'cuda' in error_str:
+                    logger.warning(f"OOM during regular transcription, falling back to chunked: {e}")
+                    # Reduce chunk size for chunked attempt
+                    chunk_duration = max(CHUNK_MIN_DURATION_SECONDS, chunk_duration // 2)
+                    clear_gpu_memory()
+                    WhisperModelSingleton.unload_model()
+                else:
+                    raise
+
+        # Calculate number of chunks
+        num_chunks = max(1, int((duration - overlap) // (chunk_duration - overlap)) + 1)
+        logger.info(
+            f"Starting chunked transcription: {duration/60:.1f} min audio in ~{num_chunks} chunks "
+            f"(chunk_size={chunk_duration/60:.0f}min, overlap={overlap}s) - {memory_reason}"
+        )
+
+        all_segments = []
+        chunk_start = 0
+        chunk_num = 0
+        oom_retry_count = 0
+        max_oom_retries = 3
+
+        while chunk_start < duration:
+            # Calculate chunk end with overlap for next chunk
+            chunk_end = min(chunk_start + chunk_duration, duration)
+
+            # For all but the last chunk, add overlap
+            if chunk_end < duration:
+                chunk_end_with_overlap = min(chunk_end + overlap, duration)
+            else:
+                chunk_end_with_overlap = chunk_end
+
+            # Recalculate num_chunks with current chunk_duration (may have changed due to OOM)
+            remaining_duration = duration - chunk_start
+            remaining_chunks = max(1, int((remaining_duration - overlap) // (chunk_duration - overlap)) + 1)
+
+            logger.info(
+                f"Processing chunk {chunk_num + 1} (~{remaining_chunks} remaining): "
+                f"{chunk_start/60:.1f}-{chunk_end_with_overlap/60:.1f} min "
+                f"(chunk_size={chunk_duration/60:.0f}min)"
+            )
+
+            # Extract chunk using ffmpeg
+            chunk_path = extract_audio_chunk(audio_path, chunk_start, chunk_end_with_overlap)
+            if not chunk_path:
+                logger.error(f"Failed to extract chunk {chunk_num + 1}")
+                return None
+
+            try:
+                # Transcribe chunk (will handle its own batch sizing and retries)
+                chunk_segments = self.transcribe(chunk_path, podcast_name)
+
+                if chunk_segments is None:
+                    logger.error(f"Chunk {chunk_num + 1} transcription failed")
+                    return None
+
+                # Reset OOM retry count on success
+                oom_retry_count = 0
+
+                # Adjust timestamps to be relative to full audio
+                for seg in chunk_segments:
+                    seg['start'] += chunk_start
+                    seg['end'] += chunk_start
+                    # Adjust word timestamps too if present
+                    if 'words' in seg and seg['words']:
+                        for word in seg['words']:
+                            word['start'] += chunk_start
+                            word['end'] += chunk_start
+
+                # Merge with existing segments, handling overlap deduplication
+                if not all_segments:
+                    all_segments = chunk_segments
+                else:
+                    all_segments = merge_overlapping_segments(
+                        all_segments, chunk_segments, chunk_start, overlap
+                    )
+
+                # Increment chunk counter only after successful processing
+                chunk_num += 1
+
+                logger.info(
+                    f"Chunk {chunk_num} complete: {len(chunk_segments)} segments "
+                    f"(total: {len(all_segments)})"
+                )
+
+                # Move to next chunk
+                chunk_start = chunk_end
+
+            except Exception as e:
+                error_str = str(e).lower()
+                is_oom = 'out of memory' in error_str or 'oom' in error_str or 'cuda' in error_str
+
+                if is_oom and oom_retry_count < max_oom_retries:
+                    oom_retry_count += 1
+                    old_chunk_duration = chunk_duration
+                    chunk_duration = max(CHUNK_MIN_DURATION_SECONDS, chunk_duration // 2)
+
+                    logger.warning(
+                        f"OOM on chunk {chunk_num + 1} (attempt {oom_retry_count}/{max_oom_retries}). "
+                        f"Reducing chunk size: {old_chunk_duration/60:.0f}min -> {chunk_duration/60:.0f}min"
+                    )
+
+                    # Clean up and retry this chunk with smaller size
+                    clear_gpu_memory()
+                    WhisperModelSingleton.unload_model()
+                    # Don't advance chunk_start - retry from same position
+                    continue
+                else:
+                    # Non-OOM error or max retries reached
+                    logger.error(f"Chunk {chunk_num + 1} failed: {e}")
+                    raise
+
+            finally:
+                # Clean up chunk file
+                if chunk_path and os.path.exists(chunk_path):
+                    try:
+                        os.unlink(chunk_path)
+                    except OSError:
+                        pass
+
+                # Unload model and clear GPU memory between chunks
+                # This is critical for keeping peak memory bounded
+                clear_gpu_memory()
+                WhisperModelSingleton.unload_model()
+                logger.debug("Cleared GPU memory after chunk processing")
+
+        # Final hallucination filtering on merged results
+        original_count = len(all_segments)
+        all_segments = self.filter_hallucinations(all_segments)
+        if len(all_segments) < original_count:
+            logger.info(f"Filtered {original_count - len(all_segments)} hallucination segments after merge")
+
+        duration_min = all_segments[-1]['end'] / 60 if all_segments else 0
+        logger.info(
+            f"Chunked transcription complete: {len(all_segments)} segments, "
+            f"{duration_min:.1f} minutes from {chunk_num} chunks"
+        )
+
+        return all_segments
 
     def format_timestamp(self, seconds: float) -> str:
         """Convert seconds to timestamp format."""

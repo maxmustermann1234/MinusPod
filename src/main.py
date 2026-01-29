@@ -202,7 +202,22 @@ def is_transient_error(error: Exception) -> bool:
     # Check error message for patterns
     error_msg = str(error).lower()
 
-    # Transient patterns - check before permanent patterns
+    # OOM errors are PERMANENT - retrying without more RAM won't help
+    # Check these FIRST before transient patterns
+    oom_patterns = [
+        'out of memory',
+        'oom',
+        'cuda out of memory',
+        'cannot allocate memory',
+        'memory allocation failed',
+        'killed',  # Linux OOM killer sends SIGKILL
+        'memoryerror',
+        'torch.cuda.outofmemoryerror',
+    ]
+    if any(pattern in error_msg for pattern in oom_patterns):
+        return False  # NOT transient - mark as permanent immediately
+
+    # Transient patterns - check before other permanent patterns
     transient_patterns = [
         'cdn not ready',
         'cdn timeout',
@@ -928,7 +943,9 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
 
             status_service.update_job_stage("transcribing", 20)
             audio_logger.info(f"[{slug}:{episode_id}] Starting transcription")
-            segments = transcriber.transcribe(audio_path, podcast_name=podcast_name)
+            # Use chunked transcription for long episodes to prevent OOM
+            # transcribe_chunked() automatically falls back to regular for short audio
+            segments = transcriber.transcribe_chunked(audio_path, podcast_name=podcast_name)
             if not segments:
                 raise Exception("Failed to transcribe audio")
 
@@ -1247,6 +1264,17 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
     except Exception as e:
         processing_time = time.time() - start_time
         audio_logger.error(f"[{slug}:{episode_id}] Failed: {e} ({processing_time:.1f}s)")
+
+        # Clean up GPU memory on failure to prevent memory leaks
+        # This is critical for OOM recovery - free memory before any retry attempt
+        try:
+            from transcriber import WhisperModelSingleton
+            from utils.gpu import clear_gpu_memory
+            clear_gpu_memory()
+            WhisperModelSingleton.unload_model()
+            audio_logger.info(f"[{slug}:{episode_id}] Cleaned up GPU memory after failure")
+        except Exception as cleanup_err:
+            audio_logger.warning(f"[{slug}:{episode_id}] Failed to clean up GPU memory: {cleanup_err}")
 
         # Update status to failed with retry count
         status_service.fail_job()

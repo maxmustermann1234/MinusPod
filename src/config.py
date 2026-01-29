@@ -122,3 +122,35 @@ FFPROBE_TIMEOUT = 30                 # ffprobe duration/metadata queries
 FFMPEG_SHORT_TIMEOUT = 60            # Short ffmpeg operations
 FFMPEG_LONG_TIMEOUT = 300            # Long ffmpeg operations (processing)
 FPCALC_TIMEOUT = 60                  # Audio fingerprint generation
+
+# ============================================================
+# Chunked Transcription (OOM prevention for long episodes)
+# ============================================================
+CHUNK_OVERLAP_SECONDS = 30           # Overlap between chunks for boundary alignment
+CHUNK_MIN_DURATION_SECONDS = 300     # Minimum chunk size (5 minutes)
+CHUNK_MAX_DURATION_SECONDS = 3600    # Maximum chunk size (60 minutes)
+CHUNK_DEFAULT_DURATION_SECONDS = 1800  # Default if memory detection fails (30 minutes)
+
+# Memory safety margin - don't use all available memory
+MEMORY_SAFETY_MARGIN = 0.7           # Use only 70% of available memory
+
+# Whisper model memory profiles (approximate, in GB)
+# Format: (base_memory_gb, memory_per_minute_gb)
+# Base memory = model weights + fixed overhead
+# Per-minute = additional memory for audio processing (scales with duration)
+WHISPER_MEMORY_PROFILES = {
+    'tiny': (1.0, 0.05),      # ~1GB base + 50MB/min
+    'tiny.en': (1.0, 0.05),
+    'base': (1.5, 0.08),      # ~1.5GB base + 80MB/min
+    'base.en': (1.5, 0.08),
+    'small': (2.5, 0.12),     # ~2.5GB base + 120MB/min
+    'small.en': (2.5, 0.12),
+    'medium': (5.0, 0.20),    # ~5GB base + 200MB/min
+    'medium.en': (5.0, 0.20),
+    'large': (10.0, 0.35),    # ~10GB base + 350MB/min
+    'large-v1': (10.0, 0.35),
+    'large-v2': (10.0, 0.35),
+    'large-v3': (10.0, 0.35),
+    'turbo': (6.0, 0.25),     # ~6GB base + 250MB/min (distilled large)
+}
+WHISPER_DEFAULT_PROFILE = (5.0, 0.20)  # Conservative default (medium-like)
