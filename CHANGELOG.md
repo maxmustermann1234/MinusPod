@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.202] - 2026-01-29
+
+### Fixed
+- **Incorrect Whisper VRAM profiles causing overly conservative chunking**: Updated `WHISPER_MEMORY_PROFILES` in `config.py` to match faster-whisper's actual VRAM requirements (from README). large-v3 now correctly uses 5.5GB base (was 10GB), medium uses 4GB (was 5GB), small uses 2GB (was 2.5GB). This allows larger chunk sizes and fewer chunks for long episodes.
+- **System RAM incorrectly limiting GPU transcription**: Changed `get_available_memory_gb()` in `utils/gpu.py` to use GPU VRAM as the primary limit for CUDA devices, not `min(GPU, System)`. System RAM was incorrectly limiting chunk sizes when GPU VRAM was the only relevant constraint.
+- **API showing incorrect VRAM requirements**: Updated `/settings/whisper-models` endpoint to show correct values: medium now shows "~4GB", large-v3 shows "~5-6GB".
+
+### Added
+- **GPU memory logging after model load**: Added INFO-level log showing actual GPU memory allocated and reserved after Whisper model initialization, helping verify correct VRAM usage.
+- **Memory visibility logging**: `get_available_memory_gb()` now logs both GPU and System RAM values at INFO level when running on CUDA, providing visibility into memory decisions.
+
+---
+
 ## [0.1.201] - 2026-01-29
 
 ### Fixed

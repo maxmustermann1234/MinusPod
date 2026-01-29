@@ -11,7 +11,7 @@ from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 
 from utils.audio import get_audio_duration as _get_audio_duration
-from utils.gpu import clear_gpu_memory, get_available_memory_gb
+from utils.gpu import clear_gpu_memory, get_available_memory_gb, get_gpu_memory_info
 from config import (
     CHUNK_OVERLAP_SECONDS,
     CHUNK_MIN_DURATION_SECONDS,
@@ -425,6 +425,13 @@ class WhisperModelSingleton:
             cls._current_model_name = model_size
             cls._needs_reload = False
             logger.info(f"Whisper model '{model_size}' and batched pipeline initialized")
+
+            # Log actual GPU memory usage after model load
+            mem_info = get_gpu_memory_info()
+            if mem_info:
+                allocated_gb = mem_info.get('allocated', 0) / (1024 ** 3)
+                reserved_gb = mem_info.get('cached', 0) / (1024 ** 3)
+                logger.info(f"GPU memory after model load: {allocated_gb:.2f}GB allocated, {reserved_gb:.2f}GB reserved")
 
         return cls._base_model, cls._instance
 

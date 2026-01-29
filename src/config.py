@@ -139,18 +139,20 @@ MEMORY_SAFETY_MARGIN = 0.7           # Use only 70% of available memory
 # Base memory = model weights + fixed overhead
 # Per-minute = additional memory for audio processing (scales with duration)
 WHISPER_MEMORY_PROFILES = {
-    'tiny': (1.0, 0.05),      # ~1GB base + 50MB/min
+    # Correct VRAM values from faster-whisper README (not PyTorch-based Whisper)
+    # Format: (base_memory_gb, memory_per_minute_gb)
+    'tiny': (1.0, 0.05),      # ~1GB VRAM
     'tiny.en': (1.0, 0.05),
-    'base': (1.5, 0.08),      # ~1.5GB base + 80MB/min
-    'base.en': (1.5, 0.08),
-    'small': (2.5, 0.12),     # ~2.5GB base + 120MB/min
-    'small.en': (2.5, 0.12),
-    'medium': (5.0, 0.20),    # ~5GB base + 200MB/min
-    'medium.en': (5.0, 0.20),
-    'large': (10.0, 0.35),    # ~10GB base + 350MB/min
-    'large-v1': (10.0, 0.35),
-    'large-v2': (10.0, 0.35),
-    'large-v3': (10.0, 0.35),
-    'turbo': (6.0, 0.25),     # ~6GB base + 250MB/min (distilled large)
+    'base': (1.0, 0.05),      # ~1GB VRAM (was 1.5, corrected)
+    'base.en': (1.0, 0.05),
+    'small': (2.0, 0.10),     # ~2GB VRAM (was 2.5, corrected)
+    'small.en': (2.0, 0.10),
+    'medium': (4.0, 0.15),    # ~4GB VRAM (was 5.0, corrected)
+    'medium.en': (4.0, 0.15),
+    'large': (5.5, 0.25),     # ~5-6GB VRAM (was 10.0, corrected)
+    'large-v1': (5.5, 0.25),
+    'large-v2': (5.5, 0.25),
+    'large-v3': (5.5, 0.25),
+    'turbo': (5.0, 0.20),     # ~5GB VRAM (distilled large)
 }
 WHISPER_DEFAULT_PROFILE = (5.0, 0.20)  # Conservative default (medium-like)

@@ -74,8 +74,9 @@ def get_available_gpu_memory_gb() -> Optional[float]:
 def get_available_memory_gb(device: str = "cuda") -> Tuple[Optional[float], str]:
     """Get available memory for transcription in gigabytes.
 
-    For CUDA devices, returns GPU VRAM. For CPU, returns system RAM.
-    Returns the limiting factor for memory-intensive operations.
+    For CUDA devices, returns GPU VRAM as the primary limit since the model
+    runs on the GPU. System RAM is logged for visibility but not used as
+    the constraint (faster-whisper loads audio in small chunks, not all at once).
 
     Args:
         device: "cuda" or "cpu"
@@ -87,16 +88,12 @@ def get_available_memory_gb(device: str = "cuda") -> Tuple[Optional[float], str]
     if device == "cuda":
         gpu_mem = get_available_gpu_memory_gb()
         if gpu_mem is not None:
-            # Also check system RAM as PyTorch uses both
+            # Log both for visibility
             sys_mem = get_available_system_memory_gb()
             if sys_mem is not None:
-                # Use the minimum - either could be the bottleneck
-                # GPU VRAM is usually the constraint, but system RAM
-                # is needed for audio loading and intermediate buffers
-                if sys_mem < gpu_mem:
-                    logger.debug(f"System RAM ({sys_mem:.1f}GB) < GPU VRAM ({gpu_mem:.1f}GB)")
-                    return sys_mem, "system"
-                return gpu_mem, "gpu"
+                logger.info(f"Memory available - GPU: {gpu_mem:.1f}GB, System: {sys_mem:.1f}GB")
+            # Use GPU VRAM as the limit since model runs on GPU
+            # System RAM is not the bottleneck for faster-whisper
             return gpu_mem, "gpu"
 
     # CPU mode or CUDA not available - use system RAM

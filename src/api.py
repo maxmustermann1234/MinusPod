@@ -1728,14 +1728,14 @@ def get_whisper_models():
         {
             'id': 'medium',
             'name': 'Medium',
-            'vram': '~5GB',
+            'vram': '~4GB',
             'speed': '~4-5 min/60min',
             'quality': '~15% better than Small'
         },
         {
             'id': 'large-v3',
             'name': 'Large v3',
-            'vram': '~10GB',
+            'vram': '~5-6GB',
             'speed': '~6-8 min/60min',
             'quality': '~25% better than Small'
         }
