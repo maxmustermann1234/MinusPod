@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from typing import List, Optional, Dict, Tuple
 import json
 
+from utils.text import extract_text_from_segments
+
 logger = logging.getLogger('podcast.textmatch')
 
 # TF-IDF similarity threshold for content matching
@@ -24,6 +26,25 @@ MIN_TEXT_LENGTH = 50
 
 # Maximum intro/outro phrase length to check
 MAX_PHRASE_LENGTH = 200
+
+# Base vocabulary for TF-IDF - common terms in podcast ads
+# These ensure the vectorizer recognizes ad-related words even without patterns
+BASE_AD_VOCABULARY = [
+    # Ad transition phrases
+    "sponsor", "sponsored", "sponsorship", "brought", "thanks",
+    "word", "break", "quick", "moment", "support", "supporters",
+    # Call to action
+    "promo", "code", "discount", "percent", "off", "free",
+    "visit", "go", "check", "try", "sign", "offer", "deal",
+    # Common ad phrases
+    "mentioned", "today", "show", "episode", "podcast",
+    # URLs and domains
+    "dot", "com", "org", "net", "slash", "link", "click",
+    # Money and value
+    "money", "save", "savings", "price", "cost", "value",
+    # Product types
+    "service", "product", "app", "subscription", "trial",
+]
 
 
 @dataclass
@@ -46,6 +67,8 @@ class AdPattern:
     outro_variants: List[str]
     sponsor: Optional[str]
     scope: str  # "global", "network", "podcast"
+    podcast_id: Optional[str] = None
+    network_id: Optional[str] = None
 
 
 class TextPatternMatcher:
@@ -128,14 +151,22 @@ class TextPatternMatcher:
                     intro_variants=intro_variants or [],
                     outro_variants=outro_variants or [],
                     sponsor=p.get('sponsor'),
-                    scope=p.get('scope', 'podcast')
+                    scope=p.get('scope', 'podcast'),
+                    podcast_id=p.get('podcast_id'),
+                    network_id=p.get('network_id')
                 ))
 
             # Build TF-IDF vectors for pattern templates
             if self._patterns:
                 templates = [p.text_template for p in self._patterns if p.text_template]
                 if templates:
-                    self._pattern_vectors = self._vectorizer.fit_transform(templates)
+                    # Include base vocabulary terms to ensure ad-related words are recognized
+                    # even if they don't appear in existing patterns
+                    base_text = ' '.join(BASE_AD_VOCABULARY)
+                    all_texts = templates + [base_text]
+                    self._vectorizer.fit(all_texts)
+                    # Now transform only the patterns (not the base vocabulary)
+                    self._pattern_vectors = self._vectorizer.transform(templates)
                     logger.info(f"Loaded {len(self._patterns)} text patterns")
 
         except Exception as e:
@@ -214,18 +245,26 @@ class TextPatternMatcher:
         podcast_id: str = None,
         network_id: str = None
     ) -> List[AdPattern]:
-        """Filter patterns by scope hierarchy."""
+        """Filter patterns by scope hierarchy.
+
+        Global patterns apply to all podcasts.
+        Network patterns apply to podcasts in the same network.
+        Podcast patterns apply only to the specific podcast.
+        """
         applicable = []
 
         for pattern in self._patterns:
             if pattern.scope == 'global':
+                # Global patterns always apply
                 applicable.append(pattern)
-            elif pattern.scope == 'network' and network_id:
-                # Would need to check network_id match
-                applicable.append(pattern)
-            elif pattern.scope == 'podcast' and podcast_id:
-                # Would need to check podcast_id match
-                applicable.append(pattern)
+            elif pattern.scope == 'network':
+                # Network patterns require matching network_id
+                if network_id and pattern.network_id == network_id:
+                    applicable.append(pattern)
+            elif pattern.scope == 'podcast':
+                # Podcast patterns require matching podcast_id
+                if podcast_id and pattern.podcast_id == podcast_id:
+                    applicable.append(pattern)
 
         return applicable
 
@@ -239,7 +278,7 @@ class TextPatternMatcher:
         """Find matches using TF-IDF content similarity."""
         matches = []
 
-        if not self._pattern_vectors or self._pattern_vectors.shape[0] == 0:
+        if self._pattern_vectors is None or self._pattern_vectors.shape[0] == 0:
             return matches
 
         try:
@@ -247,8 +286,10 @@ class TextPatternMatcher:
             import numpy as np
 
             # Slide through transcript in windows
-            window_size = 500  # characters
-            step_size = 200
+            # ~1500 chars = ~60 seconds of speech at typical podcast pace
+            # This captures full-length ads (typically 60-120s)
+            window_size = 1500  # characters
+            step_size = 500    # ~33% overlap
 
             for start_pos in range(0, len(full_text) - MIN_TEXT_LENGTH, step_size):
                 end_pos = min(start_pos + window_size, len(full_text))
@@ -270,14 +311,16 @@ class TextPatternMatcher:
                 best_idx = np.argmax(similarities)
                 best_score = similarities[best_idx]
 
-                # Log potential matches for debugging
-                if best_score >= 0.5:
+                # Log potential matches for debugging - helps diagnose why patterns fail
+                if best_score >= 0.4:  # Lower threshold to catch near-misses
                     pattern_preview = patterns[best_idx] if best_idx < len(patterns) else None
                     if pattern_preview:
+                        pattern_len = len(pattern_preview.text_template) if pattern_preview.text_template else 0
                         logger.debug(
-                            f"Pattern match candidate: score={best_score:.2f} "
-                            f"pattern_id={pattern_preview.id} "
-                            f"sponsor={pattern_preview.sponsor}"
+                            f"Pattern match attempt: score={best_score:.3f} "
+                            f"threshold={TFIDF_THRESHOLD} pattern_id={pattern_preview.id} "
+                            f"sponsor={pattern_preview.sponsor} "
+                            f"pattern_len={pattern_len} window_len={len(window_text)}"
                         )
 
                 if best_score >= TFIDF_THRESHOLD:
@@ -424,14 +467,26 @@ class TextPatternMatcher:
         segment_map: List[Tuple],
         segments: List[Dict]
     ) -> Tuple[float, float]:
-        """Convert character positions to timestamps."""
+        """Convert character positions to timestamps.
+
+        Maps character positions in concatenated text back to segment timestamps.
+        Uses consistent boundary comparison (< for exclusive upper bound).
+        """
         start_time = 0.0
         end_time = 0.0
 
         for seg_start, seg_end, seg_idx in segment_map:
+            # Start time: find segment containing start_char
             if seg_start <= start_char < seg_end:
                 start_time = segments[seg_idx]['start']
-            if seg_start <= end_char <= seg_end:
+
+            # End time: find segment containing end_char
+            # Use < for consistency with start_char boundary handling
+            if seg_start <= end_char < seg_end:
+                end_time = segments[seg_idx]['end']
+                break
+            # Handle case where end_char is exactly at the end of the last segment
+            elif end_char == seg_end and seg_idx == len(segments) - 1:
                 end_time = segments[seg_idx]['end']
                 break
 
@@ -554,12 +609,11 @@ class TextPatternMatcher:
         start: float,
         end: float
     ) -> str:
-        """Get transcript text within a time range."""
-        text = ""
-        for seg in segments:
-            if seg['end'] >= start and seg['start'] <= end:
-                text += seg.get('text', '') + " "
-        return text.strip()
+        """Get transcript text within a time range.
+
+        Delegates to utils.text.extract_text_from_segments.
+        """
+        return extract_text_from_segments(segments, start, end)
 
     def create_pattern_from_ad(
         self,
@@ -569,7 +623,8 @@ class TextPatternMatcher:
         sponsor: str = None,
         scope: str = "podcast",
         podcast_id: str = None,
-        network_id: str = None
+        network_id: str = None,
+        episode_id: str = None
     ) -> Optional[int]:
         """
         Create a new ad pattern from a detected ad segment.
@@ -582,6 +637,7 @@ class TextPatternMatcher:
             scope: Pattern scope ("global", "network", "podcast")
             podcast_id: Podcast ID for podcast-scoped patterns
             network_id: Network ID for network-scoped patterns
+            episode_id: Episode ID for tracking pattern origin
 
         Returns:
             Pattern ID if created, None otherwise
@@ -589,11 +645,30 @@ class TextPatternMatcher:
         if not self.db:
             return None
 
+        # Validate ad duration - reject contaminated multi-ad spans
+        MAX_PATTERN_DURATION = 180  # 3 minutes - longest reasonable ad read
+        duration = end - start
+        if duration > MAX_PATTERN_DURATION:
+            logger.warning(
+                f"Skipping pattern creation: duration {duration:.0f}s exceeds "
+                f"max {MAX_PATTERN_DURATION}s (likely multi-ad contamination)"
+            )
+            return None
+
         # Extract text for the ad segment
         ad_text = self._get_text_around_time(segments, start, end)
 
         if len(ad_text) < MIN_TEXT_LENGTH:
             logger.debug("Ad text too short for pattern creation")
+            return None
+
+        # Sanity check on extracted text length to catch contaminated patterns
+        MAX_PATTERN_CHARS = 3500  # ~230 seconds at 15 chars/sec
+        if len(ad_text) > MAX_PATTERN_CHARS:
+            logger.warning(
+                f"Skipping pattern creation: text length {len(ad_text)} exceeds "
+                f"max {MAX_PATTERN_CHARS} chars (likely contaminated with multiple ads)"
+            )
             return None
 
         # Extract intro (first ~50 words)
@@ -611,7 +686,8 @@ class TextPatternMatcher:
                 outro_variants=json.dumps([outro]) if outro else "[]",
                 sponsor=sponsor,
                 podcast_id=podcast_id,
-                network_id=network_id
+                network_id=network_id,
+                created_from_episode_id=episode_id
             )
 
             logger.info(f"Created text pattern {pattern_id} for sponsor: {sponsor}")

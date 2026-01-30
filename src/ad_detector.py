@@ -12,7 +12,9 @@ from anthropic import Anthropic, APIError, APIConnectionError, RateLimitError, I
 from config import (
     MIN_TYPICAL_AD_DURATION, MIN_SPONSOR_READ_DURATION, SHORT_GAP_THRESHOLD,
     MAX_MERGED_DURATION, MAX_REALISTIC_SIGNAL, MIN_OVERLAP_TOLERANCE,
-    MAX_AD_DURATION_WINDOW
+    MAX_AD_DURATION_WINDOW, WINDOW_SIZE_SECONDS, WINDOW_OVERLAP_SECONDS,
+    BOUNDARY_EXTENSION_WINDOW, BOUNDARY_EXTENSION_MAX,
+    AD_CONTENT_URL_PATTERNS, AD_CONTENT_PROMO_PHRASES
 )
 
 logger = logging.getLogger('podcast.claude')
@@ -37,10 +39,8 @@ RETRY_CONFIG = {
     'jitter': True          # Add random jitter to prevent thundering herd
 }
 
-# Sliding window configuration for ad detection
-# Windows overlap to ensure ads at chunk boundaries are not missed
-WINDOW_SIZE_SECONDS = 600.0   # 10 minutes per window
-WINDOW_OVERLAP_SECONDS = 180.0  # 3 minutes overlap between windows
+# Sliding window step (derived from config values)
+# WINDOW_SIZE_SECONDS and WINDOW_OVERLAP_SECONDS imported from config.py
 WINDOW_STEP_SECONDS = WINDOW_SIZE_SECONDS - WINDOW_OVERLAP_SECONDS  # 7 minutes
 
 # Early ad snapping threshold
@@ -178,38 +178,61 @@ def merge_and_deduplicate(first_pass: List[Dict], second_pass: List[Dict]) -> Li
                 f"{ad['start']:.1f}s-{ad['end']:.1f}s (+{URL_EXTENSION_SECONDS:.0f}s)"
             )
 
-    # Check for sponsor mismatch in end_text (indicates back-to-back ads)
-    # If end_text mentions a different sponsor URL than the ad's own sponsor,
-    # it means another ad likely follows immediately - extend to meet the next ad
-    for i, ad in enumerate(merged):
-        end_text_sponsor = extract_url_sponsor(ad.get('end_text', ''))
-        if end_text_sponsor:
-            ad_sponsors = extract_sponsor_names(ad.get('reason', ''), ad.get('reason', ''))
-            # If end_text mentions a different sponsor, look for next ad to merge with
-            if end_text_sponsor not in ad_sponsors:
-                original_end = ad['end']
-                extended_to = None
-
-                # Check if next ad exists and matches the end_text sponsor
-                if i + 1 < len(merged):
-                    next_ad = merged[i + 1]
-                    next_sponsors = extract_sponsor_names(next_ad.get('reason', ''), next_ad.get('reason', ''))
-                    gap = next_ad['start'] - ad['end']
-
-                    # If next ad matches end_text sponsor and gap is reasonable, extend to meet it
-                    if end_text_sponsor in next_sponsors and gap <= 60.0:
-                        ad['end'] = next_ad['start']
-                        extended_to = f"next ad start ({next_ad['start']:.1f}s, gap was {gap:.1f}s)"
-
-                if extended_to:
-                    ad['end_text_sponsor_mismatch'] = True
-                    logger.info(
-                        f"Extended ad due to end_text sponsor mismatch: "
-                        f"end_text has '{end_text_sponsor}' but ad sponsors are {ad_sponsors}, "
-                        f"extended {original_end:.1f}s -> {ad['end']:.1f}s ({extended_to})"
-                    )
+    # Run sponsor mismatch extension as a separate pass to avoid
+    # modification during iteration issues
+    merged = _extend_ads_for_sponsor_mismatch(merged)
 
     return merged
+
+
+def _extend_ads_for_sponsor_mismatch(ads: List[Dict]) -> List[Dict]:
+    """Extend ads where end_text mentions a different sponsor.
+
+    If end_text mentions a different sponsor URL than the ad's own sponsor,
+    it means another ad likely follows immediately - extend to meet the next ad.
+
+    Run as a separate pass to avoid modification during iteration issues.
+
+    Args:
+        ads: List of merged ad segments
+
+    Returns:
+        List of ads with sponsor mismatch extensions applied
+    """
+    if len(ads) < 2:
+        return ads
+
+    # Create a copy to avoid modifying while iterating
+    result = [ad.copy() for ad in ads]
+
+    for i, ad in enumerate(result[:-1]):  # Skip last ad (no next to check)
+        end_text_sponsor = extract_url_sponsor(ad.get('end_text', ''))
+        if not end_text_sponsor:
+            continue
+
+        ad_sponsors = extract_sponsor_names(ad.get('reason', ''), ad.get('reason', ''))
+        # If end_text mentions the same sponsor as this ad, no mismatch
+        if end_text_sponsor in ad_sponsors:
+            continue
+
+        # Check if next ad matches the end_text sponsor
+        next_ad = result[i + 1]
+        next_sponsors = extract_sponsor_names(next_ad.get('reason', ''), next_ad.get('reason', ''))
+        gap = next_ad['start'] - ad['end']
+
+        # If next ad matches end_text sponsor and gap is reasonable, extend to meet it
+        if end_text_sponsor in next_sponsors and gap <= 60.0:
+            original_end = ad['end']
+            ad['end'] = next_ad['start']
+            ad['end_text_sponsor_mismatch'] = True
+            logger.info(
+                f"Extended ad due to end_text sponsor mismatch: "
+                f"end_text has '{end_text_sponsor}' but ad sponsors are {ad_sponsors}, "
+                f"extended {original_end:.1f}s -> {ad['end']:.1f}s "
+                f"(next ad start at {next_ad['start']:.1f}s, gap was {gap:.1f}s)"
+            )
+
+    return result
 
 
 def refine_ad_boundaries(ads: List[Dict], segments: List[Dict]) -> List[Dict]:
@@ -264,8 +287,29 @@ def refine_ad_boundaries(ads: List[Dict], segments: List[Dict]) -> List[Dict]:
         if not words:
             return None
 
-        # Build text from words for phrase matching
-        word_texts = [w.get('word', '').strip().lower() for w in words]
+        # Validate words have required timestamp fields and filter out invalid ones
+        valid_words = []
+        for w in words:
+            word_text = w.get('word', '').strip()
+            word_start = w.get('start')
+            word_end = w.get('end')
+
+            # Skip words missing timestamps
+            if word_start is None or word_end is None:
+                continue
+
+            valid_words.append({
+                'word': word_text,
+                'start': word_start,
+                'end': word_end
+            })
+
+        if not valid_words:
+            logger.warning("No valid word timestamps found, skipping phrase detection")
+            return None
+
+        # Build text from validated words for phrase matching
+        word_texts = [w['word'].lower() for w in valid_words]
         full_text = ' '.join(word_texts)
 
         matches = []
@@ -275,24 +319,33 @@ def refine_ad_boundaries(ads: List[Dict], segments: List[Dict]) -> List[Dict]:
             idx = full_text.find(phrase_lower)
             if idx >= 0:
                 # Map character position back to word index
+                # Track cumulative character position including spaces
                 char_count = 0
                 start_word_idx = 0
                 for i, wt in enumerate(word_texts):
-                    if char_count >= idx:
+                    # Check if phrase starts within this word
+                    word_end_pos = char_count + len(wt)
+                    if char_count <= idx < word_end_pos:
                         start_word_idx = i
                         break
-                    char_count += len(wt) + 1  # +1 for space
+                    # Move to next word (+1 for the space separator)
+                    char_count = word_end_pos + 1
 
-                # Find end word index
+                # Find end word index based on phrase word count
                 phrase_words = phrase_lower.split()
-                end_word_idx = min(start_word_idx + len(phrase_words) - 1, len(words) - 1)
+                end_word_idx = min(start_word_idx + len(phrase_words) - 1, len(valid_words) - 1)
 
-                matches.append({
-                    'start': words[start_word_idx].get('start', 0),
-                    'end': words[end_word_idx].get('end', 0),
-                    'phrase': phrase,
-                    'word_idx': start_word_idx
-                })
+                # Validate we have timestamps for both indices
+                start_ts = valid_words[start_word_idx]['start']
+                end_ts = valid_words[end_word_idx]['end']
+
+                if start_ts is not None and end_ts is not None:
+                    matches.append({
+                        'start': start_ts,
+                        'end': end_ts,
+                        'phrase': phrase,
+                        'word_idx': start_word_idx
+                    })
 
         if not matches:
             return None
@@ -401,6 +454,121 @@ def snap_early_ads_to_zero(ads: List[Dict], threshold: float = EARLY_AD_SNAP_THR
         snapped.append(ad_copy)
 
     return snapped
+
+
+def extend_ad_boundaries_by_content(ads: List[Dict], segments: List[Dict]) -> List[Dict]:
+    """Extend ad boundaries by checking adjacent segments for ad-like content.
+
+    For each detected ad, examines transcript text immediately before and after
+    the ad boundary. If the adjacent text contains ad indicators (sponsor names,
+    URLs, promotional language), the boundary is extended to include it.
+
+    This addresses DAI ads where detection cuts off ~5 seconds too early,
+    missing the final call-to-action or URL mention.
+
+    Args:
+        ads: List of detected ad segments
+        segments: List of transcript segments with 'start', 'end', 'text'
+
+    Returns:
+        List of ads with boundaries extended where ad content continues
+    """
+    if not ads or not segments:
+        return ads
+
+    extended = []
+    for ad in ads:
+        ad_copy = ad.copy()
+        ad_start = ad['start']
+        ad_end = ad['end']
+
+        # Get the ad's own text to extract sponsor names
+        ad_text = get_transcript_text_for_range(segments, ad_start, ad_end).lower()
+        ad_sponsors = extract_sponsor_names(ad_text, ad.get('reason'))
+
+        # Check text AFTER ad end for continuation
+        after_text = get_transcript_text_for_range(
+            segments, ad_end, ad_end + BOUNDARY_EXTENSION_WINDOW
+        ).lower()
+
+        if after_text and _text_has_ad_content(after_text, ad_sponsors):
+            # Find the last segment in the extension window
+            new_end = ad_end
+            for seg in segments:
+                if seg['start'] >= ad_end and seg['start'] < ad_end + BOUNDARY_EXTENSION_MAX:
+                    seg_text = seg.get('text', '').lower()
+                    if _text_has_ad_content(seg_text, ad_sponsors):
+                        new_end = seg['end']
+                    else:
+                        break  # Stop at first non-ad segment
+
+            if new_end > ad_end:
+                logger.info(
+                    f"Extended ad end by content: {ad_end:.1f}s -> {new_end:.1f}s "
+                    f"(+{new_end - ad_end:.1f}s, sponsors: {ad_sponsors})"
+                )
+                ad_copy['end'] = new_end
+                ad_copy['end_extended_by_content'] = True
+
+        # Check text BEFORE ad start for continuation
+        before_text = get_transcript_text_for_range(
+            segments, max(0, ad_start - BOUNDARY_EXTENSION_WINDOW), ad_start
+        ).lower()
+
+        if before_text and _text_has_ad_content(before_text, ad_sponsors):
+            new_start = ad_start
+            # Walk backwards through segments
+            for seg in reversed(segments):
+                if seg['end'] <= ad_start and seg['end'] > ad_start - BOUNDARY_EXTENSION_MAX:
+                    seg_text = seg.get('text', '').lower()
+                    if _text_has_ad_content(seg_text, ad_sponsors):
+                        new_start = seg['start']
+                    else:
+                        break
+
+            if new_start < ad_start:
+                logger.info(
+                    f"Extended ad start by content: {ad_start:.1f}s -> {new_start:.1f}s "
+                    f"(-{ad_start - new_start:.1f}s, sponsors: {ad_sponsors})"
+                )
+                ad_copy['start'] = new_start
+                ad_copy['start_extended_by_content'] = True
+
+        extended.append(ad_copy)
+
+    return extended
+
+
+def _text_has_ad_content(text: str, sponsor_names: set = None) -> bool:
+    """Check if text contains ad-like content indicators.
+
+    Args:
+        text: Lowercase text to check
+        sponsor_names: Set of known sponsor names from the parent ad
+
+    Returns:
+        True if text contains ad content indicators
+    """
+    if not text:
+        return False
+
+    # Check for sponsor name mentions
+    if sponsor_names:
+        for sponsor in sponsor_names:
+            if sponsor in text:
+                return True
+
+    # Check for URL patterns
+    for pattern in AD_CONTENT_URL_PATTERNS:
+        if pattern in text:
+            return True
+
+    # Check for promotional phrases
+    for phrase in AD_CONTENT_PROMO_PHRASES:
+        if phrase in text:
+            return True
+
+    return False
 
 
 def extract_url_sponsor(text: str) -> Optional[str]:
@@ -740,6 +908,8 @@ class AdDetector:
         self._db = None
         self._audio_fingerprinter = None
         self._text_pattern_matcher = None
+        self._pattern_service = None
+        self._sponsor_service = None
 
     @property
     def db(self):
@@ -772,6 +942,30 @@ class AdDetector:
                 logger.warning("Text pattern matching not available")
                 self._text_pattern_matcher = None
         return self._text_pattern_matcher
+
+    @property
+    def pattern_service(self):
+        """Lazy load pattern service for match recording."""
+        if self._pattern_service is None:
+            try:
+                from pattern_service import PatternService
+                self._pattern_service = PatternService(db=self.db)
+            except ImportError:
+                logger.warning("Pattern service not available")
+                self._pattern_service = None
+        return self._pattern_service
+
+    @property
+    def sponsor_service(self):
+        """Lazy load sponsor service for sponsor lookup."""
+        if self._sponsor_service is None:
+            try:
+                from sponsor_service import SponsorService
+                self._sponsor_service = SponsorService(db=self.db)
+            except ImportError:
+                logger.warning("Sponsor service not available")
+                self._sponsor_service = None
+        return self._sponsor_service
 
     def initialize_client(self):
         """Initialize Anthropic client."""
@@ -1081,6 +1275,12 @@ class AdDetector:
         try:
             self.initialize_client()
 
+            # Pre-detect non-English segments as automatic ads (DAI in other languages)
+            foreign_language_ads = self._detect_foreign_language_ads(segments, slug, episode_id)
+            if foreign_language_ads:
+                logger.info(f"[{slug}:{episode_id}] Auto-detected {len(foreign_language_ads)} "
+                           f"non-English segments as ads")
+
             # Create overlapping windows from transcript
             windows = create_windows(segments)
             total_duration = segments[-1]['end'] if segments else 0
@@ -1219,6 +1419,11 @@ class AdDetector:
             # Deduplicate ads across windows
             final_ads = deduplicate_window_ads(all_window_ads)
 
+            # Merge in foreign language ads (auto-detected non-English segments)
+            if foreign_language_ads:
+                final_ads = self._merge_detection_results(final_ads + foreign_language_ads)
+                logger.info(f"[{slug}:{episode_id}] Merged {len(foreign_language_ads)} foreign language ads")
+
             total_ad_time = sum(ad['end'] - ad['start'] for ad in final_ads)
             logger.info(f"[{slug}:{episode_id}] Total after dedup: {len(final_ads)} ads ({total_ad_time/60:.1f} min)")
 
@@ -1325,6 +1530,10 @@ class AdDetector:
                     pattern_matched_regions.append((match.start, match.end))
                     fp_added += 1
 
+                    # Record pattern match for metrics and promotion
+                    if self.pattern_service and match.pattern_id:
+                        self.pattern_service.record_pattern_match(match.pattern_id, episode_id)
+
                 detection_stats['fingerprint_matches'] = fp_added
                 if fp_matches:
                     logger.info(f"[{slug}:{episode_id}] Fingerprint stage found {len(fp_matches)} ads")
@@ -1364,6 +1573,10 @@ class AdDetector:
                     all_ads.append(ad)
                     pattern_matched_regions.append((match.start, match.end))
                     tp_added += 1
+
+                    # Record pattern match for metrics and promotion
+                    if self.pattern_service and match.pattern_id:
+                        self.pattern_service.record_pattern_match(match.pattern_id, episode_id)
 
                 detection_stats['text_pattern_matches'] = tp_added
                 if text_matches:
@@ -1432,6 +1645,12 @@ class AdDetector:
             f"(fingerprint: {fp_count}, text: {tp_count}, claude: {cl_count})"
         )
 
+        # Learn patterns from high-confidence Claude detections
+        if slug and all_ads:
+            patterns_learned = self._learn_from_detections(all_ads, segments, slug, episode_id)
+            if patterns_learned > 0:
+                detection_stats['patterns_learned'] = patterns_learned
+
         result['ads'] = all_ads
         result['detection_stats'] = detection_stats
         return result
@@ -1458,6 +1677,167 @@ class AdDetector:
             if seg.get('end', 0) >= start and seg.get('start', 0) <= end:
                 text_parts.append(seg.get('text', ''))
         return ' '.join(text_parts).strip()
+
+    def _extract_sponsor_from_reason(self, reason: str) -> Optional[str]:
+        """Extract sponsor name from ad detection reason using known sponsors DB.
+
+        Args:
+            reason: Ad detection reason text (e.g., "ZipRecruiter host-read sponsor segment")
+
+        Returns:
+            Extracted sponsor name (normalized) or None
+        """
+        if not reason or not self.sponsor_service:
+            return None
+
+        # Use sponsor service to find canonical sponsor name from DB
+        sponsor = self.sponsor_service.find_sponsor_in_text(reason)
+        if sponsor:
+            # Normalize: lowercase, remove spaces (for pattern storage consistency)
+            return sponsor.lower().replace(' ', '')
+        return None
+
+    def _learn_from_detections(
+        self, ads: List[Dict], segments: List[Dict], podcast_id: str, episode_id: str = None
+    ) -> int:
+        """Create patterns from high-confidence Claude detections.
+
+        This enables automatic pattern learning so the system improves over time.
+        Only learns from Claude detections with high confidence and sponsor info.
+
+        Args:
+            ads: List of detected ads with confidence and detection_stage
+            segments: Transcript segments for text extraction
+            podcast_id: Podcast slug for scoping patterns
+            episode_id: Episode ID for tracking pattern origin
+
+        Returns:
+            Number of patterns created
+        """
+        if not self.text_pattern_matcher:
+            return 0
+
+        patterns_created = 0
+        min_confidence = 0.85  # Only learn from high-confidence detections
+
+        for ad in ads:
+            # Only learn from Claude detections (not fingerprint/text pattern)
+            if ad.get('detection_stage') != 'claude':
+                continue
+
+            # Require high confidence
+            confidence = ad.get('confidence', 0)
+            if confidence < min_confidence:
+                continue
+
+            # For longer detections, require higher confidence to avoid learning
+            # from merged multi-ad spans which contaminate patterns
+            duration = ad['end'] - ad['start']
+            if duration > 90:  # > 90 seconds
+                if confidence < 0.92:  # Require very high confidence for long ads
+                    logger.debug(
+                        f"Skipping pattern for long ad ({duration:.0f}s) with "
+                        f"confidence {confidence:.2f} (threshold 0.92 for >90s ads)"
+                    )
+                    continue
+
+            # Get sponsor from ad dict or extract from reason
+            sponsor = ad.get('sponsor')
+            if not sponsor:
+                sponsor = self._extract_sponsor_from_reason(ad.get('reason', ''))
+            if not sponsor:
+                continue
+
+            try:
+                pattern_id = self.text_pattern_matcher.create_pattern_from_ad(
+                    segments=segments,
+                    start=ad['start'],
+                    end=ad['end'],
+                    sponsor=sponsor,
+                    scope='podcast',
+                    podcast_id=podcast_id,
+                    episode_id=episode_id
+                )
+
+                if pattern_id:
+                    patterns_created += 1
+                    logger.info(
+                        f"Created pattern {pattern_id} from Claude detection: "
+                        f"{ad['start']:.1f}s-{ad['end']:.1f}s, sponsor={sponsor}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to create pattern from detection: {e}")
+
+        if patterns_created > 0:
+            logger.info(f"Learned {patterns_created} new patterns from detections")
+
+        return patterns_created
+
+    def _detect_foreign_language_ads(
+        self, segments: List[Dict], slug: str = None, episode_id: str = None
+    ) -> List[Dict]:
+        """Auto-detect non-English segments as ads (DAI in other languages).
+
+        Non-English segments (Spanish, etc.) are almost always dynamically inserted
+        ads from ad networks targeting specific demographics. These should be
+        automatically flagged as ads.
+
+        Args:
+            segments: Transcript segments with optional is_foreign_language flag
+            slug: Podcast slug for logging
+            episode_id: Episode ID for logging
+
+        Returns:
+            List of ad markers for foreign language segments
+        """
+        foreign_ads = []
+
+        # Find consecutive foreign language segments and merge them
+        current_ad_start = None
+        current_ad_end = None
+
+        for seg in segments:
+            if seg.get('is_foreign_language'):
+                if current_ad_start is None:
+                    # Start new foreign language region
+                    current_ad_start = seg['start']
+                # Extend region
+                current_ad_end = seg['end']
+            else:
+                # Not foreign language - close any open region
+                if current_ad_start is not None:
+                    duration = current_ad_end - current_ad_start
+                    # Only flag regions longer than 5 seconds
+                    if duration >= 5.0:
+                        foreign_ads.append({
+                            'start': current_ad_start,
+                            'end': current_ad_end,
+                            'confidence': 0.95,  # High confidence for language detection
+                            'reason': 'Non-English language segment (likely DAI ad)',
+                            'detection_stage': 'language',
+                            'end_text': '[Foreign language content]'
+                        })
+                        logger.info(
+                            f"[{slug}:{episode_id}] Foreign language ad: "
+                            f"{current_ad_start:.1f}s-{current_ad_end:.1f}s ({duration:.1f}s)"
+                        )
+                    current_ad_start = None
+                    current_ad_end = None
+
+        # Close final region if needed
+        if current_ad_start is not None:
+            duration = current_ad_end - current_ad_start
+            if duration >= 5.0:
+                foreign_ads.append({
+                    'start': current_ad_start,
+                    'end': current_ad_end,
+                    'confidence': 0.95,
+                    'reason': 'Non-English language segment (likely DAI ad)',
+                    'detection_stage': 'language',
+                    'end_text': '[Foreign language content]'
+                })
+
+        return foreign_ads
 
     def _merge_detection_results(self, ads: List[Dict]) -> List[Dict]:
         """Merge overlapping ads from different detection stages."""

@@ -11,10 +11,31 @@ from flask_limiter.util import get_remote_address
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from utils.time import parse_timestamp
+from utils.text import extract_text_in_range
+
 logger = logging.getLogger('podcast.api')
 
 # Track server start time for uptime calculation
-_start_time = time.time()
+# Stored in shared file so all gunicorn workers report the same uptime
+def _init_server_start_time():
+    """Initialize server start time in shared status file.
+
+    Always writes the current time on module load (server start).
+    This ensures uptime resets on deploy/container restart even when
+    the status file persists. Multiple workers may race to write,
+    but the difference is negligible (milliseconds).
+    """
+    start_time = time.time()
+    try:
+        from status_service import StatusService
+        svc = StatusService()
+        svc.set_server_start_time(start_time)
+    except Exception:
+        pass
+    return start_time
+
+_start_time = _init_server_start_time()
 
 api = Blueprint('api', __name__, url_prefix='/api/v1')
 
@@ -142,40 +163,13 @@ def error_response(message, status=400, details=None):
     return json_response(data, status)
 
 
+# Alias for backward compatibility
 def extract_transcript_segment(transcript: str, start: float, end: float) -> str:
     """Extract text from transcript between timestamps.
 
-    Transcript format (VTT-like):
-    [00:00:00.000 --> 00:00:27.580] Text content here...
-    [00:00:28.940 --> 00:00:35.120] More text...
+    Delegates to utils.text.extract_text_in_range.
     """
-    import re
-
-    if not transcript:
-        return ''
-
-    def parse_timestamp(ts: str) -> float:
-        """Convert HH:MM:SS.mmm to seconds."""
-        parts = ts.split(':')
-        hours = int(parts[0])
-        mins = int(parts[1])
-        secs = float(parts[2])
-        return hours * 3600 + mins * 60 + secs
-
-    # Pattern: [HH:MM:SS.mmm --> HH:MM:SS.mmm] text
-    pattern = r'\[(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})\]\s*([^\[]+)'
-    segments = []
-
-    for match in re.finditer(pattern, transcript):
-        seg_start = parse_timestamp(match.group(1))
-        seg_end = parse_timestamp(match.group(2))
-        text = match.group(3).strip()
-
-        # Include segment if it overlaps with requested range
-        if seg_end >= start and seg_start <= end:
-            segments.append(text)
-
-    return ' '.join(segments)
+    return extract_text_in_range(transcript, start, end)
 
 
 def extract_sponsor_from_text(ad_text: str) -> str:
@@ -1215,15 +1209,7 @@ def retry_ad_detection(slug, episode_id):
                     time_range = time_part.strip('[')
                     start_str, end_str = time_range.split(' --> ')
 
-                    def parse_timestamp(ts):
-                        parts = ts.replace(',', '.').split(':')
-                        if len(parts) == 3:
-                            return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
-                        elif len(parts) == 2:
-                            return float(parts[0]) * 60 + float(parts[1])
-                        else:
-                            return float(parts[0])
-
+                    # Uses utils.time.parse_timestamp imported at module level
                     segments.append({
                         'start': parse_timestamp(start_str),
                         'end': parse_timestamp(end_str),
@@ -1243,7 +1229,8 @@ def retry_ad_detection(slug, episode_id):
         from ad_detector import AdDetector
         ad_detector = AdDetector()
         ad_result = ad_detector.process_transcript(
-            segments, podcast_name, episode.get('title', 'Unknown'), slug, episode_id
+            segments, podcast_name, episode.get('title', 'Unknown'), slug, episode_id,
+            podcast_id=slug  # Pass slug as podcast_id for pattern matching
         )
 
         ad_detection_status = ad_result.get('status', 'failed')
@@ -1520,6 +1507,13 @@ def get_settings():
     chapters_value = settings.get('chapters_enabled', {}).get('value', 'true')
     chapters_enabled = chapters_value.lower() in ('true', '1', 'yes')
 
+    # Get min cut confidence (ad detection aggressiveness)
+    min_cut_confidence_str = settings.get('min_cut_confidence', {}).get('value', '0.80')
+    try:
+        min_cut_confidence = float(min_cut_confidence_str)
+    except (ValueError, TypeError):
+        min_cut_confidence = 0.80
+
     return json_response({
         'systemPrompt': {
             'value': settings.get('system_prompt', {}).get('value', DEFAULT_SYSTEM_PROMPT),
@@ -1561,6 +1555,10 @@ def get_settings():
             'value': chapters_enabled,
             'isDefault': settings.get('chapters_enabled', {}).get('is_default', True)
         },
+        'minCutConfidence': {
+            'value': min_cut_confidence,
+            'isDefault': settings.get('min_cut_confidence', {}).get('is_default', True)
+        },
         'retentionPeriodMinutes': int(os.environ.get('RETENTION_PERIOD') or settings.get('retention_period_minutes', {}).get('value', '1440')),
         'defaults': {
             'systemPrompt': DEFAULT_SYSTEM_PROMPT,
@@ -1572,7 +1570,8 @@ def get_settings():
             'audioAnalysisEnabled': False,
             'autoProcessEnabled': True,
             'vttTranscriptsEnabled': True,
-            'chaptersEnabled': True
+            'chaptersEnabled': True,
+            'minCutConfidence': 0.80
         }
     })
 
@@ -1638,6 +1637,12 @@ def update_ad_detection_settings():
         value = 'true' if data['chaptersEnabled'] else 'false'
         db.set_setting('chapters_enabled', value, is_default=False)
         logger.info(f"Updated chapters generation to: {value}")
+
+    if 'minCutConfidence' in data:
+        # Clamp to valid range (0.50 - 0.95)
+        value = max(0.50, min(0.95, float(data['minCutConfidence'])))
+        db.set_setting('min_cut_confidence', str(value), is_default=False)
+        logger.info(f"Updated min cut confidence to: {value}")
 
     return json_response({'message': 'Settings updated'})
 
@@ -1723,14 +1728,14 @@ def get_whisper_models():
         {
             'id': 'medium',
             'name': 'Medium',
-            'vram': '~5GB',
+            'vram': '~4GB',
             'speed': '~4-5 min/60min',
             'quality': '~15% better than Small'
         },
         {
             'id': 'large-v3',
             'name': 'Large v3',
-            'vram': '~10GB',
+            'vram': '~5-6GB',
             'speed': '~6-8 min/60min',
             'quality': '~25% better than Small'
         }
@@ -2304,6 +2309,54 @@ def get_pattern_stats():
     stats['high_false_positive_patterns'] = stats['high_false_positive_patterns'][:20]
 
     return json_response(stats)
+
+
+@api.route('/patterns/health', methods=['GET'])
+@log_request
+def get_pattern_health():
+    """Check pattern health - identify contaminated/oversized patterns.
+
+    Returns patterns with text templates that exceed reasonable lengths,
+    indicating they likely contain multiple merged ads and will never match.
+    """
+    db = get_database()
+    patterns = db.get_ad_patterns(active_only=True)
+
+    # Thresholds for identifying problematic patterns
+    OVERSIZED_THRESHOLD = 2500  # Chars - patterns this large rarely match
+    VERY_OVERSIZED_THRESHOLD = 3500  # Chars - almost certainly contaminated
+
+    issues = []
+    for p in patterns:
+        template = p.get('text_template', '')
+        template_len = len(template) if template else 0
+
+        if template_len > OVERSIZED_THRESHOLD:
+            severity = 'critical' if template_len > VERY_OVERSIZED_THRESHOLD else 'warning'
+            issues.append({
+                'id': p['id'],
+                'sponsor': p.get('sponsor'),
+                'podcast_id': p.get('podcast_id'),
+                'podcast_name': p.get('podcast_name'),
+                'template_len': template_len,
+                'confirmation_count': p.get('confirmation_count', 0),
+                'severity': severity,
+                'issue': 'oversized',
+                'recommendation': 'delete' if severity == 'critical' else 'review'
+            })
+
+    # Sort by template_len descending (worst first)
+    issues.sort(key=lambda x: x['template_len'], reverse=True)
+
+    healthy_count = len(patterns) - len(issues)
+    return json_response({
+        'total_patterns': len(patterns),
+        'healthy': healthy_count,
+        'issues_count': len(issues),
+        'critical_count': sum(1 for i in issues if i['severity'] == 'critical'),
+        'warning_count': sum(1 for i in issues if i['severity'] == 'warning'),
+        'issues': issues[:50]  # Limit response size
+    })
 
 
 @api.route('/patterns/<int:pattern_id>', methods=['GET'])

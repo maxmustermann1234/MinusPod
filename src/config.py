@@ -83,3 +83,76 @@ RSS_REFRESH_INTERVAL = 900      # Seconds between RSS refreshes (15 min)
 AUTO_PROCESS_INITIAL_BACKOFF = 30   # Initial backoff when queue busy
 AUTO_PROCESS_MAX_BACKOFF = 300      # Maximum backoff (5 min)
 GRACEFUL_SHUTDOWN_TIMEOUT = 300     # Seconds to wait for processing
+
+# ============================================================
+# Text Pattern Matching Thresholds
+# ============================================================
+TFIDF_MATCH_THRESHOLD = 0.70         # TF-IDF similarity for content matching
+FUZZY_MATCH_THRESHOLD = 0.75         # Fuzzy string match threshold
+FINGERPRINT_MATCH_THRESHOLD = 0.65   # Audio fingerprint similarity threshold
+
+# ============================================================
+# Ad Boundary Extension (content-based)
+# ============================================================
+BOUNDARY_EXTENSION_WINDOW = 10.0   # Seconds before/after ad to check for ad content
+BOUNDARY_EXTENSION_MAX = 15.0      # Max seconds to extend a boundary
+AD_CONTENT_URL_PATTERNS = ['.com', '.tv', '.co', '.org', '.net', '.io']
+AD_CONTENT_PROMO_PHRASES = [
+    'use code', 'percent off', 'visit', 'sign up', 'free trial',
+    'promo code', 'check out', 'head to', 'go to', 'click the link',
+    'dot com', 'slash', 'coupon', 'discount', 'offer code',
+]
+
+# ============================================================
+# Ad Duration Estimation
+# ============================================================
+DEFAULT_AD_DURATION_ESTIMATE = 60.0  # Assumed ad length when only intro/outro found
+SPONSOR_MISMATCH_MAX_GAP = 60.0      # Max gap for sponsor mismatch extension
+
+# ============================================================
+# Audio Processing
+# ============================================================
+MIN_AD_DURATION_FOR_REMOVAL = 10.0   # Min ad duration to actually remove from audio
+POST_ROLL_TRIM_THRESHOLD = 30.0      # Threshold for trimming post-roll content
+
+# ============================================================
+# Subprocess Timeouts (seconds)
+# ============================================================
+FFPROBE_TIMEOUT = 30                 # ffprobe duration/metadata queries
+FFMPEG_SHORT_TIMEOUT = 60            # Short ffmpeg operations
+FFMPEG_LONG_TIMEOUT = 300            # Long ffmpeg operations (processing)
+FPCALC_TIMEOUT = 60                  # Audio fingerprint generation
+
+# ============================================================
+# Chunked Transcription (OOM prevention for long episodes)
+# ============================================================
+CHUNK_OVERLAP_SECONDS = 30           # Overlap between chunks for boundary alignment
+CHUNK_MIN_DURATION_SECONDS = 300     # Minimum chunk size (5 minutes)
+CHUNK_MAX_DURATION_SECONDS = 3600    # Maximum chunk size (60 minutes)
+CHUNK_DEFAULT_DURATION_SECONDS = 1800  # Default if memory detection fails (30 minutes)
+
+# Memory safety margin - don't use all available memory
+MEMORY_SAFETY_MARGIN = 0.7           # Use only 70% of available memory
+
+# Whisper model memory profiles (approximate, in GB)
+# Format: (base_memory_gb, memory_per_minute_gb)
+# Base memory = model weights + fixed overhead
+# Per-minute = additional memory for audio processing (scales with duration)
+WHISPER_MEMORY_PROFILES = {
+    # Correct VRAM values from faster-whisper README (not PyTorch-based Whisper)
+    # Format: (base_memory_gb, memory_per_minute_gb)
+    'tiny': (1.0, 0.05),      # ~1GB VRAM
+    'tiny.en': (1.0, 0.05),
+    'base': (1.0, 0.05),      # ~1GB VRAM (was 1.5, corrected)
+    'base.en': (1.0, 0.05),
+    'small': (2.0, 0.10),     # ~2GB VRAM (was 2.5, corrected)
+    'small.en': (2.0, 0.10),
+    'medium': (4.0, 0.15),    # ~4GB VRAM (was 5.0, corrected)
+    'medium.en': (4.0, 0.15),
+    'large': (5.5, 0.25),     # ~5-6GB VRAM (was 10.0, corrected)
+    'large-v1': (5.5, 0.25),
+    'large-v2': (5.5, 0.25),
+    'large-v3': (5.5, 0.25),
+    'turbo': (5.0, 0.20),     # ~5GB VRAM (distilled large)
+}
+WHISPER_DEFAULT_PROFILE = (5.0, 0.20)  # Conservative default (medium-like)

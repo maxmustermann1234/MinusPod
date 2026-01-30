@@ -15,6 +15,8 @@ from flask_cors import CORS
 from slugify import slugify
 import shutil
 
+from utils.time import parse_timestamp
+
 # Configure structured logging
 _logging_configured = False
 import json as _json
@@ -99,9 +101,28 @@ feed_logger = logging.getLogger('podcast.feed')
 refresh_logger = logging.getLogger('podcast.refresh')
 audio_logger = logging.getLogger('podcast.audio')
 
-# Minimum confidence threshold to cut an ad from audio
-# Ads below this threshold are kept in audio to avoid false positives
-MIN_CUT_CONFIDENCE = 0.80
+# Import default confidence threshold from centralized config
+from config import MIN_CUT_CONFIDENCE
+
+
+def get_min_cut_confidence() -> float:
+    """Get the minimum confidence threshold for cutting ads from audio.
+
+    This is configurable via the 'min_cut_confidence' setting (aggressiveness slider).
+    Lower = more aggressive (removes more potential ads)
+    Higher = more conservative (removes only high-confidence ads)
+
+    Default value is MIN_CUT_CONFIDENCE from config.py
+    """
+    try:
+        value = db.get_setting('min_cut_confidence')
+        if value:
+            threshold = float(value)
+            # Clamp to valid range
+            return max(0.50, min(0.95, threshold))
+    except (ValueError, TypeError):
+        pass
+    return MIN_CUT_CONFIDENCE
 
 
 def log_request_detailed(f):
@@ -181,7 +202,22 @@ def is_transient_error(error: Exception) -> bool:
     # Check error message for patterns
     error_msg = str(error).lower()
 
-    # Transient patterns - check before permanent patterns
+    # OOM errors are PERMANENT - retrying without more RAM won't help
+    # Check these FIRST before transient patterns
+    oom_patterns = [
+        'out of memory',
+        'oom',
+        'cuda out of memory',
+        'cannot allocate memory',
+        'memory allocation failed',
+        'killed',  # Linux OOM killer sends SIGKILL
+        'memoryerror',
+        'torch.cuda.outofmemoryerror',
+    ]
+    if any(pattern in error_msg for pattern in oom_patterns):
+        return False  # NOT transient - mark as permanent immediately
+
+    # Transient patterns - check before other permanent patterns
     transient_patterns = [
         'cdn not ready',
         'cdn timeout',
@@ -276,7 +312,7 @@ init_limiter(app)
 from storage import Storage
 from rss_parser import RSSParser
 from transcriber import Transcriber
-from ad_detector import AdDetector, merge_and_deduplicate, refine_ad_boundaries, snap_early_ads_to_zero, merge_same_sponsor_ads
+from ad_detector import AdDetector, merge_and_deduplicate, refine_ad_boundaries, snap_early_ads_to_zero, merge_same_sponsor_ads, extend_ad_boundaries_by_content
 from ad_validator import AdValidator
 from audio_processor import AudioProcessor
 from database import Database
@@ -872,10 +908,6 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                         time_range = time_part.strip('[')
                         start_str, end_str = time_range.split(' --> ')
 
-                        def parse_timestamp(ts):
-                            parts = ts.split(':')
-                            return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
-
                         segments.append({
                             'start': parse_timestamp(start_str),
                             'end': parse_timestamp(end_str),
@@ -911,7 +943,9 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
 
             status_service.update_job_stage("transcribing", 20)
             audio_logger.info(f"[{slug}:{episode_id}] Starting transcription")
-            segments = transcriber.transcribe(audio_path, podcast_name=podcast_name)
+            # Use chunked transcription for long episodes to prevent OOM
+            # transcribe_chunked() automatically falls back to regular for short audio
+            segments = transcriber.transcribe_chunked(audio_path, podcast_name=podcast_name)
             if not segments:
                 raise Exception("Failed to transcribe audio")
 
@@ -961,6 +995,7 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 segments, podcast_name, episode_title, slug, episode_id, episode_description,
                 audio_analysis=audio_analysis_result,
                 audio_path=audio_path,
+                podcast_id=slug,  # Pass slug as podcast_id for pattern matching
                 skip_patterns=skip_patterns  # Gap 3: 'full' mode skips pattern DB
             )
             storage.save_ads_json(slug, episode_id, ad_result, pass_number=1)
@@ -1041,7 +1076,11 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             if all_ads and segments:
                 all_ads = refine_ad_boundaries(all_ads, segments)
 
-            # Step 3.5.1: Snap early ads to 0:00 (pre-roll ads often have brief intro)
+            # Step 3.5.1: Extend ad boundaries by checking adjacent content
+            if all_ads and segments:
+                all_ads = extend_ad_boundaries_by_content(all_ads, segments)
+
+            # Step 3.5.2: Snap early ads to 0:00 (pre-roll ads often have brief intro)
             if all_ads:
                 all_ads = snap_early_ads_to_zero(all_ads)
 
@@ -1080,6 +1119,7 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 # REJECT ads and low-confidence ads stay in audio but are stored for display
                 ads_to_remove = []
                 low_confidence_count = 0
+                min_cut_confidence = get_min_cut_confidence()
                 for ad in validation_result.ads:
                     validation = ad.get('validation', {})
                     if validation.get('decision') == 'REJECT':
@@ -1087,12 +1127,12 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                         continue
                     # Check confidence - use adjusted_confidence if available, else original
                     confidence = validation.get('adjusted_confidence', ad.get('confidence', 1.0))
-                    if confidence < MIN_CUT_CONFIDENCE:
+                    if confidence < min_cut_confidence:
                         low_confidence_count += 1
                         ad['was_cut'] = False  # Low-confidence ads are kept in audio
                         audio_logger.info(
                             f"[{slug}:{episode_id}] Keeping low-confidence ad in audio: "
-                            f"{ad['start']:.1f}s-{ad['end']:.1f}s ({confidence:.0%} < {MIN_CUT_CONFIDENCE:.0%})"
+                            f"{ad['start']:.1f}s-{ad['end']:.1f}s ({confidence:.0%} < {min_cut_confidence:.0%})"
                         )
                         continue
                     ad['was_cut'] = True  # This ad will be cut from audio
@@ -1106,7 +1146,7 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 if rejected_count > 0 or low_confidence_count > 0:
                     audio_logger.info(
                         f"[{slug}:{episode_id}] Kept in audio: {rejected_count} rejected, "
-                        f"{low_confidence_count} low-confidence (<{MIN_CUT_CONFIDENCE:.0%})"
+                        f"{low_confidence_count} low-confidence (<{min_cut_confidence:.0%})"
                     )
             else:
                 ads_to_remove = []
@@ -1224,6 +1264,17 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
     except Exception as e:
         processing_time = time.time() - start_time
         audio_logger.error(f"[{slug}:{episode_id}] Failed: {e} ({processing_time:.1f}s)")
+
+        # Clean up GPU memory on failure to prevent memory leaks
+        # This is critical for OOM recovery - free memory before any retry attempt
+        try:
+            from transcriber import WhisperModelSingleton
+            from utils.gpu import clear_gpu_memory
+            clear_gpu_memory()
+            WhisperModelSingleton.unload_model()
+            audio_logger.info(f"[{slug}:{episode_id}] Cleaned up GPU memory after failure")
+        except Exception as cleanup_err:
+            audio_logger.warning(f"[{slug}:{episode_id}] Failed to clean up GPU memory: {cleanup_err}")
 
         # Update status to failed with retry count
         status_service.fail_job()

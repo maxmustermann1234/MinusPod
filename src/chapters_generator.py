@@ -5,6 +5,9 @@ import os
 import re
 from typing import List, Dict, Optional, Tuple
 
+from utils.time import parse_timestamp
+from utils.text import extract_text_from_segments
+
 logger = logging.getLogger(__name__)
 
 # Minimum chapter duration in seconds (3 minutes)
@@ -59,14 +62,7 @@ class ChaptersGenerator:
         Returns:
             Time in seconds
         """
-        parts = timestamp.split(':')
-        if len(parts) == 2:
-            # M:SS or MM:SS
-            return int(parts[0]) * 60 + float(parts[1])
-        elif len(parts) == 3:
-            # H:MM:SS or HH:MM:SS
-            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
-        return 0.0
+        return parse_timestamp(timestamp)
 
     def _html_to_text(self, html: str) -> str:
         """
@@ -731,6 +727,8 @@ Transcript:
         """
         Get transcript excerpt for a time range.
 
+        Delegates to utils.text.extract_text_from_segments.
+
         Args:
             segments: Transcript segments
             start_time: Start of range (in original/unadjusted time)
@@ -740,21 +738,7 @@ Transcript:
         Returns:
             Transcript excerpt text
         """
-        words = []
-        for segment in segments:
-            seg_start = segment.get('start', 0)
-            seg_end = segment.get('end', 0)
-
-            # Include segments that overlap with range
-            if seg_end > start_time and seg_start < end_time:
-                text = segment.get('text', '').strip()
-                if text:
-                    words.extend(text.split())
-
-                if len(words) >= max_words:
-                    break
-
-        return ' '.join(words[:max_words])
+        return extract_text_from_segments(segments, start_time, end_time, max_words)
 
     def generate_chapter_titles(
         self,
@@ -970,6 +954,69 @@ Transcript:
 
         return chapters
 
+    def _enforce_min_duration(
+        self,
+        chapters: List[Dict],
+        episode_duration: float,
+        ads_removed: List[Dict]
+    ) -> List[Dict]:
+        """Enforce minimum chapter duration across all sources.
+
+        Removes chapters that are too short by merging them into the
+        previous chapter (the previous chapter absorbs the short one).
+        The first chapter is never removed.
+
+        Args:
+            chapters: Sorted list of chapters with 'startTime'
+            episode_duration: Total episode duration
+            ads_removed: Removed ads for duration calculation
+
+        Returns:
+            Filtered chapter list with short chapters removed
+        """
+        if len(chapters) <= 1:
+            return chapters
+
+        # Calculate adjusted episode duration
+        total_ad_duration = sum(
+            ad.get('end', 0) - ad.get('start', 0)
+            for ad in ads_removed
+        )
+        adjusted_duration = episode_duration - total_ad_duration
+
+        result = [chapters[0]]  # Always keep first chapter
+
+        for i in range(1, len(chapters)):
+            chapter = chapters[i]
+            prev = result[-1]
+
+            # Calculate this chapter's duration
+            if i + 1 < len(chapters):
+                chapter_duration = chapters[i + 1]['startTime'] - chapter['startTime']
+            else:
+                chapter_duration = adjusted_duration - chapter['startTime']
+
+            if chapter_duration < MIN_CHAPTER_DURATION:
+                # Too short - absorb into previous chapter
+                # If the short chapter has a better title, keep it on the previous
+                if chapter.get('title') and not prev.get('title'):
+                    prev['title'] = chapter['title']
+                    prev['needs_title'] = False
+                logger.info(
+                    f"Removing short chapter at {chapter['startTime']:.0f}s "
+                    f"({chapter_duration:.0f}s < {MIN_CHAPTER_DURATION:.0f}s min): "
+                    f"'{chapter.get('title', 'untitled')}'"
+                )
+            else:
+                result.append(chapter)
+
+        if len(result) < len(chapters):
+            logger.info(
+                f"Chapter duration enforcement: {len(chapters)} -> {len(result)} chapters"
+            )
+
+        return result
+
     def format_chapters_json(self, chapters: List[Dict]) -> str:
         """
         Format chapters as Podcasting 2.0 JSON.
@@ -1051,6 +1098,9 @@ Transcript:
             merged_chapters = self.split_long_segments(
                 merged_chapters, segments, ads_removed, episode_duration
             )
+
+        # Step 3d: Enforce minimum chapter duration across all sources
+        merged_chapters = self._enforce_min_duration(merged_chapters, episode_duration, ads_removed)
 
         # Step 4: Generate titles for chapters that need them
         if segments:
@@ -1153,6 +1203,9 @@ Transcript:
             if not deduplicated or ch['startTime'] - deduplicated[-1]['startTime'] >= 60:
                 deduplicated.append(ch)
         chapters = deduplicated
+
+        # Enforce minimum chapter duration
+        chapters = self._enforce_min_duration(chapters, episode_duration, [])
 
         # Generate titles for chapters that need them
         chapters = self.generate_chapter_titles(

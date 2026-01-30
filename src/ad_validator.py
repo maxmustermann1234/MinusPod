@@ -12,6 +12,7 @@ from config import (
     MID_ROLL_2, MID_ROLL_3, POST_ROLL, MAX_AD_PERCENTAGE, MAX_ADS_PER_5MIN,
     MERGE_GAP_THRESHOLD
 )
+from utils.text import extract_text_from_segments
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +194,12 @@ class AdValidator:
             return False
 
         segment_duration = end - start
-        if segment_duration <= 0:
+
+        # Use minimum threshold to prevent floating point division issues
+        # 1 millisecond minimum to avoid near-zero duration segments
+        MIN_DURATION_THRESHOLD = 0.001
+        if segment_duration < MIN_DURATION_THRESHOLD:
+            logger.warning(f"Skipping overlap check for near-zero duration segment: {segment_duration}")
             return False
 
         for fp in self.false_positive_corrections:
@@ -238,6 +244,9 @@ class AdValidator:
 
         # Step 3: Merge tiny gaps
         ads = self._merge_close_ads(ads, result)
+
+        # Step 3.5: Extend trailing ad to end of episode if close
+        ads = self._extend_trailing_ad(ads, result)
 
         # Step 4: Validate each ad
         for ad in ads:
@@ -446,21 +455,9 @@ class AdValidator:
     def _get_text_in_range(self, start: float, end: float) -> str:
         """Get transcript text within time range.
 
-        Args:
-            start: Start time in seconds
-            end: End time in seconds
-
-        Returns:
-            Concatenated transcript text
+        Delegates to utils.text.extract_text_from_segments.
         """
-        text_parts = []
-        for seg in self.segments:
-            seg_start = seg.get('start', 0)
-            seg_end = seg.get('end', 0)
-            # Include segment if it overlaps with the range
-            if seg_end >= start and seg_start <= end:
-                text_parts.append(seg.get('text', ''))
-        return ' '.join(text_parts)
+        return extract_text_from_segments(self.segments, start, end)
 
     def _make_decision(self, confidence: float, flags: List[str],
                         duration: float = 0.0) -> Decision:
@@ -517,6 +514,46 @@ class AdValidator:
                 result.corrections.append(
                     f"Clamped end {original:.1f}s to duration {self.episode_duration:.1f}s"
                 )
+        return ads
+
+    def _extend_trailing_ad(self, ads: List[Dict],
+                            result: ValidationResult,
+                            max_gap: float = 30.0) -> List[Dict]:
+        """Extend the last ad to the end of episode if close enough.
+
+        DAI post-roll ads often end slightly before the actual episode end.
+        If an ad ends within max_gap seconds of the episode end, extend it.
+
+        Args:
+            ads: List of ad markers
+            result: ValidationResult to record corrections
+            max_gap: Maximum gap (seconds) to extend. Default 30s.
+
+        Returns:
+            Ads with potentially extended trailing ad
+        """
+        if not ads or self.episode_duration <= 0:
+            return ads
+
+        # Sort by start time and get last ad
+        sorted_ads = sorted(ads, key=lambda x: x['start'])
+        last_ad = sorted_ads[-1]
+
+        gap_to_end = self.episode_duration - last_ad['end']
+
+        # Only extend if gap is positive and within threshold
+        if 0 < gap_to_end <= max_gap:
+            original_end = last_ad['end']
+            last_ad['end'] = self.episode_duration
+            result.corrections.append(
+                f"Extended trailing ad from {original_end:.1f}s to episode end "
+                f"({self.episode_duration:.1f}s) - gap was {gap_to_end:.1f}s"
+            )
+            logger.info(
+                f"Extended trailing ad to episode end: {original_end:.1f}s -> "
+                f"{self.episode_duration:.1f}s (gap: {gap_to_end:.1f}s)"
+            )
+
         return ads
 
     def _merge_close_ads(self, ads: List[Dict],

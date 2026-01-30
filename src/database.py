@@ -8,6 +8,9 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any, Tuple
 
+from utils.time import parse_timestamp
+from utils.text import extract_text_in_range
+
 logger = logging.getLogger(__name__)
 
 # Default ad detection prompts
@@ -370,7 +373,28 @@ class Database:
         return self._local.connection
 
     def _init_schema(self):
-        """Initialize database schema."""
+        """Initialize database schema with retry logic for concurrent workers."""
+        import time
+        max_retries = 5
+        base_delay = 0.5  # seconds
+
+        for attempt in range(max_retries):
+            try:
+                self._init_schema_inner()
+                return
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning(
+                        f"Database locked during schema init, retrying in {delay:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(delay)
+                else:
+                    raise
+
+    def _init_schema_inner(self):
+        """Initialize database schema (inner method called with retry wrapper)."""
         conn = self.get_connection()
 
         # Check if database already has tables (existing database)
@@ -976,6 +1000,86 @@ class Database:
             except Exception as e:
                 logger.error(f"Migration failed for chapters_json: {e}")
 
+        # Migration: Convert numeric podcast_ids to slugs in ad_patterns table
+        # This fixes a bug where auto-created patterns stored numeric IDs instead of slugs
+        self._migrate_pattern_podcast_ids()
+
+        # Migration: Clean up contaminated patterns (>3500 chars)
+        # These are patterns created from merged multi-ad spans and will never match
+        self._cleanup_contaminated_patterns()
+
+    def _cleanup_contaminated_patterns(self):
+        """Delete patterns with text_template > 3500 chars (contaminated).
+
+        These patterns were created from merged multi-ad spans where adjacent ads
+        within 3 seconds were combined. The resulting patterns are too long to
+        ever match the TF-IDF window and pollute the pattern database.
+        """
+        conn = self.get_connection()
+        MAX_PATTERN_CHARS = 3500
+
+        try:
+            # Get count first
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM ad_patterns WHERE length(text_template) > ?",
+                (MAX_PATTERN_CHARS,)
+            )
+            count = cursor.fetchone()[0]
+
+            if count > 0:
+                logger.info(
+                    f"Migration: Cleaning up {count} contaminated patterns "
+                    f"(>{MAX_PATTERN_CHARS} chars)"
+                )
+                conn.execute(
+                    "DELETE FROM ad_patterns WHERE length(text_template) > ?",
+                    (MAX_PATTERN_CHARS,)
+                )
+                conn.commit()
+                logger.info(f"Migration: Deleted {count} contaminated patterns")
+
+        except Exception as e:
+            logger.error(f"Migration failed for contaminated pattern cleanup: {e}")
+
+    def _migrate_pattern_podcast_ids(self):
+        """Convert numeric podcast_ids to slugs in ad_patterns table for consistency.
+
+        This fixes a bug where auto-created patterns stored numeric podcast IDs,
+        but the pattern matching code compares against slug strings.
+        """
+        conn = self.get_connection()
+
+        try:
+            # Get mapping of numeric IDs to slugs
+            podcasts = conn.execute("SELECT id, slug FROM podcasts").fetchall()
+            id_to_slug = {str(p['id']): p['slug'] for p in podcasts}
+
+            if not id_to_slug:
+                return  # No podcasts yet
+
+            # Find patterns with numeric podcast_ids that need migration
+            patterns = conn.execute(
+                "SELECT id, podcast_id FROM ad_patterns WHERE podcast_id IS NOT NULL"
+            ).fetchall()
+
+            migrated_count = 0
+            for pattern in patterns:
+                pid = pattern['podcast_id']
+                # Check if this looks like a numeric ID (and we have a mapping for it)
+                if pid in id_to_slug:
+                    conn.execute(
+                        "UPDATE ad_patterns SET podcast_id = ? WHERE id = ?",
+                        (id_to_slug[pid], pattern['id'])
+                    )
+                    migrated_count += 1
+
+            if migrated_count > 0:
+                conn.commit()
+                logger.info(f"Migration: Converted {migrated_count} pattern podcast_ids from numeric to slug")
+
+        except Exception as e:
+            logger.error(f"Migration failed for pattern podcast_ids: {e}")
+
     def _migrate_from_json(self):
         """Migrate data from JSON files to SQLite."""
         conn = self.get_connection()
@@ -1151,6 +1255,16 @@ class Database:
                    ON CONFLICT(key) DO NOTHING""",
                 (key, value)
             )
+
+        # Ad detection aggressiveness (minimum confidence to cut from audio)
+        # Lower = more aggressive (removes more potential ads)
+        # Higher = more conservative (removes only high-confidence ads)
+        # Range: 0.50 to 0.95, default 0.80
+        conn.execute(
+            """INSERT INTO settings (key, value, is_default) VALUES (?, ?, 1)
+               ON CONFLICT(key) DO NOTHING""",
+            ('min_cut_confidence', '0.80')
+        )
 
         # Auto-process new episodes (enabled by default)
         conn.execute(
@@ -1850,11 +1964,11 @@ class Database:
         """Get ad patterns with optional filtering. Includes podcast_name when available."""
         conn = self.get_connection()
 
-        # Join with podcasts to get podcast name
+        # Join with podcasts to get podcast name (podcast_id stores slugs since v0.1.194)
         query = """
             SELECT ap.*, p.title as podcast_name, p.slug as podcast_slug
             FROM ad_patterns ap
-            LEFT JOIN podcasts p ON ap.podcast_id = CAST(p.id AS TEXT)
+            LEFT JOIN podcasts p ON ap.podcast_id = p.slug
             WHERE 1=1
         """
         params = []
@@ -1871,16 +1985,20 @@ class Database:
             query += " AND ap.network_id = ?"
             params.append(network_id)
 
-        query += " ORDER BY ap.confirmation_count DESC, ap.created_at DESC"
+        query += " ORDER BY ap.created_at DESC"
 
         cursor = conn.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
 
     def get_ad_pattern_by_id(self, pattern_id: int) -> Optional[Dict]:
-        """Get a single ad pattern by ID."""
+        """Get a single ad pattern by ID with podcast info."""
         conn = self.get_connection()
         cursor = conn.execute(
-            "SELECT * FROM ad_patterns WHERE id = ?", (pattern_id,)
+            """SELECT ap.*, p.title as podcast_name, p.slug as podcast_slug
+               FROM ad_patterns ap
+               LEFT JOIN podcasts p ON ap.podcast_id = p.slug
+               WHERE ap.id = ?""",
+            (pattern_id,)
         )
         row = cursor.fetchone()
         return dict(row) if row else None
@@ -2441,31 +2559,10 @@ class Database:
 
         This retroactively learns from user confirmations that were submitted
         before the pattern learning feature existed.
-        Returns count of patterns created."""
-        import re
+        Returns count of patterns created.
 
-        def parse_timestamp(ts: str) -> float:
-            """Convert HH:MM:SS.mmm to seconds."""
-            parts = ts.split(':')
-            hours = int(parts[0])
-            mins = int(parts[1])
-            secs = float(parts[2])
-            return hours * 3600 + mins * 60 + secs
-
-        def extract_transcript_segment(transcript: str, start: float, end: float) -> str:
-            """Extract text from transcript between timestamps."""
-            if not transcript:
-                return ''
-            pattern = r'\[(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})\]\s*([^\[]+)'
-            segments = []
-            for match in re.finditer(pattern, transcript):
-                seg_start = parse_timestamp(match.group(1))
-                seg_end = parse_timestamp(match.group(2))
-                text = match.group(3).strip()
-                if seg_end >= start and seg_start <= end:
-                    segments.append(text)
-            return ' '.join(segments)
-
+        Uses utils.time.parse_timestamp and utils.text.extract_text_in_range.
+        """
         conn = self.get_connection()
         created_count = 0
 

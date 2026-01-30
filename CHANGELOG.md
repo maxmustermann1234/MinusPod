@@ -6,6 +6,171 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.202] - 2026-01-29
+
+### Fixed
+- **Incorrect Whisper VRAM profiles causing overly conservative chunking**: Updated `WHISPER_MEMORY_PROFILES` in `config.py` to match faster-whisper's actual VRAM requirements (from README). large-v3 now correctly uses 5.5GB base (was 10GB), medium uses 4GB (was 5GB), small uses 2GB (was 2.5GB). This allows larger chunk sizes and fewer chunks for long episodes.
+- **System RAM incorrectly limiting GPU transcription**: Changed `get_available_memory_gb()` in `utils/gpu.py` to use GPU VRAM as the primary limit for CUDA devices, not `min(GPU, System)`. System RAM was incorrectly limiting chunk sizes when GPU VRAM was the only relevant constraint.
+- **API showing incorrect VRAM requirements**: Updated `/settings/whisper-models` endpoint to show correct values: medium now shows "~4GB", large-v3 shows "~5-6GB".
+
+### Added
+- **GPU memory logging after model load**: Added INFO-level log showing actual GPU memory allocated and reserved after Whisper model initialization, helping verify correct VRAM usage.
+- **Memory visibility logging**: `get_available_memory_gb()` now logs both GPU and System RAM values at INFO level when running on CUDA, providing visibility into memory decisions.
+
+---
+
+## [0.1.201] - 2026-01-29
+
+### Fixed
+- **Uptime not resetting on container restart**: The `_get_start_time()` function in `api.py` was returning the stale value from the status file without calling `set_server_start_time()`. Renamed to `_init_server_start_time()` and now always writes the current time on module load, ensuring uptime resets on every server restart.
+
+---
+
+## [0.1.200] - 2026-01-29
+
+### Added
+- **Dynamic memory-aware chunked transcription**: Long episodes are now transcribed in dynamically-sized chunks based on available system RAM and GPU VRAM. The system:
+  1. Queries available memory before each episode using `/proc/meminfo` and `torch.cuda`
+  2. Uses model-specific memory profiles (base memory + MB/minute coefficients for each Whisper model size)
+  3. Calculates optimal chunk duration with 70% safety margin
+  4. Catches OOM errors during transcription and automatically retries with smaller chunks (halving up to 3 times)
+  - Chunk sizes range from 5-60 minutes, with 30-second overlap for boundary alignment
+  - Configurable via `CHUNK_*` and `WHISPER_MEMORY_PROFILES` in `config.py`
+- **Memory cleanup on all failure paths**: Both `transcriber.py` and `main.py` now clear GPU memory and unload the Whisper model when transcription fails for any reason, preventing memory leaks during retry cycles.
+- **Memory utility functions**: New `get_available_system_memory_gb()`, `get_available_gpu_memory_gb()`, and `get_available_memory_gb()` in `utils/gpu.py` for runtime memory detection.
+
+### Fixed
+- **OOM retry loops causing repeated failures**: OOM errors are now classified as permanent (non-transient) in `is_transient_error()`, preventing the 3x3=9 retry attempts that were causing the same episodes to fail repeatedly. OOM episodes are now immediately marked as `permanently_failed` instead of retrying at the episode level (chunk-level retries still occur with smaller chunks).
+
+---
+
+## [0.1.199] - 2026-01-28
+
+### Fixed
+- **Uptime persists across deploys**: The `server_start_time` in the shared status file was never overwritten on container restart because `set_server_start_time()` only wrote if no value existed. Now always overwrites, ensuring uptime resets on deploy.
+
+---
+
+## [0.1.198] - 2026-01-28
+
+### Fixed
+- **ProcessingQueue staleness causing permanent queue_busy**: When a worker is SIGKILL'd (OOM), StatusService correctly auto-clears stale jobs after 30 minutes, but ProcessingQueue (in-memory, per-worker) retained stale `_current_episode` state forever. Added timestamp tracking and staleness detection to ProcessingQueue, matching StatusService behavior. Also added cross-check with StatusService as truth source - if StatusService says no job is running but ProcessingQueue thinks one is, ProcessingQueue clears its state.
+
+---
+
+## [0.1.197] - 2026-01-27
+
+### Fixed
+- **Text pattern matching completely broken**: Fixed numpy/scipy sparse matrix boolean evaluation error (`not self._pattern_vectors`) that caused "The truth value of an array with more than one element is ambiguous" on every processed episode since patterns were loaded. Changed to `self._pattern_vectors is None`. This was blocking ALL text pattern matching.
+- **Settings page uptime flicker**: Different gunicorn workers had different `_start_time` values because each imports `api.py` independently. Server start time is now stored in shared `processing_status.json` so all workers report consistent uptime.
+- **Stale processing/queue state after worker SIGKILL**: Added staleness detection to `StatusService._read_status_file()`. Jobs running longer than 30 minutes are auto-cleared; queue entries older than 1 hour are removed. This prevents permanently stuck status after OOM kills.
+- **Chapter duration inconsistency**: Added `_enforce_min_duration()` to chapters generator that enforces the 3-minute minimum across all chapter sources (description timestamps, ad gaps, AI topic splits). Previously only ad-gap chapters had minimum duration enforcement.
+
+### Added
+- **Content-based ad boundary extension**: New `extend_ad_boundaries_by_content()` in ad detection pipeline checks transcript segments immediately before/after each detected ad for sponsor names, URLs, and promotional language. Extends boundaries to capture the full ad when detection cuts off ~5 seconds early (common with DAI ads). Configurable via `config.py` constants.
+- **Created date column on Patterns page**: Added sortable "Created" column to the patterns table and changed default sort to newest-first (`created_at DESC`).
+
+---
+
+## [0.1.196] - 2026-01-20
+
+### Fixed
+- **Text pattern matching ineffective due to contaminated patterns**: Patterns were being created from merged multi-ad spans (3-8K+ chars) that could never match the 1500-char TF-IDF window. Added validation to reject patterns with duration >180s or text >3500 chars.
+- **Auto-learning creating patterns from merged ads**: Adjacent ads within 3 seconds were merged before pattern learning, contaminating patterns with multiple ads. Added higher confidence threshold (0.92) for ads >90 seconds to prevent learning from merged spans.
+- **Database lock race condition on startup**: Multiple gunicorn workers initializing simultaneously caused "database is locked" errors. Added retry logic with exponential backoff (5 attempts, 0.5s-8s delays) to handle concurrent schema initialization.
+
+### Added
+- **Pattern health check API** (`/api/v1/patterns/health`): New endpoint to identify oversized/contaminated patterns with severity levels (warning >2500 chars, critical >3500 chars) and recommendations
+- **Enhanced pattern matching debug logging**: Lower threshold (0.4) for debug logging with pattern length vs window length comparison to help diagnose why patterns fail to match
+
+### Changed
+- **Database migration cleans contaminated patterns**: One-time migration deletes patterns with text_template >3500 chars on startup, removing patterns that were polluting the database and could never match
+
+---
+
+## [0.1.195] - 2026-01-20
+
+### Fixed
+- **Pattern detail page missing podcast info**: Fixed join condition in `get_ad_patterns()` which was incorrectly comparing slug against cast numeric ID. Also updated `get_ad_pattern_by_id()` to include the same join so individual pattern lookups return `podcast_name` and `podcast_slug`
+- **Auto-learned patterns missing episode ID**: `create_pattern_from_ad()` and `_learn_from_detections()` now accept and pass through `episode_id` so auto-learned patterns have `created_from_episode_id` populated
+
+### Changed
+- **Pattern detail modal shows podcast link**: Podcast-scoped patterns now show the podcast slug as a clickable link to the podcast's episode list
+- **Renamed "Created from" to "Origin Episode"**: Clearer label in pattern detail modal
+
+---
+
+## [0.1.194] - 2026-01-20
+
+### Fixed
+- **Podcast-scoped text patterns not matching**: Fixed three related bugs preventing podcast-scoped patterns from working:
+  1. `podcast_id` was never passed to `process_transcript()`, so pattern matching always received `None` and filtered out all podcast-scoped patterns
+  2. Auto-created patterns stored numeric database IDs instead of slug strings
+  3. Added database migration to convert existing numeric podcast_ids to slugs for consistency
+
+---
+
+## [0.1.193] - 2026-01-19
+
+### Fixed
+- **Auto pattern learning not working**: Claude-detected ads did not include a `sponsor` field, causing `_learn_from_detections()` to skip all Claude ads. Added `_extract_sponsor_from_reason()` helper that uses `SponsorService` to look up sponsor names from the `known_sponsors` database table (e.g., "ZipRecruiter host-read sponsor segment" -> "ziprecruiter") so patterns can be created automatically.
+
+---
+
+## [0.1.192] - 2026-01-18
+
+### Fixed
+- **Slider invisible in dark mode**: Changed slider track background from `bg-secondary` to `bg-muted` so the ad detection aggressiveness slider is visible in dark mode
+
+---
+
+## [0.1.191] - 2026-01-18
+
+### Fixed
+- **Off-by-one error in text pattern matching**: Fixed asymmetric boundary comparison in `_char_pos_to_time()` that caused incorrect timestamp mapping for pattern matches at segment boundaries
+- **Timestamp calculation in phrase finding**: Fixed character-to-word index mapping in `find_phrase_in_words()` which was breaking at the wrong word and failing for last-word matches
+- **Race condition in ad merging**: Extracted sponsor mismatch extension into separate `_extend_ads_for_sponsor_mismatch()` function to prevent mutation during iteration
+- **Temp file leak in audio preprocessing**: Added `finally` block cleanup in `preprocess_audio()` to prevent orphaned temp files on error paths
+- **Division by zero in ad validation**: Added MIN_DURATION_THRESHOLD constant (1ms) to protect against edge cases in duration calculations
+- **Pattern scope filtering not working**: Fixed `_filter_patterns_by_scope()` to actually compare podcast_id and network_id instead of just checking scope string
+- **TF-IDF vocabulary mismatch**: Added BASE_AD_VOCABULARY with common podcast ad terms to prevent sklearn vectorizer from ignoring unseen terms in new text
+
+### Added
+- **Shared utilities module** (`src/utils/`): Consolidated duplicate functions across codebase
+  - `utils/audio.py`: `get_audio_duration()` with ffprobe stderr logging, `AudioMetadata` caching class
+  - `utils/time.py`: `parse_timestamp()`, `format_time()`
+  - `utils/text.py`: `extract_text_in_range()`, `extract_text_from_segments()`
+  - `utils/gpu.py`: `clear_gpu_memory()`, `get_gpu_memory_info()`
+- **Automatic pattern learning**: High-confidence Claude detections (>=85%) now automatically create podcast-scoped patterns via `_learn_from_detections()`
+- **Pattern match recording**: Pattern matches are now recorded for promotion metrics via `record_pattern_match()`
+- **Centralized configuration constants**: Added TFIDF_MATCH_THRESHOLD, FUZZY_MATCH_THRESHOLD, FINGERPRINT_MATCH_THRESHOLD, subprocess timeouts to config.py
+
+### Changed
+- **Increased sliding window size**: Pattern matching window increased from 500 to 1500 characters (~60 seconds of speech) with 500 character step for better coverage of longer ads
+- **Consolidated duplicate code**: Removed 6 copies of `get_audio_duration()`, 6 copies of `parse_timestamp()`, 5 copies of transcript extraction, 3 copies of GPU cleanup
+
+---
+
+## [0.1.190] - 2026-01-18
+
+### Fixed
+- **Music analysis timeout on long episodes**: Episodes over 1.5 hours now use "fast mode" that analyzes every 3rd frame and skips expensive HPSS (Harmonic-Percussive Source Separation) computation. This prevents the 805s+ timeouts that were occurring on 2+ hour episodes like Security Now.
+- **Non-English DAI ads not detected**: Changed Whisper from `language="en"` to `language=None` for auto-detection. Non-English segments (especially Spanish ads) are now automatically flagged and treated as ads.
+- **VAD filter too aggressive**: Adjusted VAD parameters to be more sensitive (`min_silence_duration_ms`: 500->1000, `speech_pad_ms`: 400->600, `threshold`: 0.3). This helps capture music-heavy ad segments that were being skipped.
+- **End-of-episode ads not fully trimmed**: Ads that end within 30 seconds of the episode end are now extended to the actual end, eliminating leftover ad snippets at the end.
+
+### Added
+- **Ad detection aggressiveness slider**: New setting to control how confident the system must be before removing an ad. Lower values (50%) are more aggressive and remove more potential ads, while higher values (95%) are more conservative. Accessible via Settings page slider.
+- Foreign language detection in transcription pipeline with `is_foreign_language` and `detected_language` segment attributes
+- `_detect_foreign_language_ads()` method in ad detector that auto-detects non-English segments as DAI ads with 95% confidence
+- Fast mode music detection: `_compute_music_probability_fast()` using only spectral flatness and bass energy
+
+### Changed
+- Music detector streaming analysis now uses adaptive frame skipping based on episode length
+- Block length increased from 256 to 512 for more efficient streaming processing
+
+---
+
 ## [0.1.189] - 2026-01-11
 
 ### Fixed
