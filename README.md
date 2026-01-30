@@ -316,12 +316,34 @@ The feed URL is shown in the web UI and can be copied to clipboard.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | required | Claude API key |
+| `ANTHROPIC_API_KEY` | required | Claude API key (required for default Anthropic provider) |
+| `LLM_PROVIDER` | `anthropic` | LLM backend: `anthropic` (direct API) or `openai-compatible` (wrapper/Ollama) |
+| `OPENAI_BASE_URL` | `http://localhost:8000/v1` | Base URL for OpenAI-compatible API (only used if `LLM_PROVIDER=openai-compatible`) |
+| `OPENAI_API_KEY` | `not-needed` | API key for OpenAI-compatible endpoint (often not required for local wrappers) |
+| `OPENAI_MODEL` | `claude-sonnet-4-5-20250929` | Default model for OpenAI-compatible provider |
 | `BASE_URL` | `http://localhost:8000` | Public URL for generated feed links |
 | `WHISPER_MODEL` | `small` | Whisper model size (tiny/base/small/medium/large) |
 | `WHISPER_DEVICE` | `cuda` | Device for Whisper (cuda/cpu) |
 | `RETENTION_PERIOD` | `1440` | Minutes to keep processed episodes (1440 = 24 hours) |
 | `TUNNEL_TOKEN` | optional | Cloudflare tunnel token for remote access |
+
+### Using Claude Code Wrapper (Max Subscription)
+
+Instead of using API credits, you can use the [Claude Code OpenAI Wrapper](https://github.com/RichardAtCT/claude-code-openai-wrapper) to leverage your Claude Max subscription:
+
+```bash
+# Start the wrapper service
+docker compose --profile wrapper up -d
+
+# First time: authenticate with Claude
+docker compose --profile wrapper run --rm claude-wrapper claude auth login
+
+# Configure podcast-server to use the wrapper
+export LLM_PROVIDER=openai-compatible
+export OPENAI_BASE_URL=http://claude-wrapper:8000/v1
+```
+
+The wrapper exposes an OpenAI-compatible API that routes requests through your Claude Max subscription instead of consuming API credits.
 
 ## API
 

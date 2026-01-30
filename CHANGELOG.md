@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.203] - 2026-01-30
+
+### Added
+- **Optional OpenAI-compatible LLM support**: New abstraction layer (`llm_client.py`) allows using alternative LLM backends instead of direct Anthropic API. Supports:
+  - Direct Anthropic API (default, uses API credits)
+  - OpenAI-compatible APIs (Claude Code wrapper for Max subscription, Ollama, etc.)
+- **LLM provider configuration**: New environment variables `LLM_PROVIDER`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL` for configuring alternative backends
+- **Docker Compose wrapper service**: Optional `claude-wrapper` service for running the Claude Code OpenAI wrapper (enable with `--profile wrapper`)
+
+### Changed
+- **Ad detector refactored for LLM abstraction**: `ad_detector.py` now uses `llm_client.py` for all LLM interactions, maintaining backward compatibility
+- **Chapters generator refactored for LLM abstraction**: `chapters_generator.py` now uses `llm_client.py` for all LLM interactions
+- **Updated requirements**: Added `openai>=1.0.0` dependency for OpenAI-compatible API support
+
+---
+
 ## [0.1.202] - 2026-01-29
 
 ### Fixed

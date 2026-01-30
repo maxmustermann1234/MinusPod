@@ -7,7 +7,11 @@ import time
 import random
 import hashlib
 from typing import List, Dict, Optional
-from anthropic import Anthropic, APIError, APIConnectionError, RateLimitError, InternalServerError
+from llm_client import (
+    get_llm_client, get_api_key, LLMClient,
+    APIError, APIConnectionError, RateLimitError, InternalServerError,
+    is_retryable_error, is_rate_limit_error
+)
 
 from config import (
     MIN_TYPICAL_AD_DURATION, MIN_SPONSOR_READ_DURATION, SHORT_GAP_THRESHOLD,
@@ -901,15 +905,20 @@ class AdDetector:
     """
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.environ.get('ANTHROPIC_API_KEY')
+        self.api_key = api_key or get_api_key()
         if not self.api_key:
-            logger.warning("No Anthropic API key found")
-        self.client = None
+            logger.warning("No LLM API key found")
+        self._llm_client: Optional[LLMClient] = None
         self._db = None
         self._audio_fingerprinter = None
         self._text_pattern_matcher = None
         self._pattern_service = None
         self._sponsor_service = None
+
+    @property
+    def client(self) -> Optional[LLMClient]:
+        """Backward compatibility property for accessing the LLM client."""
+        return self._llm_client
 
     @property
     def db(self):
@@ -968,34 +977,27 @@ class AdDetector:
         return self._sponsor_service
 
     def initialize_client(self):
-        """Initialize Anthropic client."""
-        if self.client is None and self.api_key:
+        """Initialize LLM client."""
+        if self._llm_client is None and self.api_key:
             try:
-                self.client = Anthropic(api_key=self.api_key)
-                logger.info("Anthropic client initialized")
+                self._llm_client = get_llm_client()
+                logger.info(f"LLM client initialized: {self._llm_client.get_provider_name()}")
             except Exception as e:
-                logger.error(f"Failed to initialize Anthropic client: {e}")
+                logger.error(f"Failed to initialize LLM client: {e}")
                 raise
 
     def get_available_models(self) -> List[Dict]:
-        """Get list of available Claude models from API."""
+        """Get list of available models from LLM provider."""
         try:
             self.initialize_client()
-            if not self.client:
+            if not self._llm_client:
                 return []
 
-            # Anthropic API models endpoint
-            response = self.client.models.list()
-            models = []
-            for model in response.data:
-                # Filter to only include claude models suitable for this task
-                if 'claude' in model.id.lower():
-                    models.append({
-                        'id': model.id,
-                        'name': model.display_name if hasattr(model, 'display_name') else model.id,
-                        'created': model.created if hasattr(model, 'created') else None
-                    })
-            return models
+            models = self._llm_client.list_models()
+            return [
+                {'id': m.id, 'name': m.name, 'created': m.created}
+                for m in models
+            ]
         except Exception as e:
             logger.warning(f"Could not fetch models from API: {e}")
             # Return known models as fallback
@@ -1003,8 +1005,6 @@ class AdDetector:
                 {'id': 'claude-sonnet-4-5-20250929', 'name': 'Claude Sonnet 4.5'},
                 {'id': 'claude-opus-4-5-20251101', 'name': 'Claude Opus 4.5'},
                 {'id': 'claude-sonnet-4-20250514', 'name': 'Claude Sonnet 4'},
-                {'id': 'claude-opus-4-1-20250414', 'name': 'Claude Opus 4.1'},
-                {'id': 'claude-3-5-sonnet-20241022', 'name': 'Claude 3.5 Sonnet'},
             ]
 
     def get_model(self) -> str:
@@ -1156,18 +1156,7 @@ class AdDetector:
 
     def _is_retryable_error(self, error: Exception) -> bool:
         """Check if an error is transient and should be retried."""
-        # Rate limit and connection errors are retryable
-        if isinstance(error, (APIConnectionError, RateLimitError)):
-            return True
-        # Internal server errors (500, 503, 529 overloaded) are retryable
-        if isinstance(error, InternalServerError):
-            return True
-        # Check for specific status codes in generic APIError
-        if isinstance(error, APIError):
-            status = getattr(error, 'status_code', None)
-            if status in (429, 500, 502, 503, 529):
-                return True
-        return False
+        return is_retryable_error(error)
 
     def _calculate_backoff(self, attempt: int) -> float:
         """Calculate exponential backoff delay with optional jitter."""
@@ -1349,19 +1338,19 @@ class AdDetector:
 
                 for attempt in range(max_retries + 1):
                     try:
-                        response = self.client.messages.create(
+                        response = self._llm_client.messages_create(
                             model=model,
                             max_tokens=2000,
                             temperature=0.0,
                             system=system_prompt,
                             messages=[{"role": "user", "content": prompt}],
-                            timeout=120.0  # 2 minute timeout
+                            timeout=120.0
                         )
                         break
                     except Exception as e:
                         last_error = e
                         if self._is_retryable_error(e) and attempt < max_retries:
-                            if isinstance(e, RateLimitError):
+                            if is_rate_limit_error(e):
                                 delay = 60.0
                                 logger.warning(f"[{slug}:{episode_id}] Window {i+1} rate limit, waiting {delay:.0f}s")
                             else:
@@ -1384,8 +1373,8 @@ class AdDetector:
                     logger.error(f"[{slug}:{episode_id}] Window {i+1} - no response after retries")
                     continue
 
-                # Parse response
-                response_text = response.content[0].text if response.content else ""
+                # Parse response (LLMResponse.content is already extracted text)
+                response_text = response.content
                 all_raw_responses.append(f"=== Window {i+1} ({window_start/60:.1f}-{window_end/60:.1f}min) ===\n{response_text}")
 
                 # Parse ads from response
@@ -1969,19 +1958,19 @@ class AdDetector:
 
                 for attempt in range(max_retries + 1):
                     try:
-                        response = self.client.messages.create(
+                        response = self._llm_client.messages_create(
                             model=model,
                             max_tokens=2000,
                             temperature=0.0,
                             system=system_prompt,
                             messages=[{"role": "user", "content": prompt}],
-                            timeout=120.0  # 2 minute timeout
+                            timeout=120.0
                         )
                         break
                     except Exception as e:
                         last_error = e
                         if self._is_retryable_error(e) and attempt < max_retries:
-                            if isinstance(e, RateLimitError):
+                            if is_rate_limit_error(e):
                                 delay = 60.0
                                 logger.warning(f"[{slug}:{episode_id}] Second pass Window {i+1} rate limit, waiting {delay:.0f}s")
                             else:
@@ -2002,8 +1991,8 @@ class AdDetector:
                     logger.error(f"[{slug}:{episode_id}] Second pass Window {i+1} - no response after retries")
                     continue
 
-                # Parse response
-                response_text = response.content[0].text if response.content else ""
+                # Parse response (LLMResponse.content is already extracted text)
+                response_text = response.content
                 all_raw_responses.append(f"=== Window {i+1} ({window_start/60:.1f}-{window_end/60:.1f}min) ===\n{response_text}")
 
                 # Parse ads from response
