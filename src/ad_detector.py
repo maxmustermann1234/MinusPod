@@ -1312,10 +1312,15 @@ class AdDetector:
                             start = parse_timestamp(start_val)
                             end = parse_timestamp(end_val)
                             if end > start:  # Skip invalid segments
-                                # Try various field name patterns for reason
+                                # Try various field name patterns for reason/advertiser
                                 reason = (ad.get('reason') or ad.get('advertiser') or
-                                          ad.get('product') or ad.get('content_summary') or
+                                          ad.get('sponsor') or ad.get('brand') or
+                                          ad.get('company') or ad.get('product') or
+                                          ad.get('name') or ad.get('description') or
+                                          ad.get('content_summary') or ad.get('ad_content') or
                                           'Advertisement detected')
+                                # Log extracted ad details for debugging
+                                logger.debug(f"[{slug}:{episode_id}] Extracted ad: {start:.1f}s-{end:.1f}s, reason='{reason}', fields={list(ad.keys())}")
                                 valid_ads.append({
                                     'start': start,
                                     'end': end,
@@ -1599,7 +1604,7 @@ class AdDetector:
                         'start': match.start,
                         'end': match.end,
                         'confidence': match.confidence,
-                        'reason': f"Audio fingerprint match (pattern {match.pattern_id})",
+                        'reason': match.sponsor if match.sponsor else f"Audio fingerprint match",
                         'sponsor': match.sponsor,
                         'detection_stage': 'fingerprint',
                         'pattern_id': match.pattern_id
@@ -1643,7 +1648,7 @@ class AdDetector:
                         'start': match.start,
                         'end': match.end,
                         'confidence': match.confidence,
-                        'reason': f"Text pattern match ({match.match_type}, pattern {match.pattern_id})",
+                        'reason': match.sponsor if match.sponsor else f"Text pattern match ({match.match_type})",
                         'sponsor': match.sponsor,
                         'detection_stage': 'text_pattern',
                         'pattern_id': match.pattern_id

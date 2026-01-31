@@ -6,6 +6,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.210] - 2026-01-31
+
+### Fixed
+- **Display advertiser names in pattern-matched ads**: Text pattern and fingerprint matches now use the sponsor name from the database pattern as the `reason` field instead of generic labels like "Text pattern match (outro, pattern 69)". Falls back to generic label if no sponsor is defined for the pattern.
+
+---
+
+## [0.1.209] - 2026-01-31
+
+### Fixed
+- **Expanded advertiser name extraction**: Added more field name patterns for extracting advertiser/sponsor names from Claude responses: `sponsor`, `brand`, `company`, `name`, `description`, `ad_content`. Fixes ads showing as generic "Advertisement detected" instead of the actual advertiser name.
+- **Debug logging for ad extraction**: Added debug logging to show extracted ad details and available fields, helping diagnose future field name issues.
+
+---
+
 ## [0.1.208] - 2026-01-31
 
 ### Fixed
