@@ -1301,6 +1301,8 @@ class AdDetector:
             valid_ads = []
             for ad in ads:
                 if isinstance(ad, dict):
+                    # Log raw ad object for debugging
+                    logger.debug(f"[{slug}:{episode_id}] Raw ad from LLM: {json.dumps(ad, default=str)[:500]}")
                     # Try various field name patterns for start/end times
                     start_val = (ad.get('start') or ad.get('start_time') or
                                  ad.get('ad_start_timestamp') or ad.get('start_time_seconds'))
@@ -1318,9 +1320,10 @@ class AdDetector:
                                           ad.get('company') or ad.get('product') or
                                           ad.get('name') or ad.get('description') or
                                           ad.get('content_summary') or ad.get('ad_content') or
+                                          ad.get('category') or
                                           'Advertisement detected')
-                                # Log extracted ad details for debugging
-                                logger.debug(f"[{slug}:{episode_id}] Extracted ad: {start:.1f}s-{end:.1f}s, reason='{reason}', fields={list(ad.keys())}")
+                                # Log extracted ad details for production visibility
+                                logger.info(f"[{slug}:{episode_id}] Extracted ad: {start:.1f}s-{end:.1f}s, reason='{reason}', fields={list(ad.keys())}")
                                 valid_ads.append({
                                     'start': start,
                                     'end': end,

@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.211] - 2026-01-31
+
+### Changed
+- **Enhanced ad extraction logging**: Promoted ad extraction logging from DEBUG to INFO level for production visibility. When ads are extracted from LLM responses, logs now show the timestamps, reason/advertiser, and available fields - helping diagnose when ad names show as generic "Advertisement detected" instead of actual advertiser names.
+
+### Fixed
+- **Added `category` to advertiser field fallback**: Some Claude responses use `category` as the advertiser/reason field. Added to the fallback chain to extract more descriptive ad names.
+
+---
+
 ## [0.1.210] - 2026-01-31
 
 ### Fixed
