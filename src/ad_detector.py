@@ -1229,14 +1229,26 @@ class AdDetector:
         try:
             ads = None
 
-            # Strategy 0: Try to parse as JSON object with "ads" key
-            # Handles responses like {"ads": [...]} from JSON mode
+            # Strategy 0: Try to parse as JSON object and extract ads from various structures
+            # Handles responses like {"ads": [...]}, {"segments": [...]}, {"advertisement_segments": [...]}
             try:
                 parsed = json.loads(response_text.strip())
-                if isinstance(parsed, dict) and 'ads' in parsed:
-                    if isinstance(parsed['ads'], list):
+                if isinstance(parsed, dict):
+                    if 'ads' in parsed and isinstance(parsed['ads'], list):
                         ads = parsed['ads']
-                        logger.debug(f"[{slug}:{episode_id}] Extracted ads from JSON object")
+                        logger.debug(f"[{slug}:{episode_id}] Extracted ads from 'ads' key")
+                    elif 'advertisement_segments' in parsed and isinstance(parsed['advertisement_segments'], list):
+                        ads = parsed['advertisement_segments']
+                        logger.debug(f"[{slug}:{episode_id}] Extracted ads from 'advertisement_segments' key")
+                    elif 'segments' in parsed and isinstance(parsed['segments'], list):
+                        # Filter to only advertisement type segments
+                        ads = [s for s in parsed['segments']
+                               if isinstance(s, dict) and s.get('type') == 'advertisement']
+                        logger.debug(f"[{slug}:{episode_id}] Extracted {len(ads)} ads from 'segments' array")
+                    else:
+                        # No recognizable ad structure - check for other possible keys
+                        ads = []
+                        logger.debug(f"[{slug}:{episode_id}] JSON object without recognizable ad key - no ads")
                 elif isinstance(parsed, list):
                     ads = parsed
                     logger.debug(f"[{slug}:{episode_id}] Parsed as JSON array directly")
@@ -1285,24 +1297,35 @@ class AdDetector:
                 logger.warning(f"[{slug}:{episode_id}] No valid JSON array found in response")
                 return []
 
-            # Validate and normalize ads
+            # Validate and normalize ads - handle various field name patterns
             valid_ads = []
             for ad in ads:
-                if isinstance(ad, dict) and 'start' in ad and 'end' in ad:
-                    try:
-                        start = parse_timestamp(ad['start'])
-                        end = parse_timestamp(ad['end'])
-                        if end > start:  # Skip invalid segments
-                            valid_ads.append({
-                                'start': start,
-                                'end': end,
-                                'confidence': float(ad.get('confidence', 1.0)),
-                                'reason': ad.get('reason', 'Advertisement detected'),
-                                'end_text': ad.get('end_text', '')
-                            })
-                    except ValueError as e:
-                        logger.warning(f"[{slug}:{episode_id}] Skipping ad with invalid timestamp: {e}")
-                        continue
+                if isinstance(ad, dict):
+                    # Try various field name patterns for start/end times
+                    start_val = (ad.get('start') or ad.get('start_time') or
+                                 ad.get('ad_start_timestamp') or ad.get('start_time_seconds'))
+                    end_val = (ad.get('end') or ad.get('end_time') or
+                               ad.get('ad_end_timestamp') or ad.get('end_time_seconds'))
+
+                    if start_val is not None and end_val is not None:
+                        try:
+                            start = parse_timestamp(start_val)
+                            end = parse_timestamp(end_val)
+                            if end > start:  # Skip invalid segments
+                                # Try various field name patterns for reason
+                                reason = (ad.get('reason') or ad.get('advertiser') or
+                                          ad.get('product') or ad.get('content_summary') or
+                                          'Advertisement detected')
+                                valid_ads.append({
+                                    'start': start,
+                                    'end': end,
+                                    'confidence': float(ad.get('confidence', 0.8)),
+                                    'reason': reason,
+                                    'end_text': ad.get('end_text', '')
+                                })
+                        except ValueError as e:
+                            logger.warning(f"[{slug}:{episode_id}] Skipping ad with invalid timestamp: {e}")
+                            continue
 
             return valid_ads
 

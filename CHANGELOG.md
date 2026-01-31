@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.208] - 2026-01-31
+
+### Fixed
+- **Handle Claude's elaborate response structures**: Claude sometimes ignores the prompt's output format and returns elaborate structured objects with `segments` or `advertisement_segments` keys instead of `ads`. Updated Strategy 0 in `_parse_ads_from_response()` to extract ads from these alternate structures, filtering `segments` arrays to only include items with `type: "advertisement"`.
+- **Handle alternate field names in ad validation**: Claude uses inconsistent field names (`start_time` vs `start`, `advertiser` vs `reason`, etc.). Updated validation loop to check multiple field name patterns: `start`/`start_time`/`ad_start_timestamp`/`start_time_seconds` for timestamps, and `reason`/`advertiser`/`product`/`content_summary` for descriptions.
+- **v0.1.207 regression**: Fixed regression where objects with `segments` key containing ads were treated as "no ads found" because they lacked an explicit `ads` key.
+
+---
+
+## [0.1.207] - 2026-01-31
+
+### Fixed
+- **JSON object without 'ads' key**: When Claude returns a valid JSON object but without an "ads" key (e.g., `{"status": "no_ads_detected"}`), treat it as "no ads found" rather than falling through to legacy parsing strategies that could fail with "Extra data" errors.
+
+---
+
 ## [0.1.206] - 2026-01-31
 
 ### Fixed
