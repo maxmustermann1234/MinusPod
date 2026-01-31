@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.205] - 2026-01-31
+
+### Fixed
+- **JSON response format for OpenAI-compatible LLM backends**: Added `response_format` parameter to `LLMClient.messages_create()` interface and pass `{"type": "json_object"}` for ad detection calls. This triggers JSON mode in the Claude Code OpenAI wrapper, ensuring clean JSON responses instead of markdown-wrapped output that caused "No valid JSON array found in response" warnings.
+
+---
+
 ## [0.1.203] - 2026-01-30
 
 ### Added

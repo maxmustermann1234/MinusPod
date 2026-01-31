@@ -66,7 +66,8 @@ class LLMClient(ABC):
         system: str,
         messages: List[Dict],
         temperature: float = 0.0,
-        timeout: float = 120.0
+        timeout: float = 120.0,
+        response_format: Optional[Dict[str, str]] = None
     ) -> LLMResponse:
         """Send a completion request (synchronous).
 
@@ -77,6 +78,8 @@ class LLMClient(ABC):
             messages: List of message dicts with 'role' and 'content'
             temperature: Sampling temperature (0.0 = deterministic)
             timeout: Request timeout in seconds
+            response_format: Optional format specification (e.g., {"type": "json_object"})
+                           Used by OpenAI-compatible APIs to enforce JSON output
 
         Returns:
             LLMResponse with content, model, and usage info
@@ -121,10 +124,13 @@ class AnthropicClient(LLMClient):
         system: str,
         messages: List[Dict],
         temperature: float = 0.0,
-        timeout: float = 120.0
+        timeout: float = 120.0,
+        response_format: Optional[Dict[str, str]] = None
     ) -> LLMResponse:
         self._ensure_client()
 
+        # Note: Anthropic API doesn't support response_format parameter,
+        # so we accept it for interface compatibility but don't use it
         response = self._client.messages.create(
             model=model,
             max_tokens=max_tokens,
@@ -215,20 +221,28 @@ class OpenAICompatibleClient(LLMClient):
         system: str,
         messages: List[Dict],
         temperature: float = 0.0,
-        timeout: float = 120.0
+        timeout: float = 120.0,
+        response_format: Optional[Dict[str, str]] = None
     ) -> LLMResponse:
         self._ensure_client()
 
         # OpenAI format uses system message in messages array
         all_messages = [{"role": "system", "content": system}] + messages
 
-        response = self._client.chat.completions.create(
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            messages=all_messages,
-            timeout=timeout
-        )
+        # Build request kwargs
+        kwargs = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": all_messages,
+            "timeout": timeout
+        }
+
+        # Pass response_format if provided (triggers JSON mode in wrapper)
+        if response_format:
+            kwargs["response_format"] = response_format
+
+        response = self._client.chat.completions.create(**kwargs)
 
         content = response.choices[0].message.content if response.choices else ""
 
@@ -273,6 +287,30 @@ class OpenAICompatibleClient(LLMClient):
 
     def get_provider_name(self) -> str:
         return f"openai-compatible ({self.base_url})"
+
+    def verify_connection(self, timeout: float = 10.0) -> bool:
+        """Verify the endpoint is reachable by fetching models.
+
+        Args:
+            timeout: Request timeout in seconds
+
+        Returns:
+            True if connection successful, False otherwise
+
+        Raises:
+            ConnectionError: If connection fails and raise_on_error=True
+        """
+        self._ensure_client()
+
+        try:
+            # Try to list models - this verifies the endpoint is reachable
+            response = self._client.models.list(timeout=timeout)
+            models = list(response.data) if response.data else []
+            logger.info(f"LLM endpoint verified: {self.base_url} ({len(models)} models available)")
+            return True
+        except Exception as e:
+            logger.error(f"LLM endpoint verification failed: {self.base_url} - {e}")
+            return False
 
 
 # =============================================================================
@@ -333,6 +371,44 @@ def get_api_key() -> Optional[str]:
         return os.environ.get('ANTHROPIC_API_KEY')
     else:
         return os.environ.get('OPENAI_API_KEY', os.environ.get('ANTHROPIC_API_KEY'))
+
+
+def verify_llm_connection() -> bool:
+    """Verify the LLM endpoint is reachable at startup.
+
+    For openai-compatible providers, this makes a test request to verify
+    the endpoint is accessible. For Anthropic, this just verifies the
+    API key is set.
+
+    Returns:
+        True if verification passed, False otherwise
+    """
+    provider = os.environ.get('LLM_PROVIDER', 'anthropic').lower()
+    api_key = get_api_key()
+
+    if not api_key:
+        logger.warning("No LLM API key configured - ad detection and chapter generation will be disabled")
+        return False
+
+    if provider in ('openai-compatible', 'openai', 'wrapper', 'ollama'):
+        base_url = os.environ.get('OPENAI_BASE_URL', 'http://localhost:8000/v1')
+        logger.info(f"Verifying LLM endpoint: {base_url}")
+
+        try:
+            client = get_llm_client(force_new=True)
+            if hasattr(client, 'verify_connection'):
+                if not client.verify_connection(timeout=10.0):
+                    logger.error(f"LLM endpoint unreachable: {base_url}")
+                    logger.error("Ad detection and chapter generation will fail until this is resolved")
+                    return False
+            return True
+        except Exception as e:
+            logger.error(f"LLM endpoint verification failed: {e}")
+            return False
+    else:
+        # For Anthropic, just verify API key is present
+        logger.info(f"LLM provider: {provider} (API key configured)")
+        return True
 
 
 # =============================================================================

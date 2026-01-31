@@ -1344,7 +1344,8 @@ class AdDetector:
                             temperature=0.0,
                             system=system_prompt,
                             messages=[{"role": "user", "content": prompt}],
-                            timeout=120.0
+                            timeout=120.0,
+                            response_format={"type": "json_object"}
                         )
                         break
                     except Exception as e:
@@ -1964,7 +1965,8 @@ class AdDetector:
                             temperature=0.0,
                             system=system_prompt,
                             messages=[{"role": "user", "content": prompt}],
-                            timeout=120.0
+                            timeout=120.0,
+                            response_format={"type": "json_object"}
                         )
                         break
                     except Exception as e:
