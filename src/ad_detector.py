@@ -1234,11 +1234,32 @@ class AdDetector:
 
         # Sponsor/advertiser extraction configuration
         # Priority fields are checked in order for exact matches
-        SPONSOR_PRIORITY_FIELDS = ['reason', 'advertiser', 'sponsor', 'brand', 'company', 'product', 'name']
+        SPONSOR_PRIORITY_FIELDS = ['reason', 'advertiser', 'sponsor', 'brand', 'company', 'product', 'name', 'reasoning']
         # Pattern keywords for fuzzy matching any key containing these substrings
-        SPONSOR_PATTERN_KEYWORDS = ['sponsor', 'brand', 'advertiser', 'company', 'product']
+        SPONSOR_PATTERN_KEYWORDS = ['sponsor', 'brand', 'advertiser', 'company', 'product', 'ad_name', 'note']
         # Fallback fields for description-like content
-        SPONSOR_FALLBACK_FIELDS = ['description', 'content_summary', 'ad_content', 'category']
+        SPONSOR_FALLBACK_FIELDS = ['description', 'content_summary', 'ad_content', 'category', 'summary']
+        # Text fields to search for sponsor mentions in descriptive text
+        SPONSOR_TEXT_FIELDS = ['reasoning', 'summary', 'description', 'note']
+
+        def extract_sponsor_from_text(text: str) -> str | None:
+            """Extract sponsor name from descriptive text like 'This is a BetterHelp advertisement'."""
+            if not text:
+                return None
+            # Patterns to match sponsor mentions in text
+            patterns = [
+                r'(?:this is (?:a|an) )?(\w+(?:\s+\w+)?)\s+(?:ad|advertisement|sponsor)',
+                r'(?:ad|advertisement|sponsor)(?:ship)?\s+(?:for|by|from)\s+(\w+(?:\s+\w+)?)',
+                r'promoting\s+(\w+(?:\s+\w+)?)',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    sponsor = match.group(1).strip()
+                    # Filter out common words that aren't sponsors
+                    if sponsor.lower() not in ('a', 'an', 'the', 'this', 'that', 'another'):
+                        return sponsor
+            return None
 
         def extract_sponsor_name(ad: dict) -> str:
             """Extract sponsor/advertiser name from ad dict using priority fields and pattern matching."""
@@ -1262,6 +1283,14 @@ class AdDetector:
                 value = get_valid_value(ad.get(field))
                 if value:
                     return value
+
+            # Phase 4: Extract sponsor from longer text fields using regex patterns
+            for field in SPONSOR_TEXT_FIELDS:
+                text = ad.get(field)
+                if text:
+                    sponsor = extract_sponsor_from_text(str(text))
+                    if sponsor:
+                        return sponsor
 
             return 'Advertisement detected'
 

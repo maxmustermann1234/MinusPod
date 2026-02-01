@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.217] - 2026-02-01
+
+### Improved
+- **Enhanced sponsor name extraction from OpenAI wrapper responses**: Added Phase 4 text extraction to extract sponsor names from descriptive fields like `reasoning` and `summary` when direct fields are missing or invalid. Improvements include:
+  - Added `reasoning` to priority fields (catches "This is a BetterHelp ad" style responses)
+  - Added `ad_name` and `note` to pattern keywords for fuzzy matching
+  - Added `summary` to fallback fields
+  - New regex-based extraction parses sponsor names from text like "X advertisement", "ad for X", "promoting X"
+  - Reduces generic "Advertisement detected" labels when Claude provides sponsor info in descriptive fields
+
+---
+
 ## [0.1.216] - 2026-02-01
 
 ### Fixed
