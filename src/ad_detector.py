@@ -1226,6 +1226,12 @@ class AdDetector:
         Returns:
             List of validated ad dicts with start, end, confidence, reason, end_text
         """
+        # Helper to filter out invalid sponsor values like literal "None", "unknown", etc.
+        def get_valid_value(value):
+            if value and str(value).strip().lower() not in ('none', 'unknown', 'null', 'n/a', 'na', ''):
+                return value
+            return None
+
         try:
             ads = None
 
@@ -1315,13 +1321,21 @@ class AdDetector:
                             end = parse_timestamp(end_val)
                             if end > start:  # Skip invalid segments
                                 # Try various field name patterns for reason/advertiser
-                                reason = (ad.get('reason') or ad.get('advertiser') or
-                                          ad.get('sponsor') or ad.get('ad_sponsor') or
-                                          ad.get('sponsor_name') or ad.get('sponsor_or_product') or
-                                          ad.get('brand') or ad.get('company') or
-                                          ad.get('product') or ad.get('name') or
-                                          ad.get('description') or ad.get('content_summary') or
-                                          ad.get('ad_content') or ad.get('category') or
+                                # Use get_valid_value to filter out literal "None", "unknown", etc.
+                                reason = (get_valid_value(ad.get('reason')) or
+                                          get_valid_value(ad.get('advertiser')) or
+                                          get_valid_value(ad.get('sponsor')) or
+                                          get_valid_value(ad.get('ad_sponsor')) or
+                                          get_valid_value(ad.get('sponsor_name')) or
+                                          get_valid_value(ad.get('sponsor_or_product')) or
+                                          get_valid_value(ad.get('brand')) or
+                                          get_valid_value(ad.get('company')) or
+                                          get_valid_value(ad.get('product')) or
+                                          get_valid_value(ad.get('name')) or
+                                          get_valid_value(ad.get('description')) or
+                                          get_valid_value(ad.get('content_summary')) or
+                                          get_valid_value(ad.get('ad_content')) or
+                                          get_valid_value(ad.get('category')) or
                                           'Advertisement detected')
                                 # Log extracted ad details for production visibility
                                 logger.info(f"[{slug}:{episode_id}] Extracted ad: {start:.1f}s-{end:.1f}s, reason='{reason}', fields={list(ad.keys())}")

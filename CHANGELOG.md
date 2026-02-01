@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.213] - 2026-02-01
+
+### Fixed
+- **Filter invalid sponsor values**: Added validation to filter out literal string values like "None", "unknown", "null", "n/a" that Claude sometimes returns as sponsor names. These invalid values are now properly skipped in the fallback chain, allowing the next valid field to be used or falling back to "Advertisement detected" instead of displaying unhelpful values.
+
+---
+
 ## [0.1.212] - 2026-02-01
 
 ### Fixed
