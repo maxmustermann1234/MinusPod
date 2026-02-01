@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.216] - 2026-02-01
+
+### Fixed
+- **XML entity encoding in RSS feeds**: Escape all text content and URLs when generating modified RSS feeds to prevent invalid XML from unescaped ampersands in URLs. Applies `_escape_xml()` to channel title, link, language, image fields, and item link, guid, pubDate fields. Fixes potential XML parsing errors in podcast apps when feed URLs contain tracking parameters with `&` characters.
+
+---
+
 ## [0.1.215] - 2026-02-01
 
 ### Changed
