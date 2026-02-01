@@ -320,7 +320,6 @@ The feed URL is shown in the web UI and can be copied to clipboard.
 | `LLM_PROVIDER` | `anthropic` | LLM backend: `anthropic` (direct API) or `openai-compatible` (wrapper/Ollama) |
 | `OPENAI_BASE_URL` | `http://localhost:8000/v1` | Base URL for OpenAI-compatible API (only used if `LLM_PROVIDER=openai-compatible`) |
 | `OPENAI_API_KEY` | `not-needed` | API key for OpenAI-compatible endpoint (often not required for local wrappers) |
-| `OPENAI_MODEL` | `claude-sonnet-4-5-20250929` | Default model for OpenAI-compatible provider |
 | `BASE_URL` | `http://localhost:8000` | Public URL for generated feed links |
 | `WHISPER_MODEL` | `small` | Whisper model size (tiny/base/small/medium/large) |
 | `WHISPER_DEVICE` | `cuda` | Device for Whisper (cuda/cpu) |
@@ -329,21 +328,51 @@ The feed URL is shown in the web UI and can be copied to clipboard.
 
 ### Using Claude Code Wrapper (Max Subscription)
 
-Instead of using API credits, you can use the [Claude Code OpenAI Wrapper](https://github.com/RichardAtCT/claude-code-openai-wrapper) to leverage your Claude Max subscription:
+Instead of using API credits, you can use the [Claude Code OpenAI Wrapper](https://github.com/ttlequals0/claude-code-openai-wrapper) to leverage your Claude Max subscription.
 
-```bash
-# Start the wrapper service
-docker compose --profile wrapper up -d
+**Quick Start:**
 
-# First time: authenticate with Claude
-docker compose --profile wrapper run --rm claude-wrapper claude auth login
+1. Start the wrapper service:
+   ```bash
+   docker compose --profile wrapper up -d
+   ```
 
-# Configure podcast-server to use the wrapper
-export LLM_PROVIDER=openai-compatible
-export OPENAI_BASE_URL=http://claude-wrapper:8000/v1
-```
+2. Authenticate with Claude (first time only):
+   ```bash
+   docker compose --profile wrapper run --rm claude-wrapper claude auth login
+   ```
+
+3. Configure podcast-server to use the wrapper by updating your `.env`:
+   ```bash
+   LLM_PROVIDER=openai-compatible
+   OPENAI_BASE_URL=http://claude-wrapper:8000/v1
+   OPENAI_API_KEY=not-needed
+   ```
+
+4. Restart podcast-server:
+   ```bash
+   docker compose up -d podcast-server
+   ```
 
 The wrapper exposes an OpenAI-compatible API that routes requests through your Claude Max subscription instead of consuming API credits.
+
+**Other OpenAI-Compatible Endpoints:**
+
+The `openai-compatible` provider can work with other endpoints by configuring `OPENAI_BASE_URL` and `OPENAI_API_KEY` accordingly. The model is selected via the Settings UI.
+
+**Example `.env` for OpenAI-compatible mode:**
+
+```bash
+# LLM Configuration (OpenAI-compatible)
+LLM_PROVIDER=openai-compatible
+OPENAI_BASE_URL=http://claude-wrapper:8000/v1
+OPENAI_API_KEY=not-needed
+
+# Server Configuration
+BASE_URL=http://localhost:8000
+```
+
+Note: The Claude model is configured via the Settings UI, not environment variables.
 
 ## API
 
