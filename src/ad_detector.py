@@ -1232,6 +1232,39 @@ class AdDetector:
                 return value
             return None
 
+        # Sponsor/advertiser extraction configuration
+        # Priority fields are checked in order for exact matches
+        SPONSOR_PRIORITY_FIELDS = ['reason', 'advertiser', 'sponsor', 'brand', 'company', 'product', 'name']
+        # Pattern keywords for fuzzy matching any key containing these substrings
+        SPONSOR_PATTERN_KEYWORDS = ['sponsor', 'brand', 'advertiser', 'company', 'product']
+        # Fallback fields for description-like content
+        SPONSOR_FALLBACK_FIELDS = ['description', 'content_summary', 'ad_content', 'category']
+
+        def extract_sponsor_name(ad: dict) -> str:
+            """Extract sponsor/advertiser name from ad dict using priority fields and pattern matching."""
+            # Phase 1: Check priority fields in order
+            for field in SPONSOR_PRIORITY_FIELDS:
+                value = get_valid_value(ad.get(field))
+                if value:
+                    return value
+
+            # Phase 2: Pattern match any key containing sponsor/brand/advertiser keywords
+            for key in ad.keys():
+                key_lower = key.lower()
+                for keyword in SPONSOR_PATTERN_KEYWORDS:
+                    if keyword in key_lower:
+                        value = get_valid_value(ad.get(key))
+                        if value:
+                            return value
+
+            # Phase 3: Fallback to description-like fields
+            for field in SPONSOR_FALLBACK_FIELDS:
+                value = get_valid_value(ad.get(field))
+                if value:
+                    return value
+
+            return 'Advertisement detected'
+
         try:
             ads = None
 
@@ -1320,23 +1353,8 @@ class AdDetector:
                             start = parse_timestamp(start_val)
                             end = parse_timestamp(end_val)
                             if end > start:  # Skip invalid segments
-                                # Try various field name patterns for reason/advertiser
-                                # Use get_valid_value to filter out literal "None", "unknown", etc.
-                                reason = (get_valid_value(ad.get('reason')) or
-                                          get_valid_value(ad.get('advertiser')) or
-                                          get_valid_value(ad.get('sponsor')) or
-                                          get_valid_value(ad.get('ad_sponsor')) or
-                                          get_valid_value(ad.get('sponsor_name')) or
-                                          get_valid_value(ad.get('sponsor_or_product')) or
-                                          get_valid_value(ad.get('brand')) or
-                                          get_valid_value(ad.get('company')) or
-                                          get_valid_value(ad.get('product')) or
-                                          get_valid_value(ad.get('name')) or
-                                          get_valid_value(ad.get('description')) or
-                                          get_valid_value(ad.get('content_summary')) or
-                                          get_valid_value(ad.get('ad_content')) or
-                                          get_valid_value(ad.get('category')) or
-                                          'Advertisement detected')
+                                # Extract sponsor/advertiser name using priority fields + pattern matching
+                                reason = extract_sponsor_name(ad)
                                 # Log extracted ad details for production visibility
                                 logger.info(f"[{slug}:{episode_id}] Extracted ad: {start:.1f}s-{end:.1f}s, reason='{reason}', fields={list(ad.keys())}")
                                 valid_ads.append({

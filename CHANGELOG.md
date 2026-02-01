@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.215] - 2026-02-01
+
+### Changed
+- **Refactored advertiser field extraction**: Replaced the hardcoded 16-field fallback chain with a flexible three-phase approach:
+  1. Priority fields checked in order: `reason`, `advertiser`, `sponsor`, `brand`, `company`, `product`, `name`
+  2. Pattern matching scans all keys for substrings: `sponsor`, `brand`, `advertiser`, `company`, `product` (catches variants like `ad_sponsor`, `sponsor_name`, `detected_brand`)
+  3. Fallback fields: `description`, `content_summary`, `ad_content`, `category`
+- This eliminates the need to manually add new field names whenever Claude uses a variation
+
+---
+
+## [0.1.214] - 2026-02-01
+
+### Fixed
+- **Added `detected_brand` to fallback chain**: Claude sometimes uses `detected_brand` as the field name for advertiser. Added to the fallback chain to extract sponsor names from this field.
+
+---
+
 ## [0.1.213] - 2026-02-01
 
 ### Fixed
