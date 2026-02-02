@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.223] - 2026-02-02
+
+### Fixed
+- **Full Analysis mode now actually processes**: Fixed backend bug where the `/episodes/{slug}/{episodeId}/reprocess` endpoint only set `status='pending'` in the database but never triggered actual processing. Episodes would remain stuck in pending status indefinitely. The endpoint now clears cached data and calls `process_episode()` synchronously, matching the behavior of the legacy reprocess endpoint.
+
+---
+
 ## [0.1.222] - 2026-02-02
 
 ### Added

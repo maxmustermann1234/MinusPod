@@ -2785,10 +2785,9 @@ def reprocess_episode_with_mode(slug, episode_id):
     Modes:
     - reprocess (default): Use pattern DB + Claude (leverages learned patterns)
     - full: Skip pattern DB entirely, Claude does fresh analysis without learned patterns
-
-    Reprocessed episodes are prioritized in the processing queue.
     """
     db = get_database()
+    storage = get_storage()
 
     data = request.get_json() or {}
     mode = data.get('mode', 'reprocess')
@@ -2796,47 +2795,95 @@ def reprocess_episode_with_mode(slug, episode_id):
     if mode not in ('reprocess', 'full'):
         return error_response('Invalid mode. Use "reprocess" or "full"', 400)
 
-    # Get episode
     episode = db.get_episode(slug, episode_id)
     if not episode:
         return error_response('Episode not found', 404)
 
-    # Get podcast info
+    if episode['status'] == 'processing':
+        return error_response('Episode is currently processing', 409)
+
     podcast = db.get_podcast_by_slug(slug)
     if not podcast:
         return error_response('Podcast not found', 404)
 
-    # If full mode, clear existing ad data (fresh slate for Claude)
-    if mode == 'full':
-        try:
-            # Clear any cached ad detection results
-            from storage import Storage
-            storage = Storage()
-            storage.delete_ads_json(slug, episode_id)
-            logger.info(f"[{slug}:{episode_id}] Cleared existing ad data for full reprocess")
-        except Exception as e:
-            logger.warning(f"[{slug}:{episode_id}] Could not clear ad data: {e}")
+    try:
+        # 1. Set reprocess_mode FIRST so process_episode can read it
+        db.upsert_episode(
+            slug, episode_id,
+            status='pending',
+            reprocess_mode=mode,
+            reprocess_requested_at=datetime.utcnow().isoformat() + 'Z',
+            retry_count=0,
+            error_message=None
+        )
 
-    # Reset episode status to pending for reprocessing
-    # Store reprocess_mode in the episode so processing can use it
-    # Store reprocess_requested_at for priority queue ordering
-    # Reset retry_count to allow fresh attempts
-    from datetime import datetime
-    db.upsert_episode(
-        slug, episode_id,
-        status='pending',
-        reprocess_mode=mode,
-        reprocess_requested_at=datetime.utcnow().isoformat() + 'Z',
-        retry_count=0,
-        error_message=None
-    )
+        # 2. Clear cached data
+        storage.delete_processed_file(slug, episode_id)
+        db.clear_episode_details(slug, episode_id)
 
-    logger.info(f"[{slug}:{episode_id}] Marked for {mode} reprocessing (prioritized)")
+        # 3. If full mode, also clear ads JSON
+        if mode == 'full':
+            try:
+                storage.delete_ads_json(slug, episode_id)
+                logger.info(f"[{slug}:{episode_id}] Cleared ad data for full reprocess")
+            except Exception as e:
+                logger.warning(f"[{slug}:{episode_id}] Could not clear ad data: {e}")
 
-    return json_response({
-        'message': f'Episode queued for {mode} reprocessing',
-        'mode': mode
-    })
+        # 4. Get episode metadata for processing
+        from main import process_episode
+        from rss_parser import RSSParser
+
+        episode_url = episode.get('original_url')
+        episode_title = episode.get('title', 'Unknown')
+        podcast_name = podcast.get('title', slug)
+
+        # Fetch description/published from RSS if available
+        episode_description = None
+        episode_published_at = None
+        if podcast.get('source_url'):
+            try:
+                rss_parser = RSSParser()
+                feed_content = rss_parser.fetch_feed(podcast['source_url'])
+                if feed_content:
+                    episodes = rss_parser.extract_episodes(feed_content)
+                    for ep in episodes:
+                        if ep['id'] == episode_id:
+                            episode_description = ep.get('description')
+                            published_str = ep.get('published', '')
+                            if published_str:
+                                try:
+                                    from email.utils import parsedate_to_datetime
+                                    parsed_pub = parsedate_to_datetime(published_str)
+                                    episode_published_at = parsed_pub.strftime('%Y-%m-%dT%H:%M:%SZ')
+                                except (ValueError, TypeError):
+                                    pass
+                            break
+            except Exception as e:
+                logger.warning(f"Could not fetch episode metadata: {e}")
+
+        # 5. Process immediately (like old endpoint)
+        logger.info(f"[{slug}:{episode_id}] Starting {mode} reprocess")
+        success = process_episode(
+            slug, episode_id, episode_url, episode_title,
+            podcast_name, episode_description, None, episode_published_at
+        )
+
+        if success:
+            return json_response({
+                'message': f'Episode reprocessed with {mode} mode',
+                'mode': mode,
+                'status': 'completed'
+            })
+        else:
+            return json_response({
+                'message': f'{mode.capitalize()} reprocess failed',
+                'mode': mode,
+                'status': 'failed'
+            }, 500)
+
+    except Exception as e:
+        logger.error(f"[{slug}:{episode_id}] {mode} reprocess failed: {e}")
+        return error_response(f'Reprocess failed: {str(e)}', 500)
 
 
 # ========== Import/Export Endpoints ==========
