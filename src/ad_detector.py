@@ -1683,11 +1683,17 @@ class AdDetector:
                         logger.debug(f"[{slug}:{episode_id}] Skipping fingerprint match {match.start:.1f}s-{match.end:.1f}s (false positive)")
                         continue
 
+                    # Build reason with pattern reference
+                    if match.sponsor:
+                        reason = f"{match.sponsor} (pattern #{match.pattern_id})"
+                    else:
+                        reason = f"Pattern #{match.pattern_id} (fingerprint)"
+
                     ad = {
                         'start': match.start,
                         'end': match.end,
                         'confidence': match.confidence,
-                        'reason': match.sponsor if match.sponsor else f"Audio fingerprint match",
+                        'reason': reason,
                         'sponsor': match.sponsor,
                         'detection_stage': 'fingerprint',
                         'pattern_id': match.pattern_id
@@ -1727,11 +1733,17 @@ class AdDetector:
                         logger.debug(f"[{slug}:{episode_id}] Skipping text pattern match {match.start:.1f}s-{match.end:.1f}s (false positive)")
                         continue
 
+                    # Build reason with pattern reference
+                    if match.sponsor:
+                        reason = f"{match.sponsor} (pattern #{match.pattern_id})"
+                    else:
+                        reason = f"Pattern #{match.pattern_id} ({match.match_type})"
+
                     ad = {
                         'start': match.start,
                         'end': match.end,
                         'confidence': match.confidence,
-                        'reason': match.sponsor if match.sponsor else f"Text pattern match ({match.match_type})",
+                        'reason': reason,
                         'sponsor': match.sponsor,
                         'detection_stage': 'text_pattern',
                         'pattern_id': match.pattern_id

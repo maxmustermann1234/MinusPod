@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.221] - 2026-02-02
+
+### Improved
+- **Pattern match descriptions include pattern reference**: Pattern-matched ads now show "Sponsor (pattern #X)" format in the reason field instead of just the sponsor name. This provides traceability for pattern matches, making it easier to identify and manage patterns.
+
+### Added
+- **GET /patterns/contaminated endpoint**: New endpoint to find all active patterns containing multiple ad transition phrases, indicating merged multi-sponsor ads that should be split. Returns pattern IDs, sponsors, text lengths, and transition counts.
+
+- **POST /patterns/{id}/split endpoint**: New endpoint to split a contaminated pattern into separate single-sponsor patterns. Uses the existing `TextPatternMatcher.split_pattern()` method to detect ad transitions and create individual patterns. The original pattern is disabled after successful split.
+
+---
+
 ## [0.1.220] - 2026-02-01
 
 ### Fixed

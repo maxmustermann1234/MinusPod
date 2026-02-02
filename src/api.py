@@ -2359,6 +2359,70 @@ def get_pattern_health():
     })
 
 
+@api.route('/patterns/contaminated', methods=['GET'])
+@log_request
+def get_contaminated_patterns():
+    """Find all patterns that have multiple ad transitions and could be split.
+
+    Returns patterns containing multiple ad transition phrases, indicating
+    they may contain merged multi-sponsor ads that should be split.
+    """
+    from text_pattern_matcher import AD_TRANSITION_PHRASES
+
+    db = get_database()
+    patterns = db.get_ad_patterns(active_only=True)
+    contaminated = []
+
+    for pattern in patterns:
+        text = (pattern.get('text_template') or '').lower()
+        # Count ad transition phrases
+        transition_count = sum(1 for phrase in AD_TRANSITION_PHRASES if phrase in text)
+
+        if transition_count > 1:
+            contaminated.append({
+                'id': pattern['id'],
+                'sponsor': pattern.get('sponsor'),
+                'podcast_id': pattern.get('podcast_id'),
+                'text_length': len(pattern.get('text_template', '')),
+                'transition_count': transition_count,
+                'scope': pattern.get('scope')
+            })
+
+    return json_response({
+        'count': len(contaminated),
+        'patterns': contaminated
+    })
+
+
+@api.route('/patterns/<int:pattern_id>/split', methods=['POST'])
+@log_request
+def split_pattern(pattern_id):
+    """Split a contaminated multi-sponsor pattern into separate patterns.
+
+    Uses the TextPatternMatcher.split_pattern() method to detect ad transition
+    phrases and create individual single-sponsor patterns. The original pattern
+    is disabled after successful split.
+    """
+    from text_pattern_matcher import TextPatternMatcher
+
+    db = get_database()
+    matcher = TextPatternMatcher(db=db)
+    new_ids = matcher.split_pattern(pattern_id)
+
+    if not new_ids:
+        return error_response(
+            f'Pattern {pattern_id} does not need splitting or was not found',
+            400
+        )
+
+    return json_response({
+        'success': True,
+        'original_pattern_id': pattern_id,
+        'new_pattern_ids': new_ids,
+        'message': f'Split into {len(new_ids)} patterns'
+    })
+
+
 @api.route('/patterns/<int:pattern_id>', methods=['GET'])
 @log_request
 def get_pattern(pattern_id):
