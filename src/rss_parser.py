@@ -3,11 +3,9 @@ import feedparser
 import logging
 import hashlib
 import os
-from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import Dict, List, Optional
 import requests
-from slugify import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -139,18 +137,18 @@ class RSSParser:
                      'xmlns:podcast="https://podcastindex.org/namespace/1.0">')
         lines.append('<channel>')
 
-        # Copy channel metadata
+        # Copy channel metadata (escape XML entities to prevent invalid XML from & in URLs)
         channel = feed.feed
-        lines.append(f'<title>{channel.get("title", "")}</title>')
-        lines.append(f'<link>{channel.get("link", "")}</link>')
+        lines.append(f'<title>{self._escape_xml(channel.get("title", ""))}</title>')
+        lines.append(f'<link>{self._escape_xml(channel.get("link", ""))}</link>')
         lines.append(f'<description><![CDATA[{channel.get("description", "")}]]></description>')
-        lines.append(f'<language>{channel.get("language", "en")}</language>')
+        lines.append(f'<language>{self._escape_xml(channel.get("language", "en"))}</language>')
 
         if 'image' in channel:
             lines.append(f'<image>')
-            lines.append(f'  <url>{channel.image.get("href", "")}</url>')
-            lines.append(f'  <title>{channel.image.get("title", "")}</title>')
-            lines.append(f'  <link>{channel.image.get("link", "")}</link>')
+            lines.append(f'  <url>{self._escape_xml(channel.image.get("href", ""))}</url>')
+            lines.append(f'  <title>{self._escape_xml(channel.image.get("title", ""))}</title>')
+            lines.append(f'  <link>{self._escape_xml(channel.image.get("link", ""))}</link>')
             lines.append(f'</image>')
 
         # Limit to most recent episodes to keep feed size manageable
@@ -181,9 +179,9 @@ class RSSParser:
             lines.append('<item>')
             lines.append(f'  <title>{self._escape_xml(entry.get("title", ""))}</title>')
             lines.append(f'  <description><![CDATA[{entry.get("description", "")}]]></description>')
-            lines.append(f'  <link>{entry.get("link", "")}</link>')
-            lines.append(f'  <guid>{entry.get("id", episode_url)}</guid>')
-            lines.append(f'  <pubDate>{entry.get("published", "")}</pubDate>')
+            lines.append(f'  <link>{self._escape_xml(entry.get("link", ""))}</link>')
+            lines.append(f'  <guid>{self._escape_xml(entry.get("id", episode_url))}</guid>')
+            lines.append(f'  <pubDate>{self._escape_xml(entry.get("published", ""))}</pubDate>')
 
             # Modified enclosure URL
             lines.append(f'  <enclosure url="{modified_url}" type="audio/mpeg" />')

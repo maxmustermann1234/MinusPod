@@ -991,6 +991,86 @@ paths:
                   skipped:
                     type: integer
 
+  /patterns/contaminated:
+    get:
+      tags:
+        - Patterns
+      summary: Find contaminated patterns
+      description: |
+        Scan all active patterns for those containing multiple ad transition phrases,
+        indicating they may contain merged multi-sponsor ads that should be split.
+      operationId: getContaminatedPatterns
+      responses:
+        '200':
+          description: List of contaminated patterns
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                    description: Number of contaminated patterns found
+                  patterns:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        sponsor:
+                          type: string
+                        podcast_id:
+                          type: string
+                        text_length:
+                          type: integer
+                        transition_count:
+                          type: integer
+                        scope:
+                          type: string
+
+  /patterns/{patternId}/split:
+    post:
+      tags:
+        - Patterns
+      summary: Split a contaminated pattern
+      description: |
+        Split a pattern containing multiple ad transition phrases into separate
+        single-sponsor patterns. The original pattern is disabled and new patterns
+        are created for each detected sponsor segment.
+      operationId: splitPattern
+      parameters:
+        - name: patternId
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: ID of the pattern to split
+      responses:
+        '200':
+          description: Pattern successfully split
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  original_pattern_id:
+                    type: integer
+                  new_pattern_ids:
+                    type: array
+                    items:
+                      type: integer
+                  message:
+                    type: string
+        '400':
+          description: Pattern does not need splitting or not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /networks:
     get:
       tags:

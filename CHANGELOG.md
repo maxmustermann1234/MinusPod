@@ -6,6 +6,93 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.223] - 2026-02-02
+
+### Fixed
+- **Full Analysis mode now actually processes**: Fixed backend bug where the `/episodes/{slug}/{episodeId}/reprocess` endpoint only set `status='pending'` in the database but never triggered actual processing. Episodes would remain stuck in pending status indefinitely. The endpoint now clears cached data and calls `process_episode()` synchronously, matching the behavior of the legacy reprocess endpoint.
+
+---
+
+## [0.1.222] - 2026-02-02
+
+### Added
+- **Pattern ID column on Patterns page**: Added sortable ID column as the first column in the patterns table. Pattern IDs are now visible in both desktop table view and mobile card view.
+
+- **Clickable pattern links in ad reasons**: Pattern references like "(pattern #63)" in detected ad descriptions are now clickable links that navigate to the pattern detail modal on the Patterns page.
+
+- **Pattern search by ID**: The search filter on the Patterns page now also matches pattern IDs, so you can search for "63" to find pattern #63.
+
+### Fixed
+- **"Full Analysis" mode ignored during reprocess**: Fixed a bug where clicking "Full Analysis" in the reprocess menu would still use patterns instead of pure Claude analysis. The frontend was calling the wrong API endpoint (`/feeds/{slug}/episodes/{episodeId}/reprocess`) which ignored the mode parameter. Now correctly calls `/episodes/{slug}/{episodeId}/reprocess` which properly handles the mode.
+
+---
+
+## [0.1.221] - 2026-02-02
+
+### Improved
+- **Pattern match descriptions include pattern reference**: Pattern-matched ads now show "Sponsor (pattern #X)" format in the reason field instead of just the sponsor name. This provides traceability for pattern matches, making it easier to identify and manage patterns.
+
+### Added
+- **GET /patterns/contaminated endpoint**: New endpoint to find all active patterns containing multiple ad transition phrases, indicating merged multi-sponsor ads that should be split. Returns pattern IDs, sponsors, text lengths, and transition counts.
+
+- **POST /patterns/{id}/split endpoint**: New endpoint to split a contaminated pattern into separate single-sponsor patterns. Uses the existing `TextPatternMatcher.split_pattern()` method to detect ad transitions and create individual patterns. The original pattern is disabled after successful split.
+
+---
+
+## [0.1.220] - 2026-02-01
+
+### Fixed
+- **Multi-sponsor pattern contamination**: Added `detect_multi_sponsor_pattern()` and `split_pattern()` methods to `TextPatternMatcher` to detect and split patterns that were incorrectly created with multiple sponsor reads merged together. These methods scan for common ad transition phrases ("this episode is brought to you by", "brought to you by", etc.) and create separate patterns for each sponsor.
+
+- **Prevention of future contamination**: Added validation to `create_pattern_from_ad()` to reject patterns with:
+  - Duration > 120 seconds (reduced from 180s) - single ads rarely exceed 2 minutes
+  - Multiple ad transition phrases detected - indicates merged multi-ad spans
+  - Sponsor name not appearing in intro text - may indicate misattribution
+
+- **Missing descriptions in reason field**: Enhanced `_parse_ads_from_response()` to extract Claude's explanation/description from response and combine with sponsor name in the reason field. Now checks `explanation`, `content_summary`, `description`, `ad_description`, `message`, `content`, and `summary` fields. Descriptions over 150 characters are truncated.
+
+---
+
+## [0.1.219] - 2026-02-01
+
+### Changed
+- **Codebase cleanup**: Comprehensive cleanup to remove dead code, unused dependencies, and stale artifacts:
+  - Deleted stale `tmp/` directory (docker-compose.wrapper.yml, llm_client.py copy, migration docs)
+  - Removed unused `soundfile` dependency from requirements.txt
+  - Removed unused imports from 9 Python files (ad_detector, chapters_generator, rss_parser, storage, text_pattern_matcher, transcriber, gpu, pattern_service, api)
+  - Removed unused exception imports (APIError, APIConnectionError, RateLimitError, InternalServerError) from ad_detector.py
+  - Fixed .gitignore duplicates (.env, *.db, *.log, pixelprobe.db) and removed contradictory CLAUDE.md entry
+  - Removed TODO comment from main.py
+  - Removed PLACEHOLDER env var from docker-compose.yml claude-wrapper service
+
+---
+
+## [0.1.218] - 2026-02-01
+
+### Fixed
+- **Reasoning field precedence bug in sponsor extraction**: Removed `reasoning` from `SPONSOR_PRIORITY_FIELDS` as it was incorrectly taking precedence over `sponsor_name` in Phase 2 pattern matching. The `reasoning` field contains descriptive text (e.g., "Host read ad for eBay promoting...") and was being returned instead of the actual sponsor name. Now `reasoning` is only used in Phase 4 for regex-based text extraction as a fallback when no direct sponsor name is found.
+
+---
+
+## [0.1.217] - 2026-02-01
+
+### Improved
+- **Enhanced sponsor name extraction from OpenAI wrapper responses**: Added Phase 4 text extraction to extract sponsor names from descriptive fields like `reasoning` and `summary` when direct fields are missing or invalid. Improvements include:
+  - Added `reasoning` to priority fields (catches "This is a BetterHelp ad" style responses) [Note: reverted in v0.1.218]
+  - Added `ad_name` and `note` to pattern keywords for fuzzy matching
+  - Added `summary` to fallback fields
+  - New regex-based extraction parses sponsor names from text like "X advertisement", "ad for X", "promoting X"
+  - Reduces generic "Advertisement detected" labels when Claude provides sponsor info in descriptive fields
+
+---
+
+## [0.1.216] - 2026-02-01
+
+### Fixed
+- **XML entity encoding in RSS feeds**: Escape all text content and URLs when generating modified RSS feeds to prevent invalid XML from unescaped ampersands in URLs. Applies `_escape_xml()` to channel title, link, language, image fields, and item link, guid, pubDate fields. Fixes potential XML parsing errors in podcast apps when feed URLs contain tracking parameters with `&` characters.
+
+---
+
 ## [0.1.215] - 2026-02-01
 
 ### Changed

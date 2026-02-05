@@ -1,15 +1,12 @@
 """Ad detection using Claude API with configurable prompts and model."""
 import logging
 import json
-import os
 import re
 import time
 import random
-import hashlib
 from typing import List, Dict, Optional
 from llm_client import (
     get_llm_client, get_api_key, LLMClient,
-    APIError, APIConnectionError, RateLimitError, InternalServerError,
     is_retryable_error, is_rate_limit_error
 )
 
@@ -1236,9 +1233,30 @@ class AdDetector:
         # Priority fields are checked in order for exact matches
         SPONSOR_PRIORITY_FIELDS = ['reason', 'advertiser', 'sponsor', 'brand', 'company', 'product', 'name']
         # Pattern keywords for fuzzy matching any key containing these substrings
-        SPONSOR_PATTERN_KEYWORDS = ['sponsor', 'brand', 'advertiser', 'company', 'product']
+        SPONSOR_PATTERN_KEYWORDS = ['sponsor', 'brand', 'advertiser', 'company', 'product', 'ad_name', 'note']
         # Fallback fields for description-like content
-        SPONSOR_FALLBACK_FIELDS = ['description', 'content_summary', 'ad_content', 'category']
+        SPONSOR_FALLBACK_FIELDS = ['description', 'content_summary', 'ad_content', 'category', 'summary']
+        # Text fields to search for sponsor mentions in descriptive text
+        SPONSOR_TEXT_FIELDS = ['reasoning', 'summary', 'description', 'note']
+
+        def extract_sponsor_from_text(text: str) -> str | None:
+            """Extract sponsor name from descriptive text like 'This is a BetterHelp advertisement'."""
+            if not text:
+                return None
+            # Patterns to match sponsor mentions in text
+            patterns = [
+                r'(?:this is (?:a|an) )?(\w+(?:\s+\w+)?)\s+(?:ad|advertisement|sponsor)',
+                r'(?:ad|advertisement|sponsor)(?:ship)?\s+(?:for|by|from)\s+(\w+(?:\s+\w+)?)',
+                r'promoting\s+(\w+(?:\s+\w+)?)',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    sponsor = match.group(1).strip()
+                    # Filter out common words that aren't sponsors
+                    if sponsor.lower() not in ('a', 'an', 'the', 'this', 'that', 'another'):
+                        return sponsor
+            return None
 
         def extract_sponsor_name(ad: dict) -> str:
             """Extract sponsor/advertiser name from ad dict using priority fields and pattern matching."""
@@ -1262,6 +1280,14 @@ class AdDetector:
                 value = get_valid_value(ad.get(field))
                 if value:
                     return value
+
+            # Phase 4: Extract sponsor from longer text fields using regex patterns
+            for field in SPONSOR_TEXT_FIELDS:
+                text = ad.get(field)
+                if text:
+                    sponsor = extract_sponsor_from_text(str(text))
+                    if sponsor:
+                        return sponsor
 
             return 'Advertisement detected'
 
@@ -1355,6 +1381,27 @@ class AdDetector:
                             if end > start:  # Skip invalid segments
                                 # Extract sponsor/advertiser name using priority fields + pattern matching
                                 reason = extract_sponsor_name(ad)
+
+                                # Extract description from Claude's response to enrich the reason
+                                description = None
+                                desc_fields = ['explanation', 'content_summary', 'description',
+                                               'ad_description', 'message', 'content', 'summary']
+                                for desc_field in desc_fields:
+                                    desc = ad.get(desc_field)
+                                    if desc and isinstance(desc, str) and len(desc) > 10:
+                                        description = desc
+                                        break
+
+                                # Combine sponsor + description in reason field
+                                if description:
+                                    if reason and reason != 'Advertisement detected':
+                                        # Truncate long descriptions
+                                        if len(description) > 150:
+                                            description = description[:147] + "..."
+                                        reason = f"{reason}: {description}"
+                                    elif not reason or reason == 'Advertisement detected':
+                                        reason = description
+
                                 # Log extracted ad details for production visibility
                                 logger.info(f"[{slug}:{episode_id}] Extracted ad: {start:.1f}s-{end:.1f}s, reason='{reason}', fields={list(ad.keys())}")
                                 valid_ads.append({
@@ -1636,11 +1683,17 @@ class AdDetector:
                         logger.debug(f"[{slug}:{episode_id}] Skipping fingerprint match {match.start:.1f}s-{match.end:.1f}s (false positive)")
                         continue
 
+                    # Build reason with pattern reference
+                    if match.sponsor:
+                        reason = f"{match.sponsor} (pattern #{match.pattern_id})"
+                    else:
+                        reason = f"Pattern #{match.pattern_id} (fingerprint)"
+
                     ad = {
                         'start': match.start,
                         'end': match.end,
                         'confidence': match.confidence,
-                        'reason': match.sponsor if match.sponsor else f"Audio fingerprint match",
+                        'reason': reason,
                         'sponsor': match.sponsor,
                         'detection_stage': 'fingerprint',
                         'pattern_id': match.pattern_id
@@ -1680,11 +1733,17 @@ class AdDetector:
                         logger.debug(f"[{slug}:{episode_id}] Skipping text pattern match {match.start:.1f}s-{match.end:.1f}s (false positive)")
                         continue
 
+                    # Build reason with pattern reference
+                    if match.sponsor:
+                        reason = f"{match.sponsor} (pattern #{match.pattern_id})"
+                    else:
+                        reason = f"Pattern #{match.pattern_id} ({match.match_type})"
+
                     ad = {
                         'start': match.start,
                         'end': match.end,
                         'confidence': match.confidence,
-                        'reason': match.sponsor if match.sponsor else f"Text pattern match ({match.match_type})",
+                        'reason': reason,
                         'sponsor': match.sponsor,
                         'detection_stage': 'text_pattern',
                         'pattern_id': match.pattern_id
