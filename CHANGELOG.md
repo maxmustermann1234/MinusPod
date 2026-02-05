@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.230] - 2026-02-05
+
+### Fixed
+- **Concurrent episode processing despite fcntl.flock**: Fixed bug where two episodes could still process simultaneously within the same Gunicorn worker. The issue was that `acquire()` always opened a new file descriptor, overwriting `_lock_fd` and orphaning the previous fd. Since `flock()` is per-fd (not per-file) within the same process, the second `flock()` on a different fd would succeed. Added `_fd_lock` threading lock to synchronize access to `_lock_fd` across threads, and added early rejection if `_lock_fd` is already set (meaning this process already holds the lock). Promoted lock acquire/release logging from DEBUG to INFO for production visibility.
+
+---
+
 ## [0.1.229] - 2026-02-05
 
 ### Fixed

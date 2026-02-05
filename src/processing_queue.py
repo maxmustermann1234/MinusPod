@@ -51,6 +51,7 @@ class ProcessingQueue:
         self._lock_file_path = data_dir / '.processing_queue.lock'
         self._state_file_path = data_dir / '.processing_queue_state.json'
         self._lock_fd = None
+        self._fd_lock = threading.Lock()  # Protect _lock_fd access across threads
         self._initialized = True
 
     def _read_state(self) -> dict:
@@ -116,6 +117,8 @@ class ProcessingQueue:
         Uses fcntl.flock() for cross-process coordination. Only one worker
         across all Gunicorn processes can hold this lock at a time.
 
+        Thread-safe within a single process via _fd_lock.
+
         Args:
             slug: Podcast slug
             episode_id: Episode ID
@@ -124,64 +127,78 @@ class ProcessingQueue:
         Returns:
             True if lock acquired, False if busy
         """
-        # Clear stale state before attempting to acquire
-        self._clear_stale_state()
+        with self._fd_lock:
+            # If this process already holds the lock, reject new acquire
+            # This prevents the fd overwrite bug where opening a new fd would
+            # orphan the existing one and allow double-acquisition
+            if self._lock_fd is not None:
+                current = self._read_state().get('current_episode')
+                current_str = f"{current[0]}:{current[1]}" if current else "unknown"
+                logger.warning(
+                    f"ProcessingQueue rejecting acquire for {slug}:{episode_id} - "
+                    f"already holding lock for {current_str}"
+                )
+                return False
 
-        try:
-            # Open lock file (create if doesn't exist)
-            self._lock_fd = open(self._lock_file_path, 'w')
+            # Clear stale state before attempting to acquire
+            self._clear_stale_state()
 
-            # Try to acquire exclusive lock
-            if timeout > 0:
-                # Blocking with timeout - use LOCK_EX (would block forever)
-                # fcntl doesn't support timeout directly, so we poll
-                start = time.time()
-                while (time.time() - start) < timeout:
-                    try:
-                        fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except BlockingIOError:
-                        time.sleep(0.1)
+            try:
+                # Open lock file (create if doesn't exist)
+                self._lock_fd = open(self._lock_file_path, 'w')
+
+                # Try to acquire exclusive lock
+                if timeout > 0:
+                    # Blocking with timeout - use LOCK_EX (would block forever)
+                    # fcntl doesn't support timeout directly, so we poll
+                    start = time.time()
+                    while (time.time() - start) < timeout:
+                        try:
+                            fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            break
+                        except BlockingIOError:
+                            time.sleep(0.1)
+                    else:
+                        # Timeout expired
+                        self._lock_fd.close()
+                        self._lock_fd = None
+                        return False
                 else:
-                    # Timeout expired
+                    # Non-blocking
+                    fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+                # Lock acquired - write state
+                self._write_state(slug, episode_id, time.time())
+                logger.info(f"ProcessingQueue lock acquired for {slug}:{episode_id}")
+                return True
+
+            except BlockingIOError:
+                # Lock is held by another process
+                if self._lock_fd:
                     self._lock_fd.close()
                     self._lock_fd = None
-                    return False
-            else:
-                # Non-blocking
-                fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-            # Lock acquired - write state
-            self._write_state(slug, episode_id, time.time())
-            logger.debug(f"ProcessingQueue lock acquired for {slug}:{episode_id}")
-            return True
-
-        except BlockingIOError:
-            # Lock is held by another process
-            if self._lock_fd:
-                self._lock_fd.close()
-                self._lock_fd = None
-            return False
-        except OSError as e:
-            logger.error(f"ProcessingQueue lock error: {e}")
-            if self._lock_fd:
-                self._lock_fd.close()
-                self._lock_fd = None
-            return False
+                return False
+            except OSError as e:
+                logger.error(f"ProcessingQueue lock error: {e}")
+                if self._lock_fd:
+                    self._lock_fd.close()
+                    self._lock_fd = None
+                return False
 
     def release(self):
-        """Release processing lock."""
-        try:
-            if self._lock_fd is not None:
-                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
-                self._lock_fd.close()
-                self._lock_fd = None
-                logger.debug("ProcessingQueue lock released")
-        except OSError as e:
-            logger.warning(f"Error releasing ProcessingQueue lock: {e}")
+        """Release processing lock. Thread-safe via _fd_lock."""
+        with self._fd_lock:
+            try:
+                if self._lock_fd is not None:
+                    fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+                    self._lock_fd.close()
+                    self._lock_fd = None
+                    logger.info("ProcessingQueue lock released")
+            except OSError as e:
+                logger.warning(f"Error releasing ProcessingQueue lock: {e}")
 
-        # Clear state file
-        self._write_state(None, None, None)
+            # Clear state file
+            self._write_state(None, None, None)
 
     def get_current(self) -> Optional[Tuple[str, str]]:
         """Get currently processing episode (slug, episode_id) or None.
