@@ -3070,6 +3070,39 @@ class Database:
         conn.commit()
         return cursor.rowcount
 
+    def reset_orphaned_queue_items(self, stuck_minutes: int = 35) -> int:
+        """Reset queue items stuck in 'processing' for too long.
+
+        This catches orphaned queue items where the worker crashed or was killed
+        without properly updating the status. Items stuck longer than stuck_minutes
+        are reset to 'pending' for retry.
+
+        Args:
+            stuck_minutes: Minutes after which a 'processing' item is considered orphaned
+
+        Returns:
+            Count of reset items
+        """
+        conn = self.get_connection()
+        cursor = conn.execute(
+            """UPDATE auto_process_queue
+               SET status = 'pending',
+                   updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+                   error_message = 'Reset after processing timeout'
+               WHERE status = 'processing'
+               AND datetime(updated_at) < datetime('now', ? || ' minutes')
+               RETURNING id, episode_id""",
+            (f'-{stuck_minutes}',)
+        )
+        orphans = cursor.fetchall()
+        conn.commit()
+
+        if orphans:
+            for row in orphans:
+                logger.info(f"Reset orphaned queue item: id={row['id']}, episode_id={row['episode_id']}")
+
+        return len(orphans)
+
     # ========== Full-Text Search Methods ==========
 
     def rebuild_search_index(self) -> int:

@@ -702,8 +702,17 @@ def background_queue_processor():
     """
     refresh_logger.info("Auto-process queue processor started")
     backoff_seconds = 30  # Initial backoff for busy queue
+    orphan_check_interval = 0  # Counter for orphan check (every 10 iterations)
     while not shutdown_event.is_set():
         try:
+            # Periodically check for orphaned queue items (every ~5 minutes)
+            orphan_check_interval += 1
+            if orphan_check_interval >= 10:
+                orphan_check_interval = 0
+                orphaned = db.reset_orphaned_queue_items(stuck_minutes=35)
+                if orphaned > 0:
+                    refresh_logger.info(f"Reset {orphaned} orphaned queue items")
+
             # Get next queued episode
             queued = db.get_next_queued_episode()
 
@@ -719,9 +728,6 @@ def background_queue_processor():
 
                 refresh_logger.info(f"[{slug}:{episode_id}] Auto-processing queued episode: {title}")
 
-                # Mark as processing
-                db.update_queue_status(queue_id, 'processing')
-
                 try:
                     # Try to start background processing using the existing queue
                     started, reason = start_background_processing(
@@ -729,6 +735,8 @@ def background_queue_processor():
                     )
 
                     if started:
+                        # Only mark as processing AFTER we successfully acquired the lock
+                        db.update_queue_status(queue_id, 'processing')
                         # Reset backoff on successful start
                         backoff_seconds = 30
                         # Wait for processing to complete (poll status)
@@ -787,29 +795,65 @@ def background_queue_processor():
 
 
 def reset_stuck_processing_episodes():
-    """Reset any episodes stuck in 'processing' status from previous crash."""
+    """Reset any episodes stuck in 'processing' status from previous crash.
+
+    Tracks retry count and marks episodes as permanently_failed after MAX_EPISODE_RETRIES
+    to prevent infinite retry loops for episodes that consistently crash workers.
+    """
     conn = db.get_connection()
     cursor = conn.execute(
-        """SELECT e.id, e.episode_id, p.slug
+        """SELECT e.id, e.episode_id, e.retry_count, p.slug
            FROM episodes e
            JOIN podcasts p ON e.podcast_id = p.id
            WHERE e.status = 'processing'"""
     )
     stuck = cursor.fetchall()
 
+    reset_count = 0
+    failed_count = 0
+
     for row in stuck:
-        refresh_logger.warning(
-            f"Resetting stuck episode: {row['slug']}/{row['episode_id']}"
-        )
-        conn.execute(
-            "UPDATE episodes SET status = 'pending', error_message = 'Reset after restart' "
-            "WHERE id = ?",
-            (row['id'],)
-        )
+        current_retry_count = row['retry_count'] or 0
+        new_retry_count = current_retry_count + 1
+
+        if new_retry_count >= MAX_EPISODE_RETRIES:
+            # Too many retries - mark as permanently failed
+            refresh_logger.warning(
+                f"Marking episode as permanently_failed after {new_retry_count} crashes: "
+                f"{row['slug']}/{row['episode_id']}"
+            )
+            conn.execute(
+                """UPDATE episodes SET
+                   status = 'permanently_failed',
+                   retry_count = ?,
+                   error_message = 'Exceeded retry limit after repeated processing crashes'
+                   WHERE id = ?""",
+                (new_retry_count, row['id'])
+            )
+            failed_count += 1
+        else:
+            # Still have retries left - reset to pending
+            refresh_logger.warning(
+                f"Resetting stuck episode (attempt {new_retry_count}/{MAX_EPISODE_RETRIES}): "
+                f"{row['slug']}/{row['episode_id']}"
+            )
+            conn.execute(
+                """UPDATE episodes SET
+                   status = 'pending',
+                   retry_count = ?,
+                   error_message = 'Reset after restart (retry attempt)'
+                   WHERE id = ?""",
+                (new_retry_count, row['id'])
+            )
+            reset_count += 1
+
     conn.commit()
 
     if stuck:
-        refresh_logger.info(f"Reset {len(stuck)} stuck episodes to pending")
+        refresh_logger.info(
+            f"Stuck episode cleanup: {reset_count} reset to pending, "
+            f"{failed_count} marked permanently_failed"
+        )
 
 
 def _process_episode_background(slug, episode_id, original_url, title, podcast_name, description, artwork_url, published_at=None):
@@ -875,9 +919,14 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
     # Get podcast settings for processing behavior
     podcast_settings = db.get_podcast_by_slug(slug)
     skip_second_pass = podcast_settings.get('skip_second_pass', 0) if podcast_settings else 0
+    podcast_description = podcast_settings.get('description') if podcast_settings else None
 
     try:
         audio_logger.info(f"[{slug}:{episode_id}] Starting: \"{episode_title}\"")
+
+        # Log confidence threshold at start of processing
+        min_cut_confidence = get_min_cut_confidence()
+        audio_logger.info(f"[{slug}:{episode_id}] Confidence threshold: {min_cut_confidence:.0%}")
 
         # Track status for UI
         status_service.start_job(slug, episode_id, episode_title, podcast_name)
@@ -996,7 +1045,8 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 audio_analysis=audio_analysis_result,
                 audio_path=audio_path,
                 podcast_id=slug,  # Pass slug as podcast_id for pattern matching
-                skip_patterns=skip_patterns  # Gap 3: 'full' mode skips pattern DB
+                skip_patterns=skip_patterns,  # Gap 3: 'full' mode skips pattern DB
+                podcast_description=podcast_description  # Pass podcast-level description for context
             )
             storage.save_ads_json(slug, episode_id, ad_result, pass_number=1)
 
@@ -1041,7 +1091,8 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                     segments,  # Same transcript, blind analysis
                     podcast_name, episode_title, slug, episode_id, episode_description,
                     audio_analysis=audio_analysis_result,
-                    skip_patterns=skip_patterns  # Gap 3: 'full' mode skips pattern DB
+                    skip_patterns=skip_patterns,  # Gap 3: 'full' mode skips pattern DB
+                    podcast_description=podcast_description  # Pass podcast-level description for context
                 )
 
                 # Save second pass data to database

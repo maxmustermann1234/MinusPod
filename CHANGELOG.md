@@ -6,6 +6,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.225] - 2026-02-05
+
+### Fixed
+- **Sponsor extraction garbage capture**: Fixed regex patterns in `extract_sponsor_from_text()` that would incorrectly extract common English words as sponsor names (e.g., "not an" from "This is not an advertisement", "consistent with" from Claude reasoning). Added `INVALID_SPONSOR_CAPTURE_WORDS` validation and rejection of all-lowercase multi-word phrases.
+
+- **Queue race condition**: Fixed race condition where `db.update_queue_status(queue_id, 'processing')` was called BEFORE the processing lock was acquired. If the worker crashed between these calls, the queue item would remain stuck in 'processing' status. Now the status is only updated AFTER successfully acquiring the lock.
+
+- **Stuck episode retry tracking**: Enhanced `reset_stuck_processing_episodes()` to track retry count and mark episodes as `permanently_failed` after 3 crashes (MAX_EPISODE_RETRIES). Prevents infinite retry loops for episodes that consistently crash workers (e.g., OOM issues).
+
+### Added
+- **Orphaned queue detection**: Added `db.reset_orphaned_queue_items()` method to detect and reset queue items stuck in 'processing' for over 35 minutes. Called periodically from the queue processor to recover from worker crashes without restart.
+
+- **Confidence threshold logging**: Added log line at start of episode processing showing current confidence threshold (e.g., "Confidence threshold: 80%"). Helps verify the aggressiveness slider setting is being applied.
+
+- **Podcast description in prompts**: Now passes the podcast-level description (in addition to episode description) to Claude prompts for both first and second pass ad detection. This provides additional context about the show format and typical sponsors.
+
+### Improved
+- **JSON format instructions**: Enhanced JSON output instructions for Anthropic API to be more explicit: numbered requirements, explicit "use null not None" rule, clearer formatting. Reduces JSON parse errors from malformed responses.
+
+- **Podcast description in UI**: Added missing `description` field to `/feeds/{slug}` API response. The UI already supported displaying podcast descriptions but the API wasn't returning it.
+
+---
+
 ## [0.1.224] - 2026-02-02
 
 ### Fixed

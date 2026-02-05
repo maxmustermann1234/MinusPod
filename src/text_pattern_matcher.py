@@ -627,6 +627,13 @@ class TextPatternMatcher:
         """
         return extract_text_from_segments(segments, start, end)
 
+    # Invalid sponsor names that should not create patterns
+    INVALID_SPONSORS = frozenset({
+        'no', 'yes', 'unknown', 'none', 'na', 'n/a', 'ad', 'ads',
+        'sponsor', 'sponsors', 'multiple', 'various', 'advertisement',
+        'advertisements', 'detected', 'advertisement detected'
+    })
+
     def create_pattern_from_ad(
         self,
         segments: List[Dict],
@@ -655,6 +662,16 @@ class TextPatternMatcher:
             Pattern ID if created, None otherwise
         """
         if not self.db:
+            return None
+
+        # Validate sponsor name before creating pattern
+        if not sponsor or len(sponsor.strip()) < 2:
+            logger.warning(f"Rejecting pattern: invalid sponsor name '{sponsor}'")
+            return None
+
+        sponsor_lower = sponsor.lower().strip()
+        if sponsor_lower in self.INVALID_SPONSORS:
+            logger.warning(f"Rejecting pattern: generic/invalid sponsor '{sponsor}'")
             return None
 
         # Validate ad duration - reject contaminated multi-ad spans

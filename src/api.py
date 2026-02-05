@@ -500,6 +500,7 @@ def get_feed(slug):
     return json_response({
         'slug': podcast['slug'],
         'title': podcast['title'] or podcast['slug'],
+        'description': podcast.get('description'),
         'sourceUrl': podcast['source_url'],
         'feedUrl': feed_url,
         'artworkUrl': f"/api/v1/feeds/{podcast['slug']}/artwork" if podcast.get('artwork_cached') else podcast.get('artwork_url'),

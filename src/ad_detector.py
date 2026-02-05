@@ -1223,15 +1223,30 @@ class AdDetector:
         Returns:
             List of validated ad dicts with start, end, confidence, reason, end_text
         """
+        # Invalid sponsor values that indicate extraction failure or garbage data
+        INVALID_SPONSOR_VALUES = frozenset({
+            'none', 'unknown', 'null', 'n/a', 'na', '', 'no', 'yes',
+            'ad', 'ads', 'sponsor', 'sponsors', 'advertisement', 'advertisements',
+            'multiple', 'various', 'detected', 'advertisement detected',
+            'host read', 'host-read', 'mid-roll', 'pre-roll', 'post-roll'
+        })
+
         # Helper to filter out invalid sponsor values like literal "None", "unknown", etc.
         def get_valid_value(value):
-            if value and str(value).strip().lower() not in ('none', 'unknown', 'null', 'n/a', 'na', ''):
-                return value
-            return None
+            if not value:
+                return None
+            str_value = str(value).strip()
+            # Reject empty or too-short values
+            if len(str_value) < 2:
+                return None
+            # Reject known invalid values
+            if str_value.lower() in INVALID_SPONSOR_VALUES:
+                return None
+            return str_value
 
         # Sponsor/advertiser extraction configuration
         # Priority fields are checked in order for exact matches
-        SPONSOR_PRIORITY_FIELDS = ['reason', 'advertiser', 'sponsor', 'brand', 'company', 'product', 'name']
+        SPONSOR_PRIORITY_FIELDS = ['advertiser', 'sponsor', 'brand', 'company', 'product', 'name']
         # Pattern keywords for fuzzy matching any key containing these substrings
         SPONSOR_PATTERN_KEYWORDS = ['sponsor', 'brand', 'advertiser', 'company', 'product', 'ad_name', 'note']
         # Fallback fields for description-like content
@@ -1239,23 +1254,54 @@ class AdDetector:
         # Text fields to search for sponsor mentions in descriptive text
         SPONSOR_TEXT_FIELDS = ['reasoning', 'summary', 'description', 'note']
 
+        # Invalid capture words - common English words that indicate regex captured garbage
+        # e.g., "not an advertisement" -> regex captures "not an" as sponsor
+        INVALID_SPONSOR_CAPTURE_WORDS = frozenset({
+            'not', 'no', 'this', 'that', 'the', 'a', 'an', 'another',
+            'consistent', 'possible', 'potential', 'likely', 'seems',
+            'is', 'was', 'are', 'were', 'with', 'from', 'for', 'by',
+            'clear', 'any', 'some', 'host', 'their', 'its', 'our',
+        })
+
         def extract_sponsor_from_text(text: str) -> str | None:
             """Extract sponsor name from descriptive text like 'This is a BetterHelp advertisement'."""
             if not text:
                 return None
             # Patterns to match sponsor mentions in text
             patterns = [
+                # "X sponsor read" or "X ad read"
+                r'^(\w+(?:\s+\w+)?)\s+(?:sponsor|ad)\s+read',
+                # "This is a X advertisement"
                 r'(?:this is (?:a|an) )?(\w+(?:\s+\w+)?)\s+(?:ad|advertisement|sponsor)',
+                # "Ad/sponsor for/by/from X"
                 r'(?:ad|advertisement|sponsor)(?:ship)?\s+(?:for|by|from)\s+(\w+(?:\s+\w+)?)',
+                # "promoting X"
                 r'promoting\s+(\w+(?:\s+\w+)?)',
+                # "brought to you by X"
+                r'brought to you by\s+(\w+(?:\s+\w+)?)',
             ]
             for pattern in patterns:
                 match = re.search(pattern, text, re.IGNORECASE)
                 if match:
                     sponsor = match.group(1).strip()
+                    # Validate extracted sponsor
+                    if len(sponsor) < 2:
+                        continue
+                    if sponsor.lower() in INVALID_SPONSOR_VALUES:
+                        continue
                     # Filter out common words that aren't sponsors
-                    if sponsor.lower() not in ('a', 'an', 'the', 'this', 'that', 'another'):
-                        return sponsor
+                    if sponsor.lower() in ('a', 'an', 'the', 'this', 'that', 'another', 'host'):
+                        continue
+                    # Reject if first word is a common English word (indicates garbage capture)
+                    # e.g., "not an" from "This is not an advertisement"
+                    first_word = sponsor.split()[0].lower() if sponsor.split() else ''
+                    if first_word in INVALID_SPONSOR_CAPTURE_WORDS:
+                        continue
+                    # Reject all-lowercase multi-word phrases (proper nouns are capitalized)
+                    # e.g., "consistent with" is not a sponsor name
+                    if ' ' in sponsor and sponsor == sponsor.lower():
+                        continue
+                    return sponsor
             return None
 
         def extract_sponsor_name(ad: dict) -> str:
@@ -1293,30 +1339,47 @@ class AdDetector:
 
         try:
             ads = None
+            extraction_method = None
+
+            # Pre-process: Remove common preamble patterns that break JSON parsing
+            cleaned_text = response_text.strip()
+            preamble_patterns = [
+                r'^(?:Here (?:are|is) (?:the )?(?:detected )?ads?[:\s]*)',
+                r'^(?:I (?:found|detected|identified)[^:]*[:\s]*)',
+                r'^(?:The following (?:ads|advertisements)[^:]*[:\s]*)',
+                r'^(?:Based on (?:my|the) analysis[^:]*[:\s]*)',
+                r'^(?:After (?:reviewing|analyzing)[^:]*[:\s]*)',
+            ]
+            for pattern in preamble_patterns:
+                match = re.match(pattern, cleaned_text, re.IGNORECASE)
+                if match:
+                    cleaned_text = cleaned_text[match.end():].strip()
+                    logger.debug(f"[{slug}:{episode_id}] Removed preamble: '{match.group()[:50]}'")
+                    break
 
             # Strategy 0: Try to parse as JSON object and extract ads from various structures
             # Handles responses like {"ads": [...]}, {"segments": [...]}, {"advertisement_segments": [...]}
             try:
-                parsed = json.loads(response_text.strip())
+                parsed = json.loads(cleaned_text)
                 if isinstance(parsed, dict):
                     if 'ads' in parsed and isinstance(parsed['ads'], list):
                         ads = parsed['ads']
-                        logger.debug(f"[{slug}:{episode_id}] Extracted ads from 'ads' key")
+                        extraction_method = "json_object_ads_key"
                     elif 'advertisement_segments' in parsed and isinstance(parsed['advertisement_segments'], list):
                         ads = parsed['advertisement_segments']
-                        logger.debug(f"[{slug}:{episode_id}] Extracted ads from 'advertisement_segments' key")
+                        extraction_method = "json_object_advertisement_segments_key"
                     elif 'segments' in parsed and isinstance(parsed['segments'], list):
                         # Filter to only advertisement type segments
                         ads = [s for s in parsed['segments']
                                if isinstance(s, dict) and s.get('type') == 'advertisement']
-                        logger.debug(f"[{slug}:{episode_id}] Extracted {len(ads)} ads from 'segments' array")
+                        extraction_method = "json_object_segments_key"
                     else:
                         # No recognizable ad structure - check for other possible keys
                         ads = []
-                        logger.debug(f"[{slug}:{episode_id}] JSON object without recognizable ad key - no ads")
+                        extraction_method = "json_object_no_ads"
                 elif isinstance(parsed, list):
                     ads = parsed
-                    logger.debug(f"[{slug}:{episode_id}] Parsed as JSON array directly")
+                    extraction_method = "json_array_direct"
             except json.JSONDecodeError:
                 pass
 
@@ -1326,7 +1389,7 @@ class AdDetector:
                 if code_block_match:
                     try:
                         ads = json.loads(code_block_match.group(1))
-                        logger.debug(f"[{slug}:{episode_id}] Extracted JSON from code block")
+                        extraction_method = "markdown_code_block"
                     except json.JSONDecodeError:
                         pass
 
@@ -1344,7 +1407,7 @@ class AdDetector:
 
                 if last_valid_ads is not None:
                     ads = last_valid_ads
-                    logger.debug(f"[{slug}:{episode_id}] Found valid JSON array in response")
+                    extraction_method = "regex_json_array"
 
             # Strategy 3: Fallback to original first-to-last bracket logic
             if ads is None:
@@ -1424,7 +1487,7 @@ class AdDetector:
     def detect_ads(self, segments: List[Dict], podcast_name: str = "Unknown",
                    episode_title: str = "Unknown", slug: str = None,
                    episode_id: str = None, episode_description: str = None,
-                   audio_analysis=None) -> Optional[Dict]:
+                   audio_analysis=None, podcast_description: str = None) -> Optional[Dict]:
         """Detect ad segments using Claude API with sliding window approach.
 
         Processes transcript in overlapping windows to ensure ads at chunk
@@ -1432,6 +1495,7 @@ class AdDetector:
 
         Args:
             audio_analysis: Optional AudioAnalysisResult with audio signals
+            podcast_description: Podcast-level description for context
         """
         if not self.api_key:
             logger.warning("Skipping ad detection - no API key")
@@ -1464,8 +1528,11 @@ class AdDetector:
 
             # Prepare description section (shared across windows)
             description_section = ""
+            if podcast_description:
+                description_section = f"Podcast Description:\n{podcast_description}\n\n"
+                logger.info(f"[{slug}:{episode_id}] Including podcast description ({len(podcast_description)} chars)")
             if episode_description:
-                description_section = f"Episode Description (this describes the actual content topics discussed; it may also list episode sponsors):\n{episode_description}\n"
+                description_section += f"Episode Description (this describes the actual content topics discussed; it may also list episode sponsors):\n{episode_description}\n"
                 logger.info(f"[{slug}:{episode_id}] Including episode description ({len(episode_description)} chars)")
 
             all_window_ads = []
@@ -1614,7 +1681,8 @@ class AdDetector:
                           episode_id: str = None, episode_description: str = None,
                           audio_analysis=None, audio_path: str = None,
                           podcast_id: str = None, network_id: str = None,
-                          skip_patterns: bool = False) -> Dict:
+                          skip_patterns: bool = False,
+                          podcast_description: str = None) -> Dict:
         """Process transcript for ad detection using three-stage pipeline.
 
         Pipeline stages:
@@ -1634,6 +1702,7 @@ class AdDetector:
             podcast_id: Podcast ID for pattern scoping
             network_id: Network ID for pattern scoping
             skip_patterns: If True, skip stages 1 & 2 (pattern DB), go directly to Claude
+            podcast_description: Podcast-level description for context
 
         Returns:
             Dict with ads, status, and detection metadata
@@ -1769,7 +1838,8 @@ class AdDetector:
         # For now, we still run Claude on full transcript but mark pattern-detected regions
         result = self.detect_ads(
             segments, podcast_name, episode_title, slug, episode_id, episode_description,
-            audio_analysis=audio_analysis
+            audio_analysis=audio_analysis,
+            podcast_description=podcast_description
         )
 
         if result is None:
@@ -1856,6 +1926,13 @@ class AdDetector:
                 text_parts.append(seg.get('text', ''))
         return ' '.join(text_parts).strip()
 
+    # Invalid sponsor values that indicate extraction failure
+    INVALID_SPONSOR_REASONS = frozenset({
+        'no', 'yes', 'unknown', 'none', 'na', 'n/a', 'ad', 'ads',
+        'sponsor', 'sponsors', 'advertisement', 'advertisements',
+        'multiple', 'various', 'detected', 'advertisement detected'
+    })
+
     def _extract_sponsor_from_reason(self, reason: str) -> Optional[str]:
         """Extract sponsor name from ad detection reason using known sponsors DB.
 
@@ -1868,9 +1945,20 @@ class AdDetector:
         if not reason or not self.sponsor_service:
             return None
 
+        # Reject garbage reason values before extraction
+        reason_lower = reason.lower().strip()
+        if reason_lower in self.INVALID_SPONSOR_REASONS or len(reason_lower) < 2:
+            logger.debug(f"Rejecting invalid reason for sponsor extraction: '{reason}'")
+            return None
+
         # Use sponsor service to find canonical sponsor name from DB
         sponsor = self.sponsor_service.find_sponsor_in_text(reason)
         if sponsor:
+            # Validate extracted sponsor
+            sponsor_lower = sponsor.lower().strip()
+            if sponsor_lower in self.INVALID_SPONSOR_REASONS or len(sponsor_lower) < 2:
+                logger.debug(f"Rejecting invalid extracted sponsor: '{sponsor}'")
+                return None
             # Normalize: lowercase, remove spaces (for pattern storage consistency)
             return sponsor.lower().replace(' ', '')
         return None
@@ -2065,7 +2153,8 @@ class AdDetector:
                                slug: str = None, episode_id: str = None,
                                episode_description: str = None,
                                audio_analysis=None,
-                               skip_patterns: bool = False) -> Optional[Dict]:
+                               skip_patterns: bool = False,
+                               podcast_description: str = None) -> Optional[Dict]:
         """Blind second pass ad detection with sliding window approach.
 
         Focuses on subtle/baked-in ads using a separate model and prompt.
@@ -2074,6 +2163,7 @@ class AdDetector:
         Args:
             audio_analysis: Optional AudioAnalysisResult with audio signals
             skip_patterns: Unused in second pass (always Claude-only), kept for API consistency
+            podcast_description: Podcast-level description for context
         """
         if not self.api_key:
             logger.warning("Skipping second pass - no API key")
@@ -2097,8 +2187,11 @@ class AdDetector:
 
             # Prepare description section (shared across windows)
             description_section = ""
+            if podcast_description:
+                description_section = f"Podcast Description:\n{podcast_description}\n\n"
+                logger.info(f"[{slug}:{episode_id}] Second pass: Including podcast description ({len(podcast_description)} chars)")
             if episode_description:
-                description_section = f"Episode Description (this describes the actual content topics discussed; it may also list episode sponsors):\n{episode_description}\n"
+                description_section += f"Episode Description (this describes the actual content topics discussed; it may also list episode sponsors):\n{episode_description}\n"
                 logger.info(f"[{slug}:{episode_id}] Second pass: Including episode description ({len(episode_description)} chars)")
 
             all_window_ads = []

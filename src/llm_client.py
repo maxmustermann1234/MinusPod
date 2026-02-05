@@ -129,13 +129,28 @@ class AnthropicClient(LLMClient):
     ) -> LLMResponse:
         self._ensure_client()
 
-        # Note: Anthropic API doesn't support response_format parameter,
-        # so we accept it for interface compatibility but don't use it
+        # Anthropic API doesn't support response_format parameter natively,
+        # so we add explicit JSON instructions to the system prompt when requested
+        effective_system = system
+        if response_format and response_format.get('type') == 'json_object':
+            json_instruction = (
+                "\n\n<output_format>CRITICAL JSON REQUIREMENTS:\n"
+                "1. Respond with ONLY valid JSON - no markdown, no ```json, no text\n"
+                "2. Start directly with '[' or '{', end with ']' or '}'\n"
+                "3. Use double quotes for strings, no trailing commas\n"
+                "4. Use null for missing values (not None)\n"
+                "Malformed JSON causes parsing failures.</output_format>"
+            )
+            # Only add if not already present
+            if '<output_format>' not in system:
+                effective_system = system + json_instruction
+                logger.debug("Added JSON format instructions to system prompt")
+
         response = self._client.messages.create(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
-            system=system,
+            system=effective_system,
             messages=messages,
             timeout=timeout
         )
