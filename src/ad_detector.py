@@ -1487,7 +1487,8 @@ class AdDetector:
     def detect_ads(self, segments: List[Dict], podcast_name: str = "Unknown",
                    episode_title: str = "Unknown", slug: str = None,
                    episode_id: str = None, episode_description: str = None,
-                   audio_analysis=None, podcast_description: str = None) -> Optional[Dict]:
+                   audio_analysis=None, podcast_description: str = None,
+                   progress_callback=None) -> Optional[Dict]:
         """Detect ad segments using Claude API with sliding window approach.
 
         Processes transcript in overlapping windows to ensure ads at chunk
@@ -1496,6 +1497,7 @@ class AdDetector:
         Args:
             audio_analysis: Optional AudioAnalysisResult with audio signals
             podcast_description: Podcast-level description for context
+            progress_callback: Optional callback(stage, percent) to report progress
         """
         if not self.api_key:
             logger.warning("Skipping ad detection - no API key")
@@ -1541,6 +1543,12 @@ class AdDetector:
 
             # Process each window
             for i, window in enumerate(windows):
+                # Report progress for each window (keeps UI indicator alive)
+                if progress_callback:
+                    # First pass: 50-80% range (detecting phase)
+                    progress = 50 + int((i / max(len(windows), 1)) * 30)
+                    progress_callback(f"detecting:{i+1}/{len(windows)}", progress)
+
                 window_segments = window['segments']
                 window_start = window['start']
                 window_end = window['end']
@@ -1682,7 +1690,8 @@ class AdDetector:
                           audio_analysis=None, audio_path: str = None,
                           podcast_id: str = None, network_id: str = None,
                           skip_patterns: bool = False,
-                          podcast_description: str = None) -> Dict:
+                          podcast_description: str = None,
+                          progress_callback=None) -> Dict:
         """Process transcript for ad detection using three-stage pipeline.
 
         Pipeline stages:
@@ -1703,6 +1712,7 @@ class AdDetector:
             network_id: Network ID for pattern scoping
             skip_patterns: If True, skip stages 1 & 2 (pattern DB), go directly to Claude
             podcast_description: Podcast-level description for context
+            progress_callback: Optional callback(stage, percent) to report progress
 
         Returns:
             Dict with ads, status, and detection metadata
@@ -1839,7 +1849,8 @@ class AdDetector:
         result = self.detect_ads(
             segments, podcast_name, episode_title, slug, episode_id, episode_description,
             audio_analysis=audio_analysis,
-            podcast_description=podcast_description
+            podcast_description=podcast_description,
+            progress_callback=progress_callback
         )
 
         if result is None:
@@ -2154,7 +2165,8 @@ class AdDetector:
                                episode_description: str = None,
                                audio_analysis=None,
                                skip_patterns: bool = False,
-                               podcast_description: str = None) -> Optional[Dict]:
+                               podcast_description: str = None,
+                               progress_callback=None) -> Optional[Dict]:
         """Blind second pass ad detection with sliding window approach.
 
         Focuses on subtle/baked-in ads using a separate model and prompt.
@@ -2164,6 +2176,7 @@ class AdDetector:
             audio_analysis: Optional AudioAnalysisResult with audio signals
             skip_patterns: Unused in second pass (always Claude-only), kept for API consistency
             podcast_description: Podcast-level description for context
+            progress_callback: Optional callback(stage, percent) to report progress
         """
         if not self.api_key:
             logger.warning("Skipping second pass - no API key")
@@ -2200,6 +2213,12 @@ class AdDetector:
 
             # Process each window
             for i, window in enumerate(windows):
+                # Report progress for each window (keeps UI indicator alive)
+                if progress_callback:
+                    # Second pass: 80-95% range
+                    progress = 80 + int((i / max(len(windows), 1)) * 15)
+                    progress_callback(f"second_pass:{i+1}/{len(windows)}", progress)
+
                 window_segments = window['segments']
                 window_start = window['start']
                 window_end = window['end']

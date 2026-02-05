@@ -890,6 +890,10 @@ def start_background_processing(slug, episode_id, original_url, title, podcast_n
             return False, f"queue_busy:{current[0]}:{current[1]}"
         return False, "queue_busy"
 
+    # Update StatusService IMMEDIATELY after lock acquired (prevents race condition)
+    # This ensures the new episode is tracked before any other episode can start
+    status_service.start_job(slug, episode_id, title, podcast_name)
+
     # Start background thread
     processing_thread = threading.Thread(
         target=_process_episode_background,
@@ -1038,6 +1042,10 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 # Continue without audio analysis - it's optional
 
         try:
+            # Define progress callback to keep UI indicator alive during long detection
+            def detection_progress_callback(stage, percent):
+                status_service.update_job_stage(stage, percent)
+
             # Step 2: Detect ads (first pass)
             status_service.update_job_stage("detecting", 50)
             ad_result = ad_detector.process_transcript(
@@ -1046,7 +1054,8 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 audio_path=audio_path,
                 podcast_id=slug,  # Pass slug as podcast_id for pattern matching
                 skip_patterns=skip_patterns,  # Gap 3: 'full' mode skips pattern DB
-                podcast_description=podcast_description  # Pass podcast-level description for context
+                podcast_description=podcast_description,  # Pass podcast-level description for context
+                progress_callback=detection_progress_callback  # Keep UI alive during detection
             )
             storage.save_ads_json(slug, episode_id, ad_result, pass_number=1)
 
@@ -1092,7 +1101,8 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                     podcast_name, episode_title, slug, episode_id, episode_description,
                     audio_analysis=audio_analysis_result,
                     skip_patterns=skip_patterns,  # Gap 3: 'full' mode skips pattern DB
-                    podcast_description=podcast_description  # Pass podcast-level description for context
+                    podcast_description=podcast_description,  # Pass podcast-level description for context
+                    progress_callback=detection_progress_callback  # Keep UI alive during second pass
                 )
 
                 # Save second pass data to database

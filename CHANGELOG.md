@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.226] - 2026-02-05
+
+### Fixed
+- **Duplicate episode ID generation**: Fixed bug where the same episode would be processed repeatedly with different IDs. The issue occurred because `generate_episode_id()` used only the audio URL, which can include dynamic CDN tracking parameters (e.g., Megaphone's `awCollectionId`/`awEpisodeId`). When these parameters changed between RSS refreshes, the same episode appeared as "new" with a different ID, causing infinite reprocessing loops. Now uses RSS GUID (stable identifier per RSS spec) with URL fallback for feeds without GUIDs.
+
+- **Dead code cleanup**: Removed two calls to non-existent `storage.delete_ads_json()` method in reprocess endpoints. The method was removed in v0.1.26 but calls remained wrapped in try/except, causing harmless warnings. Data clearing is already handled by `db.clear_episode_details()`.
+
+- **Queue race condition**: Moved `status_service.start_job()` call from inside the processing thread to immediately after acquiring the ProcessingQueue lock in `start_background_processing()`. This prevents a new episode from starting before StatusService knows about the current one, closing a timing gap that allowed episode overlap.
+
+- **Ad detection progress updates**: Added `progress_callback` parameter to `detect_ads()`, `detect_ads_second_pass()`, and `process_transcript()` methods. Now reports progress for each detection window (e.g., "detecting:3/12"), keeping the UI progress indicator alive during the 2-5+ minute ad detection phase that previously caused the progress bar to disappear.
+
+---
+
 ## [0.1.225] - 2026-02-05
 
 ### Fixed

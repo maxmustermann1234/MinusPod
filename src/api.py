@@ -1143,14 +1143,6 @@ def reprocess_all_episodes(slug):
             # Clear episode details from database
             db.clear_episode_details(slug, episode_id)
 
-            # If full mode, clear existing ad data (fresh slate for Claude)
-            if mode == 'full':
-                try:
-                    storage.delete_ads_json(slug, episode_id)
-                    logger.info(f"[{slug}:{episode_id}] Cleared existing ad data for full reprocess")
-                except Exception as e:
-                    logger.warning(f"[{slug}:{episode_id}] Could not clear ad data: {e}")
-
             # Reset status to pending with reprocess mode for priority queue
             db.upsert_episode(
                 slug, episode_id,
@@ -2822,15 +2814,7 @@ def reprocess_episode_with_mode(slug, episode_id):
         storage.delete_processed_file(slug, episode_id)
         db.clear_episode_details(slug, episode_id)
 
-        # 3. If full mode, also clear ads JSON
-        if mode == 'full':
-            try:
-                storage.delete_ads_json(slug, episode_id)
-                logger.info(f"[{slug}:{episode_id}] Cleared ad data for full reprocess")
-            except Exception as e:
-                logger.warning(f"[{slug}:{episode_id}] Could not clear ad data: {e}")
-
-        # 4. Get episode metadata for processing
+        # 3. Get episode metadata for processing
         episode_url = episode.get('original_url')
         episode_title = episode.get('title', 'Unknown')
         podcast_name = podcast.get('title', slug)
