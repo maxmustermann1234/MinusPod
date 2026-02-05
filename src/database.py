@@ -369,6 +369,10 @@ class Database:
                 timeout=30.0
             )
             self._local.connection.row_factory = sqlite3.Row
+            # Enable WAL mode for better concurrent access (reads don't block writes)
+            self._local.connection.execute("PRAGMA journal_mode = WAL")
+            # Set busy timeout to 30 seconds (SQLite will retry instead of failing immediately)
+            self._local.connection.execute("PRAGMA busy_timeout = 30000")
             self._local.connection.execute("PRAGMA foreign_keys = ON")
         return self._local.connection
 

@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.227] - 2026-02-05
+
+### Fixed
+- **SQLite database locking**: Fixed "database is locked" errors that occurred during concurrent database access (e.g., when transcription completed while another operation was writing). Added `PRAGMA journal_mode = WAL` for Write-Ahead Logging (allows concurrent readers with one writer) and `PRAGMA busy_timeout = 30000` (SQLite retries for 30 seconds instead of failing immediately). The existing `timeout=30.0` in `sqlite3.connect()` is Python's lock acquisition timeout, not SQLite's busy timeout - SQLite's default busy_timeout is 0 which fails immediately on lock contention.
+
+---
+
 ## [0.1.226] - 2026-02-05
 
 ### Fixed
