@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.239] - 2026-02-07
+
+### Fixed
+- **Content segments parsed as ads when LLM returns descriptive reasons without sponsor info**: Added dynamic ad-evidence validation in `_parse_ads_from_response()` that requires positive proof a segment is an ad (known sponsor in database, ad-language patterns, or explicit sponsor field) before accepting it. Segments >= 120s with no evidence are rejected; 60-120s segments log a warning. This replaces the whack-a-mole approach of growing blocklists with every new LLM output variation. The check is database-driven via `SponsorService.find_sponsor_in_text()` so new sponsors added via API automatically work without code changes.
+- **Confidence values displayed as 10000% in UI**: When Claude returns confidence as a percentage (e.g., `100.0` instead of `1.0`), the parser now normalizes to 0-1 range by dividing values > 1.0 by 100, then clamping to [0.0, 1.0].
+
+---
+
 ## [0.1.238] - 2026-02-07
 
 ### Fixed

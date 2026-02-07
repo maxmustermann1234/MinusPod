@@ -1635,12 +1635,50 @@ class AdDetector:
                                     elif not reason or reason == 'Advertisement detected':
                                         reason = description
 
+                                # Normalize confidence to 0-1 range
+                                # Claude sometimes returns percentage (0-100) instead of fraction (0-1)
+                                raw_conf = float(ad.get('confidence', 0.8))
+                                norm_conf = raw_conf / 100.0 if raw_conf > 1.0 else raw_conf
+                                norm_conf = min(1.0, max(0.0, norm_conf))
+
+                                # Dynamic validation: require positive evidence this is an ad
+                                # instead of blocklisting content indicators (which keeps growing)
+                                duration = end - start
+                                has_sponsor_field = any(
+                                    get_valid_value(ad.get(f))
+                                    for f in SPONSOR_PRIORITY_FIELDS
+                                )
+                                has_known_sponsor = (
+                                    self.sponsor_service and
+                                    self.sponsor_service.find_sponsor_in_text(reason)
+                                ) if reason else False
+                                has_ad_language = bool(extract_sponsor_from_text(reason)) if reason else False
+
+                                if not has_sponsor_field and not has_known_sponsor and not has_ad_language:
+                                    # No positive ad evidence -- apply duration gate
+                                    # Short segments (<120s) get benefit of doubt (could be new/unknown sponsor)
+                                    # Long segments (>=120s) are almost certainly content descriptions
+                                    if duration >= 120:
+                                        logger.info(
+                                            f"[{slug}:{episode_id}] Rejecting suspected content: "
+                                            f"{start:.1f}s-{end:.1f}s ({duration:.0f}s) - "
+                                            f"no sponsor identified in reason: {reason[:100] if reason else 'None'}"
+                                        )
+                                        continue
+                                    # For shorter segments without evidence, log warning but allow through
+                                    elif duration >= 60:
+                                        logger.warning(
+                                            f"[{slug}:{episode_id}] Low-confidence ad (no sponsor found): "
+                                            f"{start:.1f}s-{end:.1f}s ({duration:.0f}s) - "
+                                            f"reason: {reason[:100] if reason else 'None'}"
+                                        )
+
                                 # Log extracted ad details for production visibility
                                 logger.info(f"[{slug}:{episode_id}] Extracted ad: {start:.1f}s-{end:.1f}s, reason='{reason}', fields={list(ad.keys())}")
                                 valid_ads.append({
                                     'start': start,
                                     'end': end,
-                                    'confidence': float(ad.get('confidence', 0.8)),
+                                    'confidence': norm_conf,
                                     'reason': reason,
                                     'end_text': ad.get('end_text') or ''
                                 })
