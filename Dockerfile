@@ -52,13 +52,15 @@ RUN pip install --no-cache-dir -r requirements.txt \
 # Set cache directories to /app/data/.cache (works with volume mounts and non-root users)
 # HOME must point to writable location (/app/data is the volume mount)
 # ORT_LOG_LEVEL=3 suppresses onnxruntime warnings (GPU discovery fails for AMD, irrelevant for NVIDIA)
+# LD_LIBRARY_PATH includes nvidia pip package dirs so CTranslate2 can dlopen cuDNN/cuBLAS
 ENV HOME=/app/data \
     WHISPER_MODEL=small \
     HF_HOME=/app/data/.cache \
     HUGGINGFACE_HUB_CACHE=/app/data/.cache/hub \
     XDG_CACHE_HOME=/app/data/.cache \
     RETENTION_PERIOD=1440 \
-    ORT_LOG_LEVEL=3
+    ORT_LOG_LEVEL=3 \
+    LD_LIBRARY_PATH=/usr/local/lib/python3.11/dist-packages/nvidia/cudnn/lib:/usr/local/lib/python3.11/dist-packages/nvidia/cublas/lib
 
 # Copy application code
 COPY src/ ./src/

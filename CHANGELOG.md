@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.246] - 2026-02-10
+
+### Fixed
+- **CTranslate2 cuDNN crash (SIGABRT code 134)**: The nvidia-cudnn-cu12 pip package installs `.so` files into Python's site-packages (`nvidia/cudnn/lib/`), but CTranslate2 uses `dlopen()` which only searches `LD_LIBRARY_PATH` and system paths. Added `LD_LIBRARY_PATH` to Dockerfile ENV pointing to the nvidia pip package lib directories. Removed redundant `nvidia-cudnn-cu12` from requirements.txt (already a dependency of torch).
+
 ## [0.1.245] - 2026-02-10
 
 ### Fixed
