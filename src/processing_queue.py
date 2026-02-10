@@ -89,37 +89,66 @@ class ProcessingQueue:
         return (time.time() - state['acquired_at']) > MAX_JOB_DURATION
 
     def _clear_stale_state(self) -> bool:
-        """Clear stale state if job exceeded max duration. Returns True if cleared.
+        """Clear stale or orphaned state. Returns True if cleared.
 
-        If THIS process holds the lock, the job is still alive (just long-running),
-        so we only log a warning. Only clear state for truly orphaned jobs where the
-        lock is not held by this process.
+        Clears state in two cases:
+        1. No process holds the flock (crashed worker left orphaned state)
+        2. Job exceeded MAX_JOB_DURATION and lock is not held by this process
+
+        Uses a non-blocking flock probe to detect orphaned state without
+        waiting for the time-based staleness threshold.
         """
         state = self._read_state()
-        if not self._is_stale(state):
+        if state.get('current_episode') is None:
             return False
 
-        elapsed = time.time() - state['acquired_at']
         current = state.get('current_episode')
+        elapsed = time.time() - (state.get('acquired_at') or time.time())
 
-        # If THIS process holds the lock, the job is still alive - not orphaned.
-        # Long episodes legitimately exceed MAX_JOB_DURATION. Only log, don't clear.
+        # If THIS process holds the lock, the job is still alive
         if self._lock_fd is not None:
-            if current:
+            if self._is_stale(state):
                 logger.warning(
                     f"Long-running job: {current[0]}:{current[1]} "
                     f"({elapsed/60:.0f} min) - still in progress, not clearing"
                 )
             return False
 
-        # Lock NOT held by this process - orphaned from a crashed process
-        if current:
-            logger.warning(
-                f"Clearing orphaned queue state: {current[0]}:{current[1]} "
-                f"({elapsed/60:.0f} min, process no longer holds lock)"
-            )
-        self._write_state(None, None, None)
-        return True
+        # This process doesn't hold the lock. Probe if ANY process does.
+        # If we can acquire an exclusive flock, no one holds it -> orphaned.
+        try:
+            probe_fd = open(self._lock_file_path, 'w')
+            try:
+                fcntl.flock(probe_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                # Lock acquired -> no process was holding it -> state is orphaned
+                fcntl.flock(probe_fd, fcntl.LOCK_UN)
+                probe_fd.close()
+                logger.warning(
+                    f"Clearing orphaned queue state: {current[0]}:{current[1]} "
+                    f"({elapsed/60:.0f} min, no process holds lock)"
+                )
+                self._write_state(None, None, None)
+                return True
+            except BlockingIOError:
+                # Another process holds the lock -> job is running in another worker
+                probe_fd.close()
+                if self._is_stale(state):
+                    logger.warning(
+                        f"Long-running job in another worker: {current[0]}:{current[1]} "
+                        f"({elapsed/60:.0f} min)"
+                    )
+                return False
+        except OSError as e:
+            logger.debug(f"Could not probe lock file: {e}")
+            # Fall back to time-based staleness only
+            if self._is_stale(state):
+                logger.warning(
+                    f"Clearing stale queue state: {current[0]}:{current[1]} "
+                    f"({elapsed/60:.0f} min)"
+                )
+                self._write_state(None, None, None)
+                return True
+            return False
 
     def acquire(self, slug: str, episode_id: str, timeout: float = 0) -> bool:
         """

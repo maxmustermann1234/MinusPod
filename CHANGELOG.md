@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Restore nvidia-cudnn-cu12 dependency**: CTranslate2 (faster-whisper GPU backend) requires cuDNN for CUDA inference. Removal in v0.1.242 caused worker SIGABRT crashes during transcription. Re-added `nvidia-cudnn-cu12==8.9.2.26`.
 - **Pattern backfill crash**: `extract_transcript_segment` was called in `database.py` but never imported. Replaced with already-imported `extract_text_in_range` (identical behavior).
 - **Stuck episode reset killing active jobs**: `reset_stuck_processing_episodes()` ran on every Gunicorn worker boot and reset ALL processing episodes with no time check. A worker restart during active transcription would kill the in-progress job. Added 30-minute guard so only genuinely stuck episodes are reset.
+- **Orphaned queue state blocking reprocessing**: When a worker crashes (SIGABRT), the flock is released by the OS but the state file still says "processing". `_clear_stale_state()` only checked the 60-minute timeout, so any reprocess attempt got "already_processing" for up to an hour. Now probes the flock to detect orphaned state immediately -- if no process holds the lock, the state is cleared regardless of elapsed time.
 
 ## [0.1.244] - 2026-02-10
 
