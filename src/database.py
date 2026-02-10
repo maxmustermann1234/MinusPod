@@ -2747,7 +2747,7 @@ class Database:
                 podcast_id = episode['podcast_db_id']
 
                 # Extract ad text from transcript
-                ad_text = extract_transcript_segment(transcript, start, end)
+                ad_text = extract_text_in_range(transcript, start, end)
 
                 if ad_text and len(ad_text) >= 50:
                     # Check for existing pattern with same text (deduplication)

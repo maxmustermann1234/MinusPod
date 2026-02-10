@@ -812,6 +812,9 @@ def background_queue_processor():
 def reset_stuck_processing_episodes():
     """Reset any episodes stuck in 'processing' status from previous crash.
 
+    Only resets episodes that have been processing for longer than 30 minutes
+    to avoid killing actively-processing jobs when a worker restarts.
+
     Tracks retry count and marks episodes as permanently_failed after MAX_EPISODE_RETRIES
     to prevent infinite retry loops for episodes that consistently crash workers.
     """
@@ -820,7 +823,8 @@ def reset_stuck_processing_episodes():
         """SELECT e.id, e.episode_id, e.retry_count, p.slug
            FROM episodes e
            JOIN podcasts p ON e.podcast_id = p.id
-           WHERE e.status = 'processing'"""
+           WHERE e.status = 'processing'
+             AND datetime(e.updated_at) < datetime('now', '-30 minutes')"""
     )
     stuck = cursor.fetchall()
 

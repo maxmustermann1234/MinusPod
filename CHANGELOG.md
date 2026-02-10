@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.245] - 2026-02-10
+
+### Fixed
+- **Restore nvidia-cudnn-cu12 dependency**: CTranslate2 (faster-whisper GPU backend) requires cuDNN for CUDA inference. Removal in v0.1.242 caused worker SIGABRT crashes during transcription. Re-added `nvidia-cudnn-cu12==8.9.2.26`.
+- **Pattern backfill crash**: `extract_transcript_segment` was called in `database.py` but never imported. Replaced with already-imported `extract_text_in_range` (identical behavior).
+- **Stuck episode reset killing active jobs**: `reset_stuck_processing_episodes()` ran on every Gunicorn worker boot and reset ALL processing episodes with no time check. A worker restart during active transcription would kill the in-progress job. Added 30-minute guard so only genuinely stuck episodes are reset.
+
 ## [0.1.244] - 2026-02-10
 
 ### Changed
