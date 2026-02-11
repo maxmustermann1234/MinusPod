@@ -1268,13 +1268,24 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 # Heuristic roll detection on pass 2 output
                 if verification_segments:
                     processed_dur = verification_segments[-1]['end'] if verification_segments else 0
+
+                    # Build timestamp map for mapping processed->original times
+                    ts_map = None
+                    if ads_to_remove:
+                        from verification_pass import _build_timestamp_map, _map_to_original
+                        ts_map = _build_timestamp_map(ads_to_remove)
+
                     preroll_v = detect_preroll(
                         verification_segments, verification_ads_processed,
                         podcast_name=podcast_name
                     )
                     if preroll_v:
                         verification_ads_processed.append(preroll_v)
-                        verification_ads_original.append(preroll_v.copy())
+                        mapped = preroll_v.copy()
+                        if ts_map:
+                            mapped['start'] = _map_to_original(preroll_v['start'], ts_map)
+                            mapped['end'] = _map_to_original(preroll_v['end'], ts_map)
+                        verification_ads_original.append(mapped)
                         audio_logger.info(
                             f"[{slug}:{episode_id}] Pass 2 heuristic pre-roll: "
                             f"0.0s-{preroll_v['end']:.1f}s"
@@ -1286,7 +1297,11 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                     )
                     if postroll_v:
                         verification_ads_processed.append(postroll_v)
-                        verification_ads_original.append(postroll_v.copy())
+                        mapped = postroll_v.copy()
+                        if ts_map:
+                            mapped['start'] = _map_to_original(postroll_v['start'], ts_map)
+                            mapped['end'] = _map_to_original(postroll_v['end'], ts_map)
+                        verification_ads_original.append(mapped)
                         audio_logger.info(
                             f"[{slug}:{episode_id}] Pass 2 heuristic post-roll: "
                             f"{postroll_v['start']:.1f}s-{postroll_v['end']:.1f}s"

@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.251] - 2026-02-11
+
+### Fixed
+- **Pass 2 heuristic roll ads showing wrong timestamps in UI** (Phase 15.3): Pre/post-roll ads detected by heuristic on processed audio were copied directly into `verification_ads_original` with processed-audio timestamps. Since pass 1 cuts shift the timeline, these timestamps were wrong in the UI. Now maps heuristic roll ad timestamps through `_map_to_original` using the pass 1 cuts, matching how Claude's verification ads are already mapped.
+
 ## [0.1.250] - 2026-02-11
 
 ### Added
