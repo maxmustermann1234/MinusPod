@@ -1432,7 +1432,8 @@ class AdDetector:
                    episode_title: str = "Unknown", slug: str = None,
                    episode_id: str = None, episode_description: str = None,
                    podcast_description: str = None,
-                   progress_callback=None) -> Optional[Dict]:
+                   progress_callback=None,
+                   audio_analysis=None) -> Optional[Dict]:
         """Detect ad segments using Claude API with sliding window approach.
 
         Processes transcript in overlapping windows to ensure ads at chunk
@@ -1490,6 +1491,12 @@ class AdDetector:
             all_raw_responses = []
             max_retries = RETRY_CONFIG['max_retries']
 
+            # Instantiate audio signal formatter if audio analysis available
+            audio_enforcer = None
+            if audio_analysis:
+                from audio_enforcer import AudioEnforcer
+                audio_enforcer = AudioEnforcer()
+
             # Process each window
             for i, window in enumerate(windows):
                 # Report progress for each window (keeps UI indicator alive)
@@ -1508,6 +1515,13 @@ class AdDetector:
                     transcript_lines.append(f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}")
                 transcript = "\n".join(transcript_lines)
 
+                # Add audio context if available for this window
+                audio_context = ""
+                if audio_enforcer:
+                    audio_context = audio_enforcer.format_for_window(
+                        audio_analysis, window_start, window_end
+                    )
+
                 # Add window context to prompt
                 window_context = f"""
 
@@ -1522,7 +1536,7 @@ class AdDetector:
                     episode_title=episode_title,
                     description_section=description_section,
                     transcript=transcript
-                ) + window_context
+                ) + audio_context + window_context
 
                 logger.info(f"[{slug}:{episode_id}] Window {i+1}/{len(windows)}: "
                            f"{window_start/60:.1f}-{window_end/60:.1f}min, {len(window_segments)} segments")
@@ -1635,7 +1649,8 @@ class AdDetector:
                           podcast_id: str = None, network_id: str = None,
                           skip_patterns: bool = False,
                           podcast_description: str = None,
-                          progress_callback=None) -> Dict:
+                          progress_callback=None,
+                          audio_analysis=None) -> Dict:
         """Process transcript for ad detection using three-stage pipeline.
 
         Pipeline stages:
@@ -1792,7 +1807,8 @@ class AdDetector:
         result = self.detect_ads(
             segments, podcast_name, episode_title, slug, episode_id, episode_description,
             podcast_description=podcast_description,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
+            audio_analysis=audio_analysis
         )
 
         if result is None:
@@ -2108,7 +2124,8 @@ class AdDetector:
                                     slug: str = None, episode_id: str = None,
                                     episode_description: str = None,
                                     podcast_description: str = None,
-                                    progress_callback=None) -> Dict:
+                                    progress_callback=None,
+                                    audio_analysis=None) -> Dict:
         """Run ad detection with the verification prompt on processed audio.
 
         Uses the same sliding window approach as detect_ads() but with the
@@ -2160,6 +2177,12 @@ class AdDetector:
             all_raw_responses = []
             max_retries = RETRY_CONFIG['max_retries']
 
+            # Instantiate audio signal formatter if audio analysis available
+            audio_enforcer = None
+            if audio_analysis:
+                from audio_enforcer import AudioEnforcer
+                audio_enforcer = AudioEnforcer()
+
             for i, window in enumerate(windows):
                 if progress_callback:
                     progress = 85 + int((i / max(len(windows), 1)) * 10)
@@ -2174,6 +2197,13 @@ class AdDetector:
                     transcript_lines.append(f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}")
                 transcript = "\n".join(transcript_lines)
 
+                # Add audio context if available for this window
+                audio_context = ""
+                if audio_enforcer:
+                    audio_context = audio_enforcer.format_for_window(
+                        audio_analysis, window_start, window_end
+                    )
+
                 window_context = f"""
 
 === WINDOW {i+1}/{len(windows)}: {window_start/60:.1f}-{window_end/60:.1f} minutes ===
@@ -2187,7 +2217,7 @@ class AdDetector:
                     episode_title=episode_title,
                     description_section=description_section,
                     transcript=transcript
-                ) + window_context
+                ) + audio_context + window_context
 
                 logger.info(f"[{slug}:{episode_id}] Verification Window {i+1}/{len(windows)}: "
                            f"{window_start/60:.1f}-{window_end/60:.1f}min")

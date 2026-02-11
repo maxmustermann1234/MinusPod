@@ -481,7 +481,7 @@ function Settings() {
       <div className="bg-card rounded-lg border border-border p-6">
         <h2 className="text-lg font-semibold text-foreground mb-4">Audio Analysis</h2>
         <p className="text-sm text-muted-foreground">
-          Volume and transition analysis runs automatically on every episode. Detects volume anomalies and abrupt loudness transitions that indicate dynamically inserted ads. Audio signals are enforced programmatically after Claude detection.
+          Volume and transition analysis runs automatically on every episode. Detects volume anomalies and abrupt loudness transitions that indicate dynamically inserted ads. Audio signals are included as context in Claude's detection prompt.
         </p>
       </div>
 

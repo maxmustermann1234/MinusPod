@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.248] - 2026-02-11
+
+### Changed
+- **Transition detection threshold raised from 3.5 dB to 12.0 dB**: The old threshold caught normal audio variation as DAI splices. Real DAI ad insertions produce 12+ dB jumps. Added delta-ratio symmetry filter (< 0.5 rejected) and recalibrated confidence formula.
+- **Audio enforcer converted from independent actor to prompt formatter**: The old enforcer pattern-matched transcript text independently of Claude and created phantom ads. New `AudioEnforcer.format_for_window()` formats audio signals as text context injected into Claude's per-window prompts so Claude makes all ad/not-ad decisions with full audio evidence.
+- **Audio signals now included in Claude's detection prompts**: Both pass 1 (`detect_ads`) and pass 2 (`run_verification_detection`) inject DAI transition pairs and volume anomalies into each window's prompt via the audio enforcer formatter.
+- **Verification pass returns dual timestamps**: Pass 2 now maps processed-audio timestamps back to original-audio coordinates. `ads` (original timestamps) used for UI/DB display, `ads_processed` (processed timestamps) used for FFMPEG cutting. Fixes timestamp mismatch where pass 2 ads showed wrong positions in the UI.
+- **Frontend status display shows pass 1/pass 2 stages**: Status bar labels prefixed with "Pass 1:" and "Pass 2:" for clarity. `getStageLabel()` function handles substage parsing (e.g., `pass1:detecting:2/5`). Detection stage badges renamed from "First Pass"/"Audio Enforced"/"Verification" to "Pass 1"/"Pass 2".
+
+### Removed
+- **Whisper model unload before audio analysis**: Audio analysis is CPU-only, so unloading the GPU model before it was unnecessary and wasted 10-15s on reload for the verification pass.
+- **Audio enforcer post-detection step**: The independent enforcement step in main.py that created ads from uncovered audio signals has been removed. Audio signals now flow through Claude's prompt instead.
+- **`DAI_CONFIDENCE_ONLY_THRESHOLD` config constant**: No longer needed since the enforcer no longer creates ads independently.
+
+### Fixed
+- **Verification pass `_transcribe_on_gpu` double exception handling**: The inner try/except caught all exceptions and returned `[]`, preventing the outer catch from ever setting `'transcription_failed'` status. Removed inner try/except so exceptions propagate to the caller.
+- **Anthropic SDK pinned version**: Unpinned `anthropic==0.49.0` to `anthropic>=0.49.0` to allow compatible updates.
+
 ## [0.1.247] - 2026-02-10
 
 ### Fixed

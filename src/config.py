@@ -114,10 +114,9 @@ SPONSOR_MISMATCH_MAX_GAP = 60.0      # Max gap for sponsor mismatch extension
 # ============================================================
 # Transition Detection (DAI ads)
 # ============================================================
-TRANSITION_THRESHOLD_DB = 3.5        # Min dB jump between frames to flag
+TRANSITION_THRESHOLD_DB = 12.0       # Min dB jump between frames to flag (real DAI splices are 12+ dB)
 MIN_TRANSITION_AD_DURATION = 15.0    # Min seconds for a valid transition-bounded ad
 MAX_TRANSITION_AD_DURATION = 180.0   # Max seconds for a valid transition-bounded ad
-DAI_CONFIDENCE_ONLY_THRESHOLD = 0.95 # DAI transitions without ad language need very high confidence
 
 # ============================================================
 # Audio Processing

@@ -45,7 +45,7 @@ class TransitionDetector:
 
     def __init__(
         self,
-        transition_threshold_db: float = 3.5,
+        transition_threshold_db: float = 12.0,
         min_ad_duration: float = 15.0,
         max_ad_duration: float = 180.0,
     ):
@@ -128,9 +128,14 @@ class TransitionDetector:
 
                 avg_delta = (start_t.delta_db + end_t.delta_db) / 2.0
 
+                # Symmetry filter: skip asymmetric pairs (one side much stronger)
+                delta_ratio = min(start_t.delta_db, end_t.delta_db) / max(start_t.delta_db, end_t.delta_db)
+                if delta_ratio < 0.5:
+                    continue
+
                 # Confidence based on average transition magnitude
-                # 3.5dB = 0.5, 7dB = 0.75, 10dB+ = 0.9
-                confidence = min(0.3 + (avg_delta / 15.0), 0.95)
+                # 12dB = 0.80, 16dB = 1.0 (capped at 0.95)
+                confidence = min(0.2 + (avg_delta / 20.0), 0.95)
 
                 pairs.append(TransitionPair(
                     start_transition=start_t,

@@ -71,7 +71,7 @@ export interface AdSegment {
   end: number;
   confidence: number;
   reason?: string;
-  detection_stage?: 'first_pass' | 'claude' | 'fingerprint' | 'text_pattern' | 'language' | 'audio_enforced' | 'verification';
+  detection_stage?: 'first_pass' | 'claude' | 'fingerprint' | 'text_pattern' | 'language' | 'verification';
   validation?: AdValidation;
 }
 

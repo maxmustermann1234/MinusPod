@@ -399,13 +399,9 @@ function EpisodeDetail() {
                     <span className={`px-1.5 py-0.5 text-xs rounded font-medium ${
                       segment.detection_stage === 'verification'
                         ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400'
-                        : segment.detection_stage === 'audio_enforced'
-                        ? 'bg-orange-500/20 text-orange-600 dark:text-orange-400'
                         : 'bg-blue-500/20 text-blue-600 dark:text-blue-400'
                     }`}>
-                      {segment.detection_stage === 'verification' ? 'Verification'
-                        : segment.detection_stage === 'audio_enforced' ? 'Audio Enforced'
-                        : 'First Pass'}
+                      {segment.detection_stage === 'verification' ? 'Pass 2' : 'Pass 1'}
                     </span>
                   )}
                   {episode.transcript && (
