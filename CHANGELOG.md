@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.254] - 2026-02-13
+
+### Fixed
+- **Stuck episode caused by corrupt audio fingerprint in database**: A corrupt fingerprint stored in the database caused `acoustid.chromaprint.decode_fingerprint()` to throw `TypeError` on every comparison. The `find_matches()` sliding window loop (3300 iterations for a 6605s episode) caught and swallowed the error each time, taking ~47 minutes of wasted work -- longer than the 37-minute orphan detector timeout. The episode was killed, reset, and retried in a loop it could never escape. Fix: `compare_fingerprints()` now returns -1.0 for TypeError (distinguishing broken data from no-match), and `find_matches()` tracks broken pattern IDs in a set, skipping them after the first failure. Corrupt fingerprints are auto-deleted from the database. A 47-minute scan of errors becomes 1 warning + fast completion.
+
 ## [0.1.253] - 2026-02-12
 
 ### Fixed
