@@ -1,4 +1,4 @@
-"""SQLite database module for podcast server."""
+"""SQLite database module for MinusPod."""
 import sqlite3
 import threading
 import logging

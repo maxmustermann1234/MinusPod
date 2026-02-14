@@ -1,4 +1,4 @@
-"""REST API for podcast server web UI."""
+"""REST API for MinusPod web UI."""
 import json
 import logging
 import os

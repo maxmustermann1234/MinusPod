@@ -6,6 +6,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-02-14
+
+Major release: pipeline redesign, MinusPod rebrand, and ad detection overhaul.
+
+### Changed
+- **Renamed to MinusPod**: Service name, Docker image (`ttlequals0/minuspod`), frontend title, package name, API docs, README, and deployment docs all updated from "Podcast Server" / "podcast-server".
+- **Replaced two-pass architecture with verification pipeline**: The blind second pass is replaced by a post-cut verification pass that re-transcribes processed audio and runs detection with a "what doesn't belong" prompt. Missed ads are re-cut directly from pass 1 output.
+- **Audio signals as Claude prompt context**: Volume anomalies and DAI transition pairs are formatted as text and injected into Claude's per-window prompts instead of running as an independent post-detection step. Claude makes all ad/not-ad decisions with full audio evidence.
+- **Audio analysis always enabled**: Removed global `audioAnalysisEnabled` toggle and per-feed `audioAnalysisOverride`. Volume analysis via ffmpeg is lightweight and always runs.
+- **AdMarker schema updated**: `pass` field replaced with `detection_stage` enum covering first_pass, claude, fingerprint, text_pattern, language, audio_enforced, and verification stages.
+- **Confidence slider is single source of truth**: Removed hardcoded dual-thresholds that bypassed the user's min_cut_confidence slider. ACCEPT = always cut, REJECT = never cut, REVIEW = confidence gate.
+- **Detection prompts rewritten**: Removed "when in doubt, mark it as an ad" bias. Both passes require identifiable promotional language. Added "WHAT IS NOT AN AD" guidance and "AUDIO SIGNALS" evidence-only framing.
+- **Transition detection threshold raised from 3.5 dB to 12.0 dB**: Added delta-ratio symmetry filter and recalibrated confidence formula to eliminate false positives from normal audio variation.
+- **Pattern learning quality gates**: Only creates patterns from ads that were actually cut. Sponsor extraction uses 4-tier DB resolution with prefix and short-word rejection gates.
+
+### Added
+- **Abrupt transition detection**: New `TransitionDetector` analyzes frame-to-frame loudness jumps in existing volume analyzer output. Pairs up/down transitions into candidate DAI regions.
+- **Audio signal enforcement**: New `AudioEnforcer` formats audio signals for Claude prompts and extends existing ad boundaries when signals partially overlap.
+- **Verification pass module**: New `VerificationPass` class encapsulates the full post-cut pipeline with separate model selection.
+- **Heuristic pre/post-roll detection**: New `roll_detector.py` with regex-based detection for ads at episode boundaries that Claude missed. Requires 2+ pattern matches.
+- **Transcript generation**: New `TranscriptGenerator` produces timestamp-aligned text stored in the database for search indexing and UI display.
+- **Silent-gap ad merge**: Consecutive ads separated by up to 30s of silence (no speech) are merged into a single ad instead of requiring 5s proximity.
+- **Incremental search index updates**: Episodes indexed immediately after processing; full rebuild every 6 hours.
+- **VTT-based transcript timestamps in UI**: EpisodeDetail fetches actual VTT transcript for accurate timestamps instead of approximating.
+- **Sponsor field on ad markers**: Ad markers now store the `sponsor` field separately for UI sponsor badges. Window deduplication preserves sponsor names during merges.
+
+### Fixed
+- **Pre-roll ads at 0.0s silently dropped**: Python `or`-chains treated `0.0` as falsy; replaced with `_first_not_none()` helper.
+- **Pass 2 ads missing from UI and showing wrong timestamps**: Multiple fixes for verification ads not being saved or displaying with processed-audio timestamps instead of original coordinates.
+- **Ad marker reasons showing bare sponsor names**: Three independent merge/dedup bugs caused markers to display unhelpful reasons instead of descriptive text.
+- **Corrupt fingerprints causing stuck episodes**: Auto-detection and deletion of broken fingerprints; bail-out when all fingerprints are corrupt.
+- **CTranslate2 cuDNN crash**: Added `LD_LIBRARY_PATH` for nvidia pip package directories.
+- **Content segments parsed as ads**: Dynamic ad-evidence validation requires positive proof (known sponsor, ad-language patterns, or explicit sponsor field).
+
+### Removed
+- **Speaker diarization and music bed detection**: Dropped pyannote.audio and librosa dependencies. GPU memory pressure, processing time, and heavy dependencies for marginal benefit.
+- **Dependencies**: `librosa`, `pyannote.audio`, `nvidia-cudnn-cu12` (re-added then managed via LD_LIBRARY_PATH).
+- **Dead code**: Unused functions, blind second pass prompt, stale UI text, audio analysis toggle settings.
+
 ## [0.1.258] - 2026-02-14
 
 ### Fixed

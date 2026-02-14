@@ -12,7 +12,7 @@ info:
     - Monitor system status and trigger cleanup operations
     - Manage cross-episode ad patterns with network and podcast scope
     - Submit corrections to improve ad detection accuracy
-  version: 0.1.242
+  version: 1.0.0
   contact:
     name: MinusPod
   license:
@@ -2441,9 +2441,13 @@ components:
         reason:
           type: string
           description: Reason for marking as ad
+        sponsor:
+          type: string
+          nullable: true
+          description: Sponsor or advertiser name extracted from the ad
         detection_stage:
           type: string
-          enum: [first_pass, audio_enforced, verification]
+          enum: [first_pass, claude, fingerprint, text_pattern, language, audio_enforced, verification]
           description: Which detection stage found this ad
           example: first_pass
         validation:

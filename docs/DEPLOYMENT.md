@@ -74,9 +74,8 @@ docker-compose restart
 ### Out of Memory
 
 1. Reduce Whisper model size: `WHISPER_MODEL=small` or `WHISPER_MODEL=tiny`
-2. Disable audio analysis in Settings
-3. Increase container memory limit
-4. For long episodes (>2 hours), expect 16GB+ RAM usage
+2. Increase container memory limit
+3. For long episodes (>2 hours), expect 16GB+ RAM usage
 
 ### Claude API Errors
 
@@ -165,7 +164,7 @@ docker logs --tail 100 minuspod
 | Whisper (large-v3) | High | 6 GB | 5 GB |
 | Claude API | Low | 100 MB | - |
 | Audio processing | High | 500 MB | - |
-| Speaker diarization | Medium | 4 GB | 2 GB |
+| Transition detection | Low | 100 MB | - |
 
 ## Cloudflare Tunnel (Optional)
 
