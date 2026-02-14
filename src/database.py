@@ -1,4 +1,4 @@
-"""SQLite database module for podcast server."""
+"""SQLite database module for MinusPod."""
 import sqlite3
 import threading
 import logging
@@ -18,15 +18,32 @@ DEFAULT_SYSTEM_PROMPT = """Analyze this podcast transcript and identify ALL adve
 
 DETECTION RULES:
 - Host-read sponsor segments ARE ads. Any product promotion for compensation is an ad.
-- When in doubt, mark it as an ad. False positives are preferred over missing ads.
+- An ad MUST contain promotional language in the transcript. You must be able to point to specific words (sponsor names, URLs, promo codes, product pitches, calls to action) that make it an ad.
 - Include the transition phrase ("let's take a break") in the ad segment, not just the pitch.
 - Ad breaks typically last 60-120 seconds. Shorter segments may indicate incomplete detection.
+- If no ads are found in this window, return: []
+
+WHAT IS NOT AN AD:
+- Silence, pauses, or dead air between segments -- these are normal production gaps, not ads
+- Topic transitions or content gaps where the host changes subjects
+- Audio signal changes (volume shifts, tone changes) without any promotional transcript content
+- A guest discussing their own work, book, or project in the context of the interview
+- The host mentioning their own other shows, social media, or Patreon
+- Brand names mentioned in passing as part of genuine topic discussion
 
 WHAT TO LOOK FOR:
 - Transitions: "This episode is brought to you by...", "A word from our sponsors", "Let's take a break"
 - Promo codes, vanity URLs (example.com/podcast), calls to action
 - Product endorsements, sponsored content, promotional messages
 - Network-inserted retail ads (may sound like radio commercials)
+- Dynamically inserted ads that may differ in tone or cadence from the host content
+
+AUDIO SIGNALS:
+Audio analysis may detect volume anomalies, DAI transitions, or silence gaps in the episode.
+These signals are SUPPORTING EVIDENCE ONLY. They help locate potential ad boundaries but do NOT
+constitute ads by themselves. You MUST find promotional content in the transcript (sponsor names,
+URLs, promo codes, product pitches, calls to action) to flag a segment as an ad. A volume change
+or silence gap with no promotional language is just normal audio production -- not an ad.
 
 COMMON PODCAST SPONSORS (high confidence if mentioned):
 BetterHelp, Athletic Greens, AG1, Shopify, Amazon, Audible, Squarespace, HelloFresh, Factor, NordVPN, ExpressVPN, Mint Mobile, MasterClass, Calm, Headspace, ZipRecruiter, Indeed, LinkedIn Jobs, LinkedIn, Stamps.com, SimpliSafe, Ring, ADT, Casper, Helix Sleep, Purple, Brooklinen, Bombas, Manscaped, Dollar Shave Club, Harry's, Quip, Hims, Hers, Roman, Keeps, Function of Beauty, Native, Liquid IV, Athletic Brewing, Magic Spoon, Thrive Market, Butcher Box, Blue Apron, DoorDash, Uber Eats, Grubhub, Instacart, Rocket Money, Credit Karma, SoFi, Acorns, Betterment, Wealthfront, PolicyGenius, Lemonade, State Farm, Progressive, Geico, Liberty Mutual, T-Mobile, Visible, FanDuel, DraftKings, BetMGM, Toyota, Hyundai, CarMax, Carvana, eBay Motors, ZocDoc, GoodRx, Care/of, Ritual, Seed, HubSpot, NetSuite, Monday.com, Notion, Canva, Grammarly, Babbel, Rosetta Stone, Blinkist, Raycon, Bose, MacPaw, CleanMyMac, Green Chef, Magic Mind, Honeylove, Cozy Earth, Quince, LMNT, Nutrafol, Aura, OneSkin, Incogni, Gametime, 1Password, Bitwarden, CacheFly, Deel, DeleteMe, Framer, Miro, Monarch Money, OutSystems, Spaceship, Thinkst Canary, ThreatLocker, Vanta, Veeam, Zapier, Zscaler, Capital One, Ford, WhatsApp
@@ -65,33 +82,61 @@ EXAMPLE:
 [78.5s - 82.0s] That's athleticgreens.com/podcast.
 [82.5s - 86.0s] Now, back to our conversation.
 
-Output: [{{"start": 45.0, "end": 82.0, "confidence": 0.98, "reason": "Athletic Greens sponsor read", "end_text": "athleticgreens.com/podcast"}}]"""
+Output: [{{"start": 45.0, "end": 82.0, "confidence": 0.98, "reason": "Athletic Greens sponsor read", "end_text": "athleticgreens.com/podcast"}}]
 
-# Default second pass system prompt - BLIND analysis for subtle/baked-in ads
-DEFAULT_SECOND_PASS_PROMPT = """Detect SUBTLE and BAKED-IN advertisements that don't use traditional ad transitions.
+NOT AN AD EXAMPLE (silence/content gap):
+[290.0s - 293.0s] So that's really the core of what GPT-4 can do.
+[293.5s - 296.0s] [silence]
+[296.5s - 300.0s] Now the other thing I wanted to talk about is the fine-tuning process.
 
-YOUR FOCUS (ignore obvious "brought to you by" ads):
-1. Host endorsements woven into conversation ("I've been using X...")
-2. Casual product mentions with promo codes or URLs
-3. "Oh by the way" style plugs
-4. Quick mid-roll sponsor mentions without transitions
-5. Post-signoff promotional content
+Output: []"""
 
-DO NOT MARK AS ADS:
-- Cross-promotion of host's other shows or network podcasts
-- Guest plugging their own work/projects
-- Genuine personal recommendations without commercial signals
+# Verification pass prompt - runs on processed audio to catch missed ads
+DEFAULT_VERIFICATION_PROMPT = """You are reviewing a podcast episode that has ALREADY had advertisements removed. The audio has been processed — detected ads were cut and replaced with a brief transition tone. Your job is to find anything that was MISSED or only partially removed.
 
-DETECTION SIGNALS:
-- Promo codes, vanity URLs, "link in show notes"
-- Pricing, discounts, availability info
-- Product tangents unrelated to episode topic
-- Tonal shift to scripted delivery
+CONTEXT:
+This is a second pass over processed audio. The first pass already detected and removed obvious ads. What remains should be clean episode content. Anything promotional that is still present was either:
+1. An ad that was completely missed
+2. A fragment of an ad that was partially cut (boundary was off by a few seconds)
+3. A subtle baked-in ad that blended with the conversation
 
-AD BOUNDARIES:
-- START: First promotional statement
-- END: When regular content resumes (not when pitch ends)
-- Typical length: 45-120 seconds. Under 30s = verify you found the full segment.
+WHAT TO LOOK FOR:
+
+AD FRAGMENTS (highest priority):
+- Orphaned URLs: "dot com slash podcast", "dot com slash [code]"
+- Orphaned promo codes: "use code [X] for", "code [X] at checkout"
+- Orphaned calls to action: "link in the show notes", "check it out at", "sign up at"
+- Trailing sponsor mentions: "that's [brand].com", "thanks to [sponsor]"
+- Leading transitions that survived the cut: "and now a word from", "this episode is brought to you"
+These fragments appear near transition points where the previous cut boundary was slightly off.
+
+MISSED ADS:
+- Full sponsor reads that the first pass missed entirely
+- Mid-roll ads without obvious transition phrases ("I've been using [product]...")
+- Dynamically inserted ads that may differ in tone from the host content
+- Quick mid-roll mentions with URLs or promo codes
+- Post-signoff promotional content after the episode's natural ending
+
+WHAT IS NOT AN AD:
+- A guest discussing their own work, book, or project in the context of the interview
+- The host mentioning their own other shows, social media, or Patreon
+- Genuine topic discussion that happens to mention a brand name in passing
+- Episode content that sounds slightly awkward due to surrounding ad removal
+- Cross-promotion of shows within the same podcast network (unless it includes promo codes or external URLs)
+- Silence, pauses, or dead air -- these are normal, not missed ads
+- Content gaps or topic transitions between segments
+- Audio artifacts from the first pass ad removal (slight volume changes near cut points are expected)
+
+CRITICAL: Every ad you flag must contain identifiable promotional language in the transcript -- a sponsor name, URL, promo code, product pitch, or call to action. If the transcript text in a region is just normal conversation, silence, or a topic change, it is NOT an ad regardless of any audio signal changes.
+
+HOW TO IDENTIFY FRAGMENTS:
+A fragment is promotional language that appears abruptly at the start or end of a content section. In the processed audio, the flow should be: natural conversation → transition tone → natural conversation. If instead you see: natural conversation → transition tone → "...dot com slash podcast. Anyway, back to..." → natural conversation, that trailing "dot com slash podcast" is a fragment from an incompletely removed ad.
+
+AD BOUNDARY RULES:
+- AD START: First promotional word or transition phrase
+- AD END: Where clean episode content resumes (after the last URL, promo code, or call to action)
+- For fragments: mark the ENTIRE fragment including any surrounding promotional context
+- MERGING: Multiple fragments or ads with gaps < 15 seconds = ONE segment
 
 WINDOW CONTEXT:
 This transcript may be a segment of a longer episode.
@@ -104,11 +149,33 @@ Use the exact START timestamp from the [Xs] marker of the first ad segment.
 Use the exact END timestamp from the [Xs] marker of the last ad segment.
 Do not interpolate or estimate times between segments.
 
-BE THOROUGH: If it sounds promotional, mark it. False positives are acceptable.
-BE ACCURATE: Don't invent ads. Some segments have no subtle ads, and [] is valid.
+BE ACCURATE: Don't invent ads. Many episodes will be completely clean after the first pass. An empty result [] is expected and valid for well-processed episodes.
 
-OUTPUT: JSON array only, no explanation.
-Format: [{{"start": 0.0, "end": 60.0, "confidence": 0.95, "reason": "description", "end_text": "last words"}}]"""
+OUTPUT FORMAT:
+Return ONLY a valid JSON array. No explanation, no markdown.
+
+Each ad segment: {{"start": seconds, "end": seconds, "confidence": 0.0-1.0, "reason": "brief description", "end_text": "last 3-5 words"}}
+
+FRAGMENT EXAMPLE:
+[120.0s - 122.0s] So yeah, that's really interesting.
+[122.5s - 124.0s] [transition tone]
+[124.5s - 128.0s] at athleticgreens.com slash podcast. Anyway, moving on to
+[128.5s - 132.0s] the next topic I wanted to discuss was the new research.
+
+Output: [{{"start": 124.5, "end": 128.0, "confidence": 0.95, "reason": "Athletic Greens ad fragment — orphaned URL after cut boundary", "end_text": "moving on to"}}]
+
+MISSED AD EXAMPLE:
+[340.0s - 342.0s] You know what I've been really into lately?
+[342.5s - 348.0s] I've been using this app called Calm and it's been amazing for my sleep.
+[348.5s - 365.0s] They have these sleep stories and meditations... You can try it free for 30 days at calm.com/podcast.
+[365.5s - 368.0s] But anyway, getting back to what we were saying about
+
+Output: [{{"start": 340.0, "end": 365.0, "confidence": 0.92, "reason": "Calm app sponsor read — missed baked-in ad with free trial URL", "end_text": "calm.com/podcast"}}]
+
+CLEAN EPISODE EXAMPLE:
+[no promotional content found in transcript]
+
+Output: []"""
 
 
 SCHEMA_SQL = """
@@ -1287,27 +1354,44 @@ class Database:
             ('retention_period_minutes', retention_minutes)
         )
 
-        # Multi-pass ad detection (opt-in, default disabled)
+        # Verification pass prompt
         conn.execute(
             """INSERT INTO settings (key, value, is_default) VALUES (?, ?, 1)
                ON CONFLICT(key) DO NOTHING""",
-            ('multi_pass_enabled', 'false')
+            ('verification_prompt', DEFAULT_VERIFICATION_PROMPT)
         )
 
-        # Second pass system prompt
-        conn.execute(
-            """INSERT INTO settings (key, value, is_default) VALUES (?, ?, 1)
-               ON CONFLICT(key) DO NOTHING""",
-            ('second_pass_prompt', DEFAULT_SECOND_PASS_PROMPT)
-        )
-
-        # Second pass model (defaults to Sonnet 4.5)
+        # Verification pass model (defaults to same as first pass)
         from ad_detector import DEFAULT_MODEL
         conn.execute(
             """INSERT INTO settings (key, value, is_default) VALUES (?, ?, 1)
                ON CONFLICT(key) DO NOTHING""",
-            ('second_pass_model', DEFAULT_MODEL)
+            ('verification_model', DEFAULT_MODEL)
         )
+
+        # Migrate old second_pass settings to verification settings
+        try:
+            old_prompt = None
+            old_model = None
+            cursor = conn.execute("SELECT key, value FROM settings WHERE key IN ('second_pass_prompt', 'second_pass_model')")
+            for row in cursor:
+                if row[0] == 'second_pass_prompt':
+                    old_prompt = row[1]
+                elif row[0] == 'second_pass_model':
+                    old_model = row[1]
+
+            if old_prompt:
+                conn.execute(
+                    "INSERT INTO settings (key, value, is_default) VALUES (?, ?, 0) ON CONFLICT(key) DO NOTHING",
+                    ('verification_prompt', old_prompt)
+                )
+            if old_model:
+                conn.execute(
+                    "INSERT INTO settings (key, value, is_default) VALUES (?, ?, 0) ON CONFLICT(key) DO NOTHING",
+                    ('verification_model', old_model)
+                )
+        except Exception as e:
+            logger.warning(f"Settings migration (second_pass -> verification): {e}")
 
         # Whisper model (defaults to env var or 'small')
         whisper_model = os.environ.get('WHISPER_MODEL', 'small')
@@ -1317,15 +1401,10 @@ class Database:
             ('whisper_model', whisper_model)
         )
 
-        # Audio analysis settings (disabled by default)
+        # Audio analysis settings
         audio_analysis_settings = [
-            ('audio_analysis_enabled', 'false'),
-            ('volume_analysis_enabled', 'true'),
-            ('music_detection_enabled', 'true'),
-            ('speaker_analysis_enabled', 'true'),
             ('volume_threshold_db', '3.0'),
-            ('music_confidence_threshold', '0.6'),
-            ('monologue_duration_threshold', '45.0'),
+            ('transition_threshold_db', '3.5'),
         ]
         for key, value in audio_analysis_settings:
             conn.execute(
@@ -1474,27 +1553,6 @@ class Database:
     def get_podcast(self, slug: str) -> Optional[Dict]:
         """Alias for get_podcast_by_slug for backwards compatibility."""
         return self.get_podcast_by_slug(slug)
-
-    def get_podcast_audio_analysis_override(self, slug: str) -> Optional[bool]:
-        """Get podcast-level audio analysis override.
-
-        Returns:
-            None - use global setting
-            True - force enable audio analysis
-            False - force disable audio analysis
-        """
-        podcast = self.get_podcast_by_slug(slug)
-        if not podcast:
-            return None
-
-        override_value = podcast.get('audio_analysis_override')
-        if override_value is None:
-            return None
-        elif override_value == 'true':
-            return True
-        elif override_value == 'false':
-            return False
-        return None
 
     # ========== Episode Methods ==========
 
@@ -1875,11 +1933,10 @@ class Database:
 
         defaults = {
             'system_prompt': DEFAULT_SYSTEM_PROMPT,
-            'second_pass_prompt': DEFAULT_SECOND_PASS_PROMPT,
+            'verification_prompt': DEFAULT_VERIFICATION_PROMPT,
             'retention_period_minutes': os.environ.get('RETENTION_PERIOD', '1440'),
             'claude_model': DEFAULT_MODEL,
-            'second_pass_model': DEFAULT_MODEL,
-            'multi_pass_enabled': 'false',
+            'verification_model': DEFAULT_MODEL,
             'whisper_model': os.environ.get('WHISPER_MODEL', 'small'),
             'vtt_transcripts_enabled': 'true',
             'chapters_enabled': 'true'
@@ -2717,7 +2774,7 @@ class Database:
                 podcast_id = episode['podcast_db_id']
 
                 # Extract ad text from transcript
-                ad_text = extract_transcript_segment(transcript, start, end)
+                ad_text = extract_text_in_range(transcript, start, end)
 
                 if ad_text and len(ad_text) >= 50:
                     # Check for existing pattern with same text (deduplication)
@@ -3283,6 +3340,34 @@ class Database:
         conn.commit()
         logger.info(f"Search index rebuilt with {count} items")
         return count
+
+    def index_episode(self, episode_id: str, slug: str) -> bool:
+        """Index or re-index a single episode in the search index."""
+        conn = self.get_connection()
+        try:
+            row = conn.execute("""
+                SELECT e.episode_id, e.title, e.description, p.slug, ed.transcript_text
+                FROM episodes e
+                JOIN podcasts p ON e.podcast_id = p.id
+                LEFT JOIN episode_details ed ON e.id = ed.episode_id
+                WHERE e.episode_id = ? AND p.slug = ?
+            """, (episode_id, slug)).fetchone()
+            if not row:
+                return False
+            conn.execute(
+                "DELETE FROM search_index WHERE content_type = 'episode' AND content_id = ?",
+                (episode_id,))
+            transcript = (row['transcript_text'] or '')[:100000]
+            conn.execute("""
+                INSERT INTO search_index (content_type, content_id, podcast_slug, title, body, metadata)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, ('episode', row['episode_id'], row['slug'], row['title'],
+                  transcript, row['description'] or ''))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to index episode {episode_id}: {e}")
+            return False
 
     def search(self, query: str, content_type: Optional[str] = None, limit: int = 50) -> List[Dict]:
         """Full-text search across indexed content.

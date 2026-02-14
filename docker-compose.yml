@@ -1,8 +1,8 @@
 version: '3.8'
 
 services:
-  podcast-server:
-    image: ttlequals0/podcast-server:latest
+  minuspod:
+    image: ttlequals0/minuspod:latest
     ports:
       - "8000:8000"
     volumes:
@@ -37,12 +37,6 @@ services:
       - BASE_URL=${BASE_URL:-http://localhost:8000}
       - RETENTION_PERIOD=${RETENTION_PERIOD:-1440}
 
-      # Optional: HuggingFace token for pyannote speaker diarization
-      # Required only if speaker analysis is enabled in audio analysis settings
-      # IMPORTANT: You must also accept the model license at:
-      # https://hf.co/pyannote/speaker-diarization-3.1
-      # (log in with the HuggingFace account that owns the token)
-      - HF_TOKEN=${HF_TOKEN:-}
     deploy:
       resources:
         reservations:
@@ -95,7 +89,7 @@ services:
     environment:
       - TUNNEL_TOKEN=${TUNNEL_TOKEN}
     depends_on:
-      - podcast-server
+      - minuspod
     restart: unless-stopped
     profiles:
       - tunnel

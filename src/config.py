@@ -7,7 +7,6 @@ for easy tuning and consistency across the codebase.
 # ============================================================
 # Confidence Thresholds (0.0 - 1.0 scale)
 # ============================================================
-HIGH_CONFIDENCE = 0.85          # Auto-accept threshold
 LOW_CONFIDENCE = 0.50           # Warn/flag for review
 REJECT_CONFIDENCE = 0.30        # Auto-reject as false positive
 HIGH_CONFIDENCE_OVERRIDE = 0.90 # Override duration limits if above this
@@ -39,9 +38,7 @@ MAX_AD_DURATION_WINDOW = 420.0  # 7 min max (longest reasonable sponsor read)
 # Position Windows (as fraction of episode duration 0.0 - 1.0)
 # ============================================================
 PRE_ROLL = (0.0, 0.05)          # First 5%
-MID_ROLL_1 = (0.20, 0.35)       # Common mid-roll positions
-MID_ROLL_2 = (0.45, 0.55)
-MID_ROLL_3 = (0.65, 0.80)
+MID_ROLL_1 = (0.15, 0.85)       # Continuous mid-roll coverage
 POST_ROLL = (0.95, 1.0)         # Last 5%
 
 # ============================================================
@@ -50,6 +47,7 @@ POST_ROLL = (0.95, 1.0)         # Last 5%
 MAX_AD_PERCENTAGE = 0.30        # 30% of episode is suspicious
 MAX_ADS_PER_5MIN = 1            # More than 1 ad per 5 min is suspicious
 MERGE_GAP_THRESHOLD = 5.0       # Merge ads within 5s
+MAX_SILENT_GAP = 30.0           # Merge ads across silent gaps up to 30s
 
 # ============================================================
 # Pattern Matching
@@ -112,6 +110,13 @@ AD_CONTENT_PROMO_PHRASES = [
 # ============================================================
 DEFAULT_AD_DURATION_ESTIMATE = 60.0  # Assumed ad length when only intro/outro found
 SPONSOR_MISMATCH_MAX_GAP = 60.0      # Max gap for sponsor mismatch extension
+
+# ============================================================
+# Transition Detection (DAI ads)
+# ============================================================
+TRANSITION_THRESHOLD_DB = 12.0       # Min dB jump between frames to flag (real DAI splices are 12+ dB)
+MIN_TRANSITION_AD_DURATION = 15.0    # Min seconds for a valid transition-bounded ad
+MAX_TRANSITION_AD_DURATION = 180.0   # Max seconds for a valid transition-bounded ad
 
 # ============================================================
 # Audio Processing

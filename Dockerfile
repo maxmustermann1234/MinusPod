@@ -49,14 +49,10 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && rm -rf /root/.cache /tmp/* \
     && find /usr/local -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
 
-# Install cuDNN via pip - required for PyTorch RNN operations in pyannote speaker diarization
-# The base image lacks cuDNN, and PyTorch's bundled cuDNN doesn't fully cover RNN ops
-RUN pip install --no-cache-dir nvidia-cudnn-cu12==8.9.2.26
-
 # Set cache directories to /app/data/.cache (works with volume mounts and non-root users)
 # HOME must point to writable location (/app/data is the volume mount)
 # ORT_LOG_LEVEL=3 suppresses onnxruntime warnings (GPU discovery fails for AMD, irrelevant for NVIDIA)
-# LD_LIBRARY_PATH includes pip-installed cuDNN libraries for PyTorch RNN operations
+# LD_LIBRARY_PATH includes nvidia pip package dirs so CTranslate2 can dlopen cuDNN/cuBLAS
 ENV HOME=/app/data \
     WHISPER_MODEL=small \
     HF_HOME=/app/data/.cache \
@@ -64,7 +60,7 @@ ENV HOME=/app/data \
     XDG_CACHE_HOME=/app/data/.cache \
     RETENTION_PERIOD=1440 \
     ORT_LOG_LEVEL=3 \
-    LD_LIBRARY_PATH=/usr/local/lib/python3.11/dist-packages/nvidia/cudnn/lib:/usr/local/lib/python3.11/dist-packages/nvidia/cublas/lib:${LD_LIBRARY_PATH}
+    LD_LIBRARY_PATH=/usr/local/lib/python3.11/dist-packages/nvidia/cudnn/lib:/usr/local/lib/python3.11/dist-packages/nvidia/cublas/lib
 
 # Copy application code
 COPY src/ ./src/

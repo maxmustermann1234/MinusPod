@@ -11,8 +11,8 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/ttlequals0/podcast-server.git
-cd podcast-server
+git clone https://github.com/ttlequals0/minuspod.git
+cd minuspod
 
 # Create .env file
 echo "ANTHROPIC_API_KEY=your-key-here" > .env
@@ -21,7 +21,7 @@ echo "ANTHROPIC_API_KEY=your-key-here" > .env
 docker-compose up -d
 
 # View logs
-docker logs -f podcast-server
+docker logs -f minuspod
 ```
 
 ## Environment Variables
@@ -33,7 +33,6 @@ docker logs -f podcast-server
 | `WHISPER_MODEL` | No | small | Whisper model size (tiny/small/medium/large-v3) |
 | `WHISPER_DEVICE` | No | cuda | Device for Whisper (cuda/cpu) |
 | `RETENTION_PERIOD` | No | 1440 | Minutes to keep processed episodes |
-| `HF_TOKEN` | No | - | HuggingFace token for speaker diarization |
 | `LOG_FORMAT` | No | text | Log format (text/json) |
 | `LOG_LEVEL` | No | INFO | Log level (DEBUG/INFO/WARNING/ERROR) |
 | `SECRET_KEY` | No | auto-generated | Flask secret key for sessions |
@@ -75,9 +74,8 @@ docker-compose restart
 ### Out of Memory
 
 1. Reduce Whisper model size: `WHISPER_MODEL=small` or `WHISPER_MODEL=tiny`
-2. Disable audio analysis in Settings
-3. Increase container memory limit
-4. For long episodes (>2 hours), expect 16GB+ RAM usage
+2. Increase container memory limit
+3. For long episodes (>2 hours), expect 16GB+ RAM usage
 
 ### Claude API Errors
 
@@ -92,7 +90,7 @@ docker-compose restart
 docker info | grep -i nvidia
 
 # Check GPU visibility in container
-docker exec podcast-server nvidia-smi
+docker exec minuspod nvidia-smi
 ```
 
 If GPU not available, set `WHISPER_DEVICE=cpu` (slower but works).
@@ -134,7 +132,7 @@ docker-compose start
 
 ```bash
 # Pull latest image
-docker pull ttlequals0/podcast-server:latest
+docker pull ttlequals0/minuspod:latest
 
 # Recreate container
 docker-compose up -d
@@ -146,13 +144,13 @@ docker-compose up -d
 
 ```bash
 # View all logs
-docker logs podcast-server
+docker logs minuspod
 
 # Follow logs
-docker logs -f podcast-server
+docker logs -f minuspod
 
 # Last 100 lines
-docker logs --tail 100 podcast-server
+docker logs --tail 100 minuspod
 ```
 
 ## Resource Usage
@@ -166,7 +164,7 @@ docker logs --tail 100 podcast-server
 | Whisper (large-v3) | High | 6 GB | 5 GB |
 | Claude API | Low | 100 MB | - |
 | Audio processing | High | 500 MB | - |
-| Speaker diarization | Medium | 4 GB | 2 GB |
+| Transition detection | Low | 100 MB | - |
 
 ## Cloudflare Tunnel (Optional)
 

@@ -6,6 +6,7 @@ that can identify identical or near-identical audio segments across episodes.
 This is particularly effective for DAI (Dynamic Ad Insertion) ads that are
 inserted as identical audio files.
 """
+import ctypes
 import logging
 import os
 import subprocess
@@ -222,6 +223,9 @@ class AudioFingerprinter:
         except ImportError:
             logger.warning("acoustid module not available for fingerprint comparison")
             return 0.0
+        except (TypeError, ctypes.ArgumentError) as e:
+            logger.error(f"Fingerprint comparison failed (bad data): {e}")
+            return -1.0
         except Exception as e:
             logger.error(f"Fingerprint comparison failed: {e}")
             return 0.0
@@ -291,6 +295,7 @@ class AudioFingerprinter:
             return []
 
         matches = []
+        broken_patterns = set()
 
         # Get total duration of audio
         total_duration = self._get_audio_duration(audio_path)
@@ -302,6 +307,11 @@ class AudioFingerprinter:
         # Slide through audio looking for matches
         position = 0.0
         while position < total_duration - MIN_SEGMENT_DURATION:
+            # Bail out if all known fingerprints are broken/corrupt
+            if len(broken_patterns) >= len(known_fingerprints):
+                logger.info("All known fingerprints are broken/skipped, ending scan early")
+                break
+
             # Generate fingerprint for current window
             chunk_fp = self.generate_fingerprint(
                 audio_path,
@@ -312,10 +322,24 @@ class AudioFingerprinter:
             if chunk_fp and chunk_fp.fingerprint:
                 # Compare against known fingerprints
                 for pattern_id, known_fp, known_duration, sponsor in known_fingerprints:
+                    if pattern_id in broken_patterns:
+                        continue
+
                     similarity = self.compare_fingerprints(
                         chunk_fp.fingerprint,
                         known_fp
                     )
+
+                    if similarity < 0:
+                        broken_patterns.add(pattern_id)
+                        logger.warning(f"Skipping broken fingerprint pattern {pattern_id} for remaining audio")
+                        if self.db:
+                            try:
+                                self.db.delete_audio_fingerprint(pattern_id)
+                                logger.warning(f"Deleted corrupt fingerprint for pattern {pattern_id}")
+                            except Exception as del_err:
+                                logger.error(f"Failed to delete corrupt fingerprint {pattern_id}: {del_err}")
+                        continue
 
                     if similarity >= MATCH_THRESHOLD:
                         # Found a match

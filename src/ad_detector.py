@@ -142,152 +142,6 @@ AD_END_PHRASES = [
     "back to the show",
 ]
 
-def merge_and_deduplicate(first_pass: List[Dict], second_pass: List[Dict]) -> List[Dict]:
-    """Merge ads from both passes, combining overlapping segments.
-
-    Strategy:
-    - If segments overlap: merge them (earliest start, latest end)
-    - If no overlap: keep both
-    - Preserves the longer/merged segment's metadata
-
-    Args:
-        first_pass: List of ad segments from first pass
-        second_pass: List of ad segments from second pass
-
-    Returns:
-        Merged and sorted list of ad segments
-    """
-    # Mark passes
-    for ad in first_pass:
-        if 'pass' not in ad:
-            ad['pass'] = 1
-    for ad in second_pass:
-        if 'pass' not in ad:
-            ad['pass'] = 2
-
-    # Combine all ads into one list
-    all_ads = list(first_pass) + list(second_pass)
-
-    if not all_ads:
-        return []
-
-    # Sort by start time
-    all_ads.sort(key=lambda x: x['start'])
-
-    # Merge overlapping segments
-    merged = [all_ads[0].copy()]
-
-    for current in all_ads[1:]:
-        last = merged[-1]
-
-        # Check if current overlaps with last (or is adjacent within 2 seconds)
-        if current['start'] <= last['end'] + 2.0:
-            # Merge: extend end time if current goes further
-            if current['end'] > last['end']:
-                original_end = last['end']
-                last['end'] = current['end']
-                # Update end_text from the segment that defines the new end
-                if current.get('end_text'):
-                    last['end_text'] = current['end_text']
-                logger.info(f"Merged overlapping ads: {last['start']:.1f}s-{original_end:.1f}s + {current['start']:.1f}s-{current['end']:.1f}s -> {last['start']:.1f}s-{last['end']:.1f}s")
-
-            # Keep higher confidence
-            if current.get('confidence', 0) > last.get('confidence', 0):
-                last['confidence'] = current['confidence']
-
-            # Mark as merged from both passes if different
-            if current.get('pass') != last.get('pass'):
-                last['pass'] = 'merged'
-        else:
-            # No overlap - add as new segment
-            merged.append(current.copy())
-            if current.get('pass') == 2:
-                logger.info(f"Second pass found new ad: {current['start']:.1f}s - {current['end']:.1f}s ({current.get('reason', 'unknown')})")
-
-    # Validate ad durations and extend short ads that likely ended too early
-    # Constants imported from config.py: MIN_TYPICAL_AD_DURATION, MIN_SPONSOR_READ_DURATION
-    URL_EXTENSION_SECONDS = 45.0  # Extension when URL detected in end_text
-
-    for ad in merged:
-        duration = ad['end'] - ad['start']
-        end_text = ad.get('end_text', '').lower()
-
-        # Check if likely incomplete - short duration with URL in end_text
-        has_url = '.com' in end_text or '.tv' in end_text or 'http' in end_text
-
-        if duration < MIN_TYPICAL_AD_DURATION:
-            logger.warning(
-                f"Short ad detected ({duration:.1f}s): {ad['start']:.1f}s - {ad['end']:.1f}s - "
-                f"may have incomplete end time. Reason: {ad.get('reason', 'unknown')}"
-            )
-
-        # Extend ads that are suspiciously short and ended on a URL
-        if duration < MIN_SPONSOR_READ_DURATION and has_url:
-            original_end = ad['end']
-            ad['end'] += URL_EXTENSION_SECONDS
-            ad['extended'] = True
-            logger.info(
-                f"Extended short ad with URL in end_text: {ad['start']:.1f}s-{original_end:.1f}s -> "
-                f"{ad['start']:.1f}s-{ad['end']:.1f}s (+{URL_EXTENSION_SECONDS:.0f}s)"
-            )
-
-    # Run sponsor mismatch extension as a separate pass to avoid
-    # modification during iteration issues
-    merged = _extend_ads_for_sponsor_mismatch(merged)
-
-    return merged
-
-
-def _extend_ads_for_sponsor_mismatch(ads: List[Dict]) -> List[Dict]:
-    """Extend ads where end_text mentions a different sponsor.
-
-    If end_text mentions a different sponsor URL than the ad's own sponsor,
-    it means another ad likely follows immediately - extend to meet the next ad.
-
-    Run as a separate pass to avoid modification during iteration issues.
-
-    Args:
-        ads: List of merged ad segments
-
-    Returns:
-        List of ads with sponsor mismatch extensions applied
-    """
-    if len(ads) < 2:
-        return ads
-
-    # Create a copy to avoid modifying while iterating
-    result = [ad.copy() for ad in ads]
-
-    for i, ad in enumerate(result[:-1]):  # Skip last ad (no next to check)
-        end_text_sponsor = extract_url_sponsor(ad.get('end_text', ''))
-        if not end_text_sponsor:
-            continue
-
-        ad_sponsors = extract_sponsor_names(ad.get('reason', ''), ad.get('reason', ''))
-        # If end_text mentions the same sponsor as this ad, no mismatch
-        if end_text_sponsor in ad_sponsors:
-            continue
-
-        # Check if next ad matches the end_text sponsor
-        next_ad = result[i + 1]
-        next_sponsors = extract_sponsor_names(next_ad.get('reason', ''), next_ad.get('reason', ''))
-        gap = next_ad['start'] - ad['end']
-
-        # If next ad matches end_text sponsor and gap is reasonable, extend to meet it
-        if end_text_sponsor in next_sponsors and gap <= 60.0:
-            original_end = ad['end']
-            ad['end'] = next_ad['start']
-            ad['end_text_sponsor_mismatch'] = True
-            logger.info(
-                f"Extended ad due to end_text sponsor mismatch: "
-                f"end_text has '{end_text_sponsor}' but ad sponsors are {ad_sponsors}, "
-                f"extended {original_end:.1f}s -> {ad['end']:.1f}s "
-                f"(next ad start at {next_ad['start']:.1f}s, gap was {gap:.1f}s)"
-            )
-
-    return result
-
-
 def refine_ad_boundaries(ads: List[Dict], segments: List[Dict]) -> List[Dict]:
     """Refine ad boundaries using word timestamps and keyword detection.
 
@@ -624,30 +478,6 @@ def _text_has_ad_content(text: str, sponsor_names: set = None) -> bool:
     return False
 
 
-def extract_url_sponsor(text: str) -> Optional[str]:
-    """Extract sponsor name from URL in text.
-
-    Used to detect when end_text contains a different sponsor's URL,
-    indicating back-to-back ads from different sponsors.
-
-    Args:
-        text: Text that may contain a URL (e.g., 'mintmobile.com')
-
-    Returns:
-        Sponsor name extracted from URL (e.g., 'mintmobile'), or None
-    """
-    if not text:
-        return None
-    url_pattern = r'([a-z0-9]+)\.(?:com|tv|io|co|org|net)'
-    match = re.search(url_pattern, text.lower())
-    if match:
-        sponsor = match.group(1)
-        # Only filter protocol prefixes, not domains
-        if sponsor not in ('www', 'http', 'https') and len(sponsor) > 2:
-            return sponsor
-    return None
-
-
 def extract_sponsor_names(text: str, ad_reason: str = None) -> set:
     """Extract potential sponsor names from transcript text and ad reason.
 
@@ -929,7 +759,16 @@ def deduplicate_window_ads(all_ads: List[Dict], merge_threshold: float = 5.0) ->
             # Keep higher confidence
             if current.get('confidence', 0) > last.get('confidence', 0):
                 last['confidence'] = current['confidence']
-                last['reason'] = current.get('reason', last.get('reason', ''))
+            # Prefer the more descriptive reason regardless of confidence
+            current_reason = current.get('reason', '')
+            last_reason = last.get('reason', '')
+            if len(current_reason) > len(last_reason):
+                last['reason'] = current_reason
+            # Preserve sponsor field
+            current_sponsor = current.get('sponsor', '')
+            last_sponsor = last.get('sponsor', '')
+            if current_sponsor and not last_sponsor:
+                last['sponsor'] = current_sponsor
             # Mark as merged from windows
             last['merged_windows'] = True
         else:
@@ -939,6 +778,14 @@ def deduplicate_window_ads(all_ads: List[Dict], merge_threshold: float = 5.0) ->
         logger.info(f"Window deduplication: {len(all_ads)} -> {len(merged)} ads")
 
     return merged
+
+
+def _first_not_none(*values):
+    """Return the first value that is not None. Unlike `or`, treats 0 and 0.0 as valid."""
+    for v in values:
+        if v is not None:
+            return v
+    return None
 
 
 class AdDetector:
@@ -1069,14 +916,14 @@ class AdDetector:
         """Ensure currently-configured models always appear in the model list.
 
         If the API/wrapper doesn't advertise a model that's actively configured
-        (e.g., set as first or second pass model), inject it so the settings UI
+        (e.g., set as first pass or verification model), inject it so the settings UI
         shows it and doesn't lose the selection.
         """
         existing_ids = {m['id'] for m in models_list}
         configured_models = []
         try:
             configured_models.append(self.get_model())
-            configured_models.append(self.get_second_pass_model())
+            configured_models.append(self.get_verification_model())
         except Exception:
             pass
 
@@ -1102,112 +949,15 @@ class AdDetector:
             logger.warning(f"Could not load model from DB: {e}")
         return DEFAULT_MODEL
 
-    def get_second_pass_model(self) -> str:
-        """Get configured second pass model from database or default."""
+    def get_verification_model(self) -> str:
+        """Get verification pass model from database or fall back to first pass model."""
         try:
-            model = self.db.get_setting('second_pass_model')
+            model = self.db.get_setting('verification_model')
             if model:
                 return model
-        except Exception as e:
-            logger.warning(f"Could not load second pass model from DB: {e}")
-        return DEFAULT_MODEL
-
-    def _format_audio_context(self, audio_analysis, window_start: float, window_end: float) -> str:
-        """Format audio analysis signals for a specific window as prompt context.
-
-        Args:
-            audio_analysis: AudioAnalysisResult object
-            window_start: Start time of current window in seconds
-            window_end: End time of current window in seconds
-
-        Returns:
-            Formatted string to include in Claude prompt
-        """
-        if not audio_analysis or not audio_analysis.signals:
-            return ""
-
-        # MAX_REALISTIC_SIGNAL imported from config.py
-
-        # Get signals that overlap with this window AND are realistic length
-        window_signals = [
-            s for s in audio_analysis.signals
-            if s.start < window_end and s.end > window_start
-            and (s.end - s.start) <= MAX_REALISTIC_SIGNAL
-        ]
-
-        if not window_signals:
-            return ""
-
-        lines = []
-        lines.append("\n" + "=" * 50)
-        lines.append("AUDIO ANALYSIS SIGNALS (supplementary context)")
-        lines.append("=" * 50)
-
-        # Conversation type
-        if audio_analysis.conversation_metrics:
-            metrics = audio_analysis.conversation_metrics
-            if metrics.is_conversational:
-                lines.append(f"Episode Type: CONVERSATIONAL ({metrics.num_speakers} speakers)")
-            else:
-                lines.append(f"Episode Type: SOLO/INTERVIEW ({metrics.num_speakers} speakers)")
-
-        # Volume changes
-        volume_signals = [
-            s for s in window_signals
-            if 'volume' in s.signal_type.lower()
-        ]
-        if volume_signals:
-            lines.append("\nVolume Changes:")
-            for s in volume_signals:
-                direction = "+" if "increase" in s.signal_type else "-"
-                deviation = s.details.get('deviation_db', 0)
-                time_str = self._format_time(s.start)
-                lines.append(f"  [{time_str}] {direction}{deviation:.1f}dB (confidence: {s.confidence:.0%})")
-
-        # Music beds
-        music_signals = [
-            s for s in window_signals
-            if s.signal_type == 'music_bed'
-        ]
-        if music_signals:
-            lines.append("\nMusic Beds Detected:")
-            for s in music_signals:
-                start_str = self._format_time(s.start)
-                end_str = self._format_time(s.end)
-                lines.append(f"  [{start_str} - {end_str}] (confidence: {s.confidence:.0%})")
-
-        # Monologues
-        mono_signals = [
-            s for s in window_signals
-            if s.signal_type == 'monologue'
-        ]
-        if mono_signals:
-            lines.append("\nExtended Monologues (potential ad reads):")
-            for s in mono_signals:
-                start_str = self._format_time(s.start)
-                end_str = self._format_time(s.end)
-                speaker = s.details.get('speaker', 'unknown')
-                is_host = s.details.get('is_host', False)
-                has_ad_lang = s.details.get('has_ad_language', False)
-                notes = []
-                if is_host:
-                    notes.append("HOST")
-                if has_ad_lang:
-                    notes.append("AD LANGUAGE")
-                note_str = f" [{', '.join(notes)}]" if notes else ""
-                lines.append(f"  [{start_str} - {end_str}] {s.duration:.0f}s by {speaker}{note_str}")
-
-        lines.append("-" * 50)
-        lines.append("NOTE: Correlate these signals with transcript content.")
-        lines.append("")
-
-        return '\n'.join(lines)
-
-    def _format_time(self, seconds: float) -> str:
-        """Format seconds as MM:SS."""
-        minutes = int(seconds // 60)
-        secs = int(seconds % 60)
-        return f"{minutes}:{secs:02d}"
+        except Exception:
+            pass
+        return self.get_model()
 
     def get_system_prompt(self) -> str:
         """Get system prompt from database or default, with dynamic sponsors appended."""
@@ -1222,18 +972,16 @@ class AdDetector:
         from database import DEFAULT_SYSTEM_PROMPT
         return self._inject_dynamic_sponsors(DEFAULT_SYSTEM_PROMPT)
 
-    def get_second_pass_prompt(self) -> str:
-        """Get second pass prompt from database or default, with dynamic sponsors appended."""
+    def get_verification_prompt(self) -> str:
+        """Get verification prompt from database or default, with dynamic sponsors appended."""
         try:
-            prompt = self.db.get_setting('second_pass_prompt')
+            prompt = self.db.get_setting('verification_prompt')
             if prompt:
                 return self._inject_dynamic_sponsors(prompt)
-        except Exception as e:
-            logger.warning(f"Could not load second pass prompt from DB: {e}")
-
-        # Default fallback - import from database module
-        from database import DEFAULT_SECOND_PASS_PROMPT
-        return self._inject_dynamic_sponsors(DEFAULT_SECOND_PASS_PROMPT)
+        except Exception:
+            pass
+        from database import DEFAULT_VERIFICATION_PROMPT
+        return self._inject_dynamic_sponsors(DEFAULT_VERIFICATION_PROMPT)
 
     def _inject_dynamic_sponsors(self, prompt: str) -> str:
         """Append dynamic sponsor database to a prompt at detection time.
@@ -1543,10 +1291,15 @@ class AdDetector:
                     # Log raw ad object for debugging
                     logger.debug(f"[{slug}:{episode_id}] Raw ad from LLM: {json.dumps(ad, default=str)[:500]}")
                     # Try various field name patterns for start/end times
-                    start_val = (ad.get('start') or ad.get('start_time') or ad.get('start_timestamp') or
-                                 ad.get('ad_start_timestamp') or ad.get('start_time_seconds'))
-                    end_val = (ad.get('end') or ad.get('end_time') or ad.get('end_timestamp') or
-                               ad.get('ad_end_timestamp') or ad.get('end_time_seconds'))
+                    # Use _first_not_none instead of `or` to avoid dropping 0.0 (pre-roll ads)
+                    start_val = _first_not_none(
+                        ad.get('start'), ad.get('start_time'), ad.get('start_timestamp'),
+                        ad.get('ad_start_timestamp'), ad.get('start_time_seconds')
+                    )
+                    end_val = _first_not_none(
+                        ad.get('end'), ad.get('end_time'), ad.get('end_timestamp'),
+                        ad.get('ad_end_timestamp'), ad.get('end_time_seconds')
+                    )
 
                     if start_val is not None and end_val is not None:
                         try:
@@ -1569,16 +1322,16 @@ class AdDetector:
                                     continue
 
                                 # Extract sponsor/advertiser name using priority fields + pattern matching
-                                # First check if Claude already provided a valid reason with sponsor info
+                                # Try extract_sponsor_name first for a real sponsor name.
+                                # If it returns the default, fall back to Claude's raw reason.
+                                reason = extract_sponsor_name(ad)
                                 existing_reason = ad.get('reason')
-                                if existing_reason and isinstance(existing_reason, str) and len(existing_reason) > 3:
-                                    reason_lower = existing_reason.lower().strip()
-                                    if reason_lower not in INVALID_SPONSOR_VALUES:
+                                if reason == 'Advertisement detected':
+                                    if existing_reason and isinstance(existing_reason, str) and len(existing_reason) > 3:
                                         reason = existing_reason
-                                    else:
-                                        reason = extract_sponsor_name(ad)
-                                else:
-                                    reason = extract_sponsor_name(ad)
+                                elif existing_reason and isinstance(existing_reason, str) and len(existing_reason) > len(reason) + 5:
+                                    # Claude's reason is substantially more descriptive than the bare sponsor name
+                                    reason = existing_reason
 
                                 # Extract description from Claude's response to enrich the reason
                                 # Dynamic scan: check ALL non-structural string fields > 10 chars
@@ -1656,13 +1409,18 @@ class AdDetector:
 
                                 # Log extracted ad details for production visibility
                                 logger.info(f"[{slug}:{episode_id}] Extracted ad: {start:.1f}s-{end:.1f}s, reason='{reason}', fields={list(ad.keys())}")
-                                valid_ads.append({
+                                ad_entry = {
                                     'start': start,
                                     'end': end,
                                     'confidence': norm_conf,
                                     'reason': reason,
                                     'end_text': ad.get('end_text') or ''
-                                })
+                                }
+                                # Store sponsor name separately for UI display
+                                sponsor_name = extract_sponsor_name(ad)
+                                if sponsor_name and sponsor_name != 'Advertisement detected':
+                                    ad_entry['sponsor'] = sponsor_name
+                                valid_ads.append(ad_entry)
                         except ValueError as e:
                             logger.warning(f"[{slug}:{episode_id}] Skipping ad with invalid timestamp: {e}")
                             continue
@@ -1676,15 +1434,15 @@ class AdDetector:
     def detect_ads(self, segments: List[Dict], podcast_name: str = "Unknown",
                    episode_title: str = "Unknown", slug: str = None,
                    episode_id: str = None, episode_description: str = None,
-                   audio_analysis=None, podcast_description: str = None,
-                   progress_callback=None) -> Optional[Dict]:
+                   podcast_description: str = None,
+                   progress_callback=None,
+                   audio_analysis=None) -> Optional[Dict]:
         """Detect ad segments using Claude API with sliding window approach.
 
         Processes transcript in overlapping windows to ensure ads at chunk
         boundaries are not missed. Windows are 10 minutes with 3 minute overlap.
 
         Args:
-            audio_analysis: Optional AudioAnalysisResult with audio signals
             podcast_description: Podcast-level description for context
             progress_callback: Optional callback(stage, percent) to report progress
         """
@@ -1736,6 +1494,12 @@ class AdDetector:
             all_raw_responses = []
             max_retries = RETRY_CONFIG['max_retries']
 
+            # Instantiate audio signal formatter if audio analysis available
+            audio_enforcer = None
+            if audio_analysis:
+                from audio_enforcer import AudioEnforcer
+                audio_enforcer = AudioEnforcer()
+
             # Process each window
             for i, window in enumerate(windows):
                 # Report progress for each window (keeps UI indicator alive)
@@ -1754,6 +1518,13 @@ class AdDetector:
                     transcript_lines.append(f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}")
                 transcript = "\n".join(transcript_lines)
 
+                # Add audio context if available for this window
+                audio_context = ""
+                if audio_enforcer:
+                    audio_context = audio_enforcer.format_for_window(
+                        audio_analysis, window_start, window_end
+                    )
+
                 # Add window context to prompt
                 window_context = f"""
 
@@ -1762,11 +1533,6 @@ class AdDetector:
 - If an ad starts before this window, use the first timestamp with note "continues from previous"
 - If an ad extends past this window, use {window_end:.1f} with note "continues in next"
 """
-
-                # Format audio analysis context for this window
-                audio_context = ""
-                if audio_analysis and hasattr(audio_analysis, 'signals') and audio_analysis.signals:
-                    audio_context = self._format_audio_context(audio_analysis, window_start, window_end)
 
                 prompt = user_prompt_template.format(
                     podcast_name=podcast_name,
@@ -1882,11 +1648,12 @@ class AdDetector:
     def process_transcript(self, segments: List[Dict], podcast_name: str = "Unknown",
                           episode_title: str = "Unknown", slug: str = None,
                           episode_id: str = None, episode_description: str = None,
-                          audio_analysis=None, audio_path: str = None,
+                          audio_path: str = None,
                           podcast_id: str = None, network_id: str = None,
                           skip_patterns: bool = False,
                           podcast_description: str = None,
-                          progress_callback=None) -> Dict:
+                          progress_callback=None,
+                          audio_analysis=None) -> Dict:
         """Process transcript for ad detection using three-stage pipeline.
 
         Pipeline stages:
@@ -1901,7 +1668,6 @@ class AdDetector:
             slug: Podcast slug
             episode_id: Episode ID
             episode_description: Episode description
-            audio_analysis: Audio analysis results
             audio_path: Path to audio file for fingerprinting
             podcast_id: Podcast ID for pattern scoping
             network_id: Network ID for pattern scoping
@@ -2043,9 +1809,9 @@ class AdDetector:
         # For now, we still run Claude on full transcript but mark pattern-detected regions
         result = self.detect_ads(
             segments, podcast_name, episode_title, slug, episode_id, episode_description,
-            audio_analysis=audio_analysis,
             podcast_description=podcast_description,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
+            audio_analysis=audio_analysis
         )
 
         if result is None:
@@ -2099,11 +1865,7 @@ class AdDetector:
             f"(fingerprint: {fp_count}, text: {tp_count}, claude: {cl_count})"
         )
 
-        # Learn patterns from high-confidence Claude detections
-        if slug and all_ads:
-            patterns_learned = self._learn_from_detections(all_ads, segments, slug, episode_id, audio_path=audio_path)
-            if patterns_learned > 0:
-                detection_stats['patterns_learned'] = patterns_learned
+        # Pattern learning moved to main.py (after validation sets was_cut)
 
         result['ads'] = all_ads
         result['detection_stats'] = detection_stats
@@ -2161,8 +1923,7 @@ class AdDetector:
             if sponsor_lower in self.INVALID_SPONSOR_REASONS or len(sponsor_lower) < 2:
                 logger.debug(f"Rejecting invalid extracted sponsor: '{sponsor}'")
                 return None
-            # Normalize: lowercase, remove spaces (for pattern storage consistency)
-            return sponsor.lower().replace(' ', '')
+            return sponsor
         return None
 
     def _learn_from_detections(
@@ -2191,6 +1952,11 @@ class AdDetector:
         min_confidence = 0.85  # Only learn from high-confidence detections
 
         for ad in ads:
+            # Only learn from ads that were actually removed
+            if not ad.get('was_cut', False):
+                logger.debug(f"Skipping pattern for uncut ad: {ad['start']:.1f}s-{ad['end']:.1f}s")
+                continue
+
             # Only learn from Claude detections (not fingerprint/text pattern)
             if ad.get('detection_stage') != 'claude':
                 continue
@@ -2211,12 +1977,52 @@ class AdDetector:
                     )
                     continue
 
-            # Get sponsor from ad dict or extract from reason
-            sponsor = ad.get('sponsor')
+            # 4-tier sponsor resolution
+            sponsor = None
+            raw_sponsor = ad.get('sponsor')
+            reason_text = ad.get('reason', '')
+
+            # Tier 1: sponsor DB lookup on raw sponsor field
+            if raw_sponsor and self.sponsor_service:
+                sponsor = self.sponsor_service.find_sponsor_in_text(raw_sponsor)
+
+            # Tier 2: sponsor DB lookup on reason text
+            if not sponsor and reason_text and self.sponsor_service:
+                sponsor = self.sponsor_service.find_sponsor_in_text(reason_text)
+
+            # Tier 3: extract from reason via regex patterns
             if not sponsor:
-                sponsor = self._extract_sponsor_from_reason(ad.get('reason', ''))
+                sponsor = self._extract_sponsor_from_reason(reason_text)
+
+            # Tier 4: use raw sponsor if it looks valid
+            if not sponsor and raw_sponsor:
+                raw_lower = raw_sponsor.lower().strip()
+                if raw_lower not in INVALID_SPONSOR_VALUES and len(raw_lower) >= 2:
+                    sponsor = raw_sponsor
+
             if not sponsor:
                 continue
+
+            # Gate A: reject sponsors that are strict prefixes of known sponsors
+            if self.sponsor_service:
+                sponsor_lower = sponsor.lower()
+                all_sponsors = self.sponsor_service.get_sponsors()
+                is_prefix = False
+                for s in all_sponsors:
+                    known = s['name'].lower()
+                    if known != sponsor_lower and known.startswith(sponsor_lower + ' '):
+                        logger.info(f"Skipping pattern: '{sponsor}' is prefix of '{s['name']}'")
+                        is_prefix = True
+                        break
+                if is_prefix:
+                    continue
+
+            # Gate B: reject single short words for unknown sponsors
+            if self.sponsor_service and not self.sponsor_service.find_sponsor_in_text(sponsor):
+                words = sponsor.strip().split()
+                if len(words) == 1 and len(sponsor.strip()) < 6:
+                    logger.info(f"Skipping pattern for unknown short sponsor: '{sponsor}'")
+                    continue
 
             try:
                 pattern_id = self.text_pattern_matcher.create_pattern_from_ad(
@@ -2350,97 +2156,102 @@ class AdDetector:
                     last['pattern_id'] = current.get('pattern_id')
                     if current.get('sponsor'):
                         last['sponsor'] = current['sponsor']
+                # Prefer the more descriptive reason
+                current_reason = current.get('reason', '')
+                last_reason = last.get('reason', '')
+                if len(current_reason) > len(last_reason):
+                    last['reason'] = current_reason
             else:
                 merged.append(current.copy())
 
         return merged
 
-    def is_multi_pass_enabled(self) -> bool:
-        """Check if multi-pass detection is enabled in settings."""
-        try:
-            setting = self.db.get_setting('multi_pass_enabled')
-            return setting and setting.lower() in ('true', '1', 'yes')
-        except Exception as e:
-            logger.warning(f"Could not check multi_pass_enabled setting: {e}")
-            return False
+    def run_verification_detection(self, segments: List[Dict],
+                                    podcast_name: str = "Unknown",
+                                    episode_title: str = "Unknown",
+                                    slug: str = None, episode_id: str = None,
+                                    episode_description: str = None,
+                                    podcast_description: str = None,
+                                    progress_callback=None,
+                                    audio_analysis=None) -> Dict:
+        """Run ad detection with the verification prompt on processed audio.
 
-    def detect_ads_second_pass(self, segments: List[Dict],
-                               podcast_name: str = "Unknown", episode_title: str = "Unknown",
-                               slug: str = None, episode_id: str = None,
-                               episode_description: str = None,
-                               audio_analysis=None,
-                               skip_patterns: bool = False,
-                               podcast_description: str = None,
-                               progress_callback=None) -> Optional[Dict]:
-        """Blind second pass ad detection with sliding window approach.
-
-        Focuses on subtle/baked-in ads using a separate model and prompt.
-        Uses the same sliding window approach as first pass for consistency.
+        Uses the same sliding window approach as detect_ads() but with the
+        verification system prompt and verification model setting.
 
         Args:
-            audio_analysis: Optional AudioAnalysisResult with audio signals
-            skip_patterns: Unused in second pass (always Claude-only), kept for API consistency
+            segments: Transcript segments from re-transcribed processed audio
+            podcast_name: Name of podcast
+            episode_title: Title of episode
+            slug: Podcast slug
+            episode_id: Episode ID
+            episode_description: Episode description
             podcast_description: Podcast-level description for context
             progress_callback: Optional callback(stage, percent) to report progress
         """
         if not self.api_key:
-            logger.warning("Skipping second pass - no API key")
+            logger.warning("Skipping verification detection - no API key")
             return {"ads": [], "status": "failed", "error": "No API key", "retryable": False}
 
         try:
             self.initialize_client()
 
-            # Create overlapping windows from transcript
             windows = create_windows(segments)
             total_duration = segments[-1]['end'] if segments else 0
 
-            logger.info(f"[{slug}:{episode_id}] Second pass: Processing {len(windows)} windows "
-                       f"for {total_duration/60:.1f}min episode")
+            logger.info(f"[{slug}:{episode_id}] Verification: Processing {len(windows)} windows "
+                       f"for {total_duration/60:.1f}min processed audio")
 
-            # Get second pass prompt and model (can be different from first pass)
-            system_prompt = self.get_second_pass_prompt()
-            model = self.get_second_pass_model()
+            system_prompt = self.get_verification_prompt()
+            model = self.get_verification_model()
 
-            logger.info(f"[{slug}:{episode_id}] Second pass using model: {model}")
+            logger.info(f"[{slug}:{episode_id}] Verification using model: {model}")
 
-            # Prepare description section (shared across windows)
+            # Prepare description section
             description_section = ""
             if podcast_description:
                 description_section = f"Podcast Description:\n{podcast_description}\n\n"
-                logger.info(f"[{slug}:{episode_id}] Second pass: Including podcast description ({len(podcast_description)} chars)")
             if episode_description:
-                description_section += f"Episode Description (this describes the actual content topics discussed; it may also list episode sponsors):\n{episode_description}\n"
-                logger.info(f"[{slug}:{episode_id}] Second pass: Including episode description ({len(episode_description)} chars)")
+                description_section += (
+                    f"Episode Description (this describes the actual content topics discussed; "
+                    f"it may also list episode sponsors):\n{episode_description}\n"
+                )
 
-            # Add podcast-specific sponsor history from ad_patterns
             sponsor_history = self._get_podcast_sponsor_history(slug)
             if sponsor_history:
                 description_section += sponsor_history
-                logger.info(f"[{slug}:{episode_id}] Second pass: Including sponsor history: {sponsor_history.strip()}")
 
             all_window_ads = []
             all_raw_responses = []
             max_retries = RETRY_CONFIG['max_retries']
 
-            # Process each window
+            # Instantiate audio signal formatter if audio analysis available
+            audio_enforcer = None
+            if audio_analysis:
+                from audio_enforcer import AudioEnforcer
+                audio_enforcer = AudioEnforcer()
+
             for i, window in enumerate(windows):
-                # Report progress for each window (keeps UI indicator alive)
                 if progress_callback:
-                    # Second pass: 80-95% range
-                    progress = 80 + int((i / max(len(windows), 1)) * 15)
-                    progress_callback(f"second_pass:{i+1}/{len(windows)}", progress)
+                    progress = 85 + int((i / max(len(windows), 1)) * 10)
+                    progress_callback(f"detecting:{i+1}/{len(windows)}", progress)
 
                 window_segments = window['segments']
                 window_start = window['start']
                 window_end = window['end']
 
-                # Build transcript for this window
                 transcript_lines = []
                 for seg in window_segments:
                     transcript_lines.append(f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}")
                 transcript = "\n".join(transcript_lines)
 
-                # Add window context to prompt
+                # Add audio context if available for this window
+                audio_context = ""
+                if audio_enforcer:
+                    audio_context = audio_enforcer.format_for_window(
+                        audio_analysis, window_start, window_end
+                    )
+
                 window_context = f"""
 
 === WINDOW {i+1}/{len(windows)}: {window_start/60:.1f}-{window_end/60:.1f} minutes ===
@@ -2449,11 +2260,6 @@ class AdDetector:
 - If an ad extends past this window, use {window_end:.1f} with note "continues in next"
 """
 
-                # Format audio analysis context for this window
-                audio_context = ""
-                if audio_analysis and hasattr(audio_analysis, 'signals') and audio_analysis.signals:
-                    audio_context = self._format_audio_context(audio_analysis, window_start, window_end)
-
                 prompt = USER_PROMPT_TEMPLATE.format(
                     podcast_name=podcast_name,
                     episode_title=episode_title,
@@ -2461,13 +2267,10 @@ class AdDetector:
                     transcript=transcript
                 ) + audio_context + window_context
 
-                logger.info(f"[{slug}:{episode_id}] Second pass Window {i+1}/{len(windows)}: "
+                logger.info(f"[{slug}:{episode_id}] Verification Window {i+1}/{len(windows)}: "
                            f"{window_start/60:.1f}-{window_end/60:.1f}min")
 
-                # Call Claude API with retry logic
                 response = None
-                last_error = None
-
                 for attempt in range(max_retries + 1):
                     try:
                         response = self._llm_client.messages_create(
@@ -2481,18 +2284,17 @@ class AdDetector:
                         )
                         break
                     except Exception as e:
-                        last_error = e
                         if self._is_retryable_error(e) and attempt < max_retries:
                             if is_rate_limit_error(e):
                                 delay = 60.0
-                                logger.warning(f"[{slug}:{episode_id}] Second pass Window {i+1} rate limit, waiting {delay:.0f}s")
                             else:
                                 delay = self._calculate_backoff(attempt)
-                                logger.warning(f"[{slug}:{episode_id}] Second pass Window {i+1} API error: {e}. Retrying in {delay:.1f}s")
+                            logger.warning(f"[{slug}:{episode_id}] Verification Window {i+1} "
+                                         f"API error: {e}. Retrying in {delay:.1f}s")
                             time.sleep(delay)
                             continue
                         else:
-                            logger.error(f"[{slug}:{episode_id}] Second pass Window {i+1} failed: {e}")
+                            logger.error(f"[{slug}:{episode_id}] Verification Window {i+1} failed: {e}")
                             return {
                                 "ads": [],
                                 "status": "failed",
@@ -2501,20 +2303,17 @@ class AdDetector:
                             }
 
                 if response is None:
-                    logger.error(f"[{slug}:{episode_id}] Second pass Window {i+1} - no response after retries")
+                    logger.error(f"[{slug}:{episode_id}] Verification Window {i+1} - no response after retries")
                     continue
 
-                # Parse response (LLMResponse.content is already extracted text)
                 response_text = response.content
-                all_raw_responses.append(f"=== Window {i+1} ({window_start/60:.1f}-{window_end/60:.1f}min) ===\n{response_text}")
+                all_raw_responses.append(
+                    f"=== Window {i+1} ({window_start/60:.1f}-{window_end/60:.1f}min) ===\n{response_text}"
+                )
 
-                # Parse ads from response
                 window_ads = self._parse_ads_from_response(response_text, slug, episode_id)
 
-                # Filter ads to window bounds - Claude sometimes hallucinates start=0.0
-                # when no ads found, speculating about "beginning of episode"
-                # MIN_OVERLAP_TOLERANCE, MAX_AD_DURATION_WINDOW imported from config.py
-
+                # Filter to window bounds
                 valid_window_ads = []
                 for ad in window_ads:
                     duration = ad['end'] - ad['start']
@@ -2526,44 +2325,37 @@ class AdDetector:
                         valid_window_ads.append(ad)
                     else:
                         logger.warning(
-                            f"[{slug}:{episode_id}] Second pass Window {i+1} rejected ad: "
-                            f"{ad['start']:.1f}s-{ad['end']:.1f}s ({duration:.0f}s) - "
-                            f"{'outside window' if not in_window else 'too long'}"
+                            f"[{slug}:{episode_id}] Verification Window {i+1} rejected ad: "
+                            f"{ad['start']:.1f}s-{ad['end']:.1f}s ({duration:.0f}s)"
                         )
 
-                window_ads = valid_window_ads
+                for ad in valid_window_ads:
+                    ad['detection_stage'] = 'verification'
 
-                # Mark all ads as second pass
-                for ad in window_ads:
-                    ad['pass'] = 2
+                logger.info(f"[{slug}:{episode_id}] Verification Window {i+1} found {len(valid_window_ads)} ads")
+                all_window_ads.extend(valid_window_ads)
 
-                logger.info(f"[{slug}:{episode_id}] Second pass Window {i+1} found {len(window_ads)} ads")
-                all_window_ads.extend(window_ads)
-
-            # Deduplicate ads across windows
             final_ads = deduplicate_window_ads(all_window_ads)
 
-            # Ensure pass=2 is preserved after dedup
             for ad in final_ads:
-                ad['pass'] = 2
+                ad['detection_stage'] = 'verification'
 
             if final_ads:
                 total_ad_time = sum(ad['end'] - ad['start'] for ad in final_ads)
-                logger.info(f"[{slug}:{episode_id}] Second pass total: {len(final_ads)} ads ({total_ad_time/60:.1f} min)")
-                for ad in final_ads:
-                    logger.info(f"[{slug}:{episode_id}] Second pass Ad: {ad['start']:.1f}s-{ad['end']:.1f}s "
-                               f"({ad['end']-ad['start']:.0f}s) end_text='{(ad.get('end_text') or '')[:50]}'")
+                logger.info(f"[{slug}:{episode_id}] Verification total: {len(final_ads)} ads "
+                           f"({total_ad_time/60:.1f} min)")
             else:
-                logger.info(f"[{slug}:{episode_id}] Second pass: No additional ads found")
+                logger.info(f"[{slug}:{episode_id}] Verification: No additional ads found")
 
             return {
                 "ads": final_ads,
                 "status": "success",
                 "raw_response": "\n\n".join(all_raw_responses),
-                "prompt": f"Second pass: Processed {len(windows)} windows",
+                "prompt": f"Verification: Processed {len(windows)} windows",
                 "model": model
             }
 
         except Exception as e:
-            logger.error(f"[{slug}:{episode_id}] Second pass failed: {e}")
+            logger.error(f"[{slug}:{episode_id}] Verification detection failed: {e}")
             return {"ads": [], "status": "failed", "error": str(e), "retryable": self._is_retryable_error(e)}
+

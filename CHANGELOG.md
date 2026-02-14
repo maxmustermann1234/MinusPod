@@ -6,6 +6,199 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-02-14
+
+Major release: pipeline redesign, MinusPod rebrand, and ad detection overhaul.
+
+### Changed
+- **Renamed to MinusPod**: Service name, Docker image (`ttlequals0/minuspod`), frontend title, package name, API docs, README, and deployment docs all updated from "Podcast Server" / "podcast-server".
+- **Replaced two-pass architecture with verification pipeline**: The blind second pass is replaced by a post-cut verification pass that re-transcribes processed audio and runs detection with a "what doesn't belong" prompt. Missed ads are re-cut directly from pass 1 output.
+- **Audio signals as Claude prompt context**: Volume anomalies and DAI transition pairs are formatted as text and injected into Claude's per-window prompts instead of running as an independent post-detection step. Claude makes all ad/not-ad decisions with full audio evidence.
+- **Audio analysis always enabled**: Removed global `audioAnalysisEnabled` toggle and per-feed `audioAnalysisOverride`. Volume analysis via ffmpeg is lightweight and always runs.
+- **AdMarker schema updated**: `pass` field replaced with `detection_stage` enum covering first_pass, claude, fingerprint, text_pattern, language, audio_enforced, and verification stages.
+- **Confidence slider is single source of truth**: Removed hardcoded dual-thresholds that bypassed the user's min_cut_confidence slider. ACCEPT = always cut, REJECT = never cut, REVIEW = confidence gate.
+- **Detection prompts rewritten**: Removed "when in doubt, mark it as an ad" bias. Both passes require identifiable promotional language. Added "WHAT IS NOT AN AD" guidance and "AUDIO SIGNALS" evidence-only framing.
+- **Transition detection threshold raised from 3.5 dB to 12.0 dB**: Added delta-ratio symmetry filter and recalibrated confidence formula to eliminate false positives from normal audio variation.
+- **Pattern learning quality gates**: Only creates patterns from ads that were actually cut. Sponsor extraction uses 4-tier DB resolution with prefix and short-word rejection gates.
+
+### Added
+- **Abrupt transition detection**: New `TransitionDetector` analyzes frame-to-frame loudness jumps in existing volume analyzer output. Pairs up/down transitions into candidate DAI regions.
+- **Audio signal enforcement**: New `AudioEnforcer` formats audio signals for Claude prompts and extends existing ad boundaries when signals partially overlap.
+- **Verification pass module**: New `VerificationPass` class encapsulates the full post-cut pipeline with separate model selection.
+- **Heuristic pre/post-roll detection**: New `roll_detector.py` with regex-based detection for ads at episode boundaries that Claude missed. Requires 2+ pattern matches.
+- **Transcript generation**: New `TranscriptGenerator` produces timestamp-aligned text stored in the database for search indexing and UI display.
+- **Silent-gap ad merge**: Consecutive ads separated by up to 30s of silence (no speech) are merged into a single ad instead of requiring 5s proximity.
+- **Incremental search index updates**: Episodes indexed immediately after processing; full rebuild every 6 hours.
+- **VTT-based transcript timestamps in UI**: EpisodeDetail fetches actual VTT transcript for accurate timestamps instead of approximating.
+- **Sponsor field on ad markers**: Ad markers now store the `sponsor` field separately for UI sponsor badges. Window deduplication preserves sponsor names during merges.
+
+### Fixed
+- **Pre-roll ads at 0.0s silently dropped**: Python `or`-chains treated `0.0` as falsy; replaced with `_first_not_none()` helper.
+- **Pass 2 ads missing from UI and showing wrong timestamps**: Multiple fixes for verification ads not being saved or displaying with processed-audio timestamps instead of original coordinates.
+- **Ad marker reasons showing bare sponsor names**: Three independent merge/dedup bugs caused markers to display unhelpful reasons instead of descriptive text.
+- **Corrupt fingerprints causing stuck episodes**: Auto-detection and deletion of broken fingerprints; bail-out when all fingerprints are corrupt.
+- **CTranslate2 cuDNN crash**: Added `LD_LIBRARY_PATH` for nvidia pip package directories.
+- **Content segments parsed as ads**: Dynamic ad-evidence validation requires positive proof (known sponsor, ad-language patterns, or explicit sponsor field).
+
+### Removed
+- **Speaker diarization and music bed detection**: Dropped pyannote.audio and librosa dependencies. GPU memory pressure, processing time, and heavy dependencies for marginal benefit.
+- **Dependencies**: `librosa`, `pyannote.audio`, `nvidia-cudnn-cu12` (re-added then managed via LD_LIBRARY_PATH).
+- **Dead code**: Unused functions, blind second pass prompt, stale UI text, audio analysis toggle settings.
+
+## [0.1.258] - 2026-02-14
+
+### Fixed
+- **Missing sponsor names and raw detection_stage in UI**: Claude-detected ads now store the `sponsor` field separately (extracted via `extract_sponsor_name`) so the UI can display sponsor badges. Window deduplication preserves sponsor names during merges. Frontend passes through `marker.sponsor` from the API instead of hardcoding `undefined`. TranscriptEditor maps raw `detection_stage` values to human-friendly labels (Pass 1, Pass 2, Fingerprint, Pattern, Language) instead of showing "claude" or "text_pattern".
+
+## [0.1.257] - 2026-02-14
+
+### Fixed
+- **Ad marker reasons show bare sponsor names instead of descriptions**: Three independent bugs caused ad markers to display unhelpful reasons like "Ironclad" or "Contains" instead of descriptive text. (1) Cross-stage merge in `_merge_detection_results` never updated the `reason` field when merging overlapping ads from different detection stages -- now picks the longer (more descriptive) reason. (2) Window deduplication in `deduplicate_window_ads` replaced reason based solely on confidence -- now keeps the more descriptive reason regardless of which window had higher confidence. (3) Claude reason extraction preferred `extract_sponsor_name` (bare name) over Claude's raw `reason` field -- now falls back to Claude's reason when it is substantially more descriptive than the bare sponsor name.
+
+## [0.1.256] - 2026-02-14
+
+### Added
+- **Silent-gap ad merge** (Phase 18): Consecutive ads separated by up to 30s of silence (no speech) are now merged into a single ad. Previously only ads within 5s were merged, leaving fragmented detections when an ad break contained a brief silence between sponsors. New `_has_speech_in_range()` method checks transcript segments to distinguish silent gaps from content. `MAX_SILENT_GAP` constant (30s) added to config.
+- **Incremental search index updates** (Phase 19): New `index_episode()` method indexes a single episode immediately after processing, so it appears in search results without waiting for a full rebuild. Periodic full rebuild runs every 6 hours via `run_cleanup()`.
+- **VTT-based transcript timestamps in UI** (Phase 20): EpisodeDetail now fetches and parses the actual VTT transcript file for accurate timestamps instead of approximating by evenly distributing text across the episode duration. Falls back to the old approximation when VTT is unavailable.
+- **Processed transcript text storage** (Phase 20): New `generate_text()` method on TranscriptGenerator produces a `[HH:MM:SS.sss --> HH:MM:SS.sss] text` format stored in the database after processing. This is the ad-free, timestamp-adjusted transcript used by search indexing.
+
+### Changed
+- **Renamed to MinusPod** (Phase 22): Service name, Docker image, frontend title, package name, API docs title, README heading, and deployment docs all updated from "Podcast Server" / "podcast-server" to "MinusPod" / "minuspod".
+- **Pass label text in UI** (Phase 20): Detection stage labels changed from "first pass" / "verification" to "pass 1" / "pass 2" for consistency.
+
+### Fixed
+- **Fingerprint scan wastes iterations when all fingerprints are broken** (Phase 17): When every known fingerprint in the database is corrupt, the sliding window loop still iterated through the entire audio file doing ffmpeg+fpcalc work for nothing. Added a bail-out check that breaks immediately when all known fingerprints are in the broken set.
+
+### Removed
+- **Dead code cleanup** (Phase 21): Removed three unused functions: `extract_url_sponsor()` from ad_detector.py, `extract_segments_with_timestamps()` from utils/text.py, `format_time_simple()` from utils/time.py.
+
+## [0.1.255] - 2026-02-13
+
+### Fixed
+- **v0.1.254 fix missed ctypes.ArgumentError**: The corrupt fingerprint exception is `ctypes.ArgumentError` (from the C library binding), not Python's `TypeError`. The `<class 'TypeError'>` in the error message was the ctypes description of the type mismatch, not the exception class. Updated the catch to handle both `TypeError` and `ctypes.ArgumentError`.
+
+## [0.1.254] - 2026-02-13
+
+### Fixed
+- **Stuck episode caused by corrupt audio fingerprint in database**: A corrupt fingerprint stored in the database caused `acoustid.chromaprint.decode_fingerprint()` to throw `TypeError` on every comparison. The `find_matches()` sliding window loop (3300 iterations for a 6605s episode) caught and swallowed the error each time, taking ~47 minutes of wasted work -- longer than the 37-minute orphan detector timeout. The episode was killed, reset, and retried in a loop it could never escape. Fix: `compare_fingerprints()` now returns -1.0 for TypeError (distinguishing broken data from no-match), and `find_matches()` tracks broken pattern IDs in a set, skipping them after the first failure. Corrupt fingerprints are auto-deleted from the database. A 47-minute scan of errors becomes 1 warning + fast completion.
+
+## [0.1.253] - 2026-02-12
+
+### Fixed
+- **Pre-roll ads starting at 0.0s silently dropped**: The LLM response parser used Python `or`-chains to extract start/end timestamps from Claude's JSON response. Since `0.0` is falsy in Python, `0.0 or ad.get('start_time')` would skip the valid value and fall through to `None`, causing the ad to be silently discarded at the `start_val is not None` check. Replaced `or`-chains with `_first_not_none()` helper that correctly treats `0` and `0.0` as valid values. Every pre-roll ad starting at timestamp 0.0 was previously being lost.
+
+## [0.1.252] - 2026-02-12
+
+### Changed
+- **Detection prompts updated to reduce false positives** (Phase 16): Removed "when in doubt, mark it as an ad" bias from Pass 1 prompt. Both Pass 1 and Pass 2 prompts now require identifiable promotional language (sponsor names, URLs, promo codes, product pitches, calls to action) to flag an ad. Added "WHAT IS NOT AN AD" section to Pass 1 listing silence/pauses, topic transitions, and audio-only anomalies. Added "AUDIO SIGNALS" section to Pass 1 explicitly stating signals are supporting evidence only. Added CRITICAL paragraph to Pass 2 requiring promotional transcript content. Removed "BE THOROUGH" over-flagging encouragement from Pass 2. Strengthened audio_enforcer.py header to reinforce that audio signals without promotional content are not ads. Addresses SN 1064 false positive where a 2935-2970s silence gap was flagged as an ad at 65% confidence.
+
+## [0.1.251] - 2026-02-11
+
+### Fixed
+- **Pass 2 heuristic roll ads showing wrong timestamps in UI** (Phase 15.3): Pre/post-roll ads detected by heuristic on processed audio were copied directly into `verification_ads_original` with processed-audio timestamps. Since pass 1 cuts shift the timeline, these timestamps were wrong in the UI. Now maps heuristic roll ad timestamps through `_map_to_original` using the pass 1 cuts, matching how Claude's verification ads are already mapped.
+
+## [0.1.250] - 2026-02-11
+
+### Added
+- **Heuristic pre/post-roll detection** (Phase 15): New `roll_detector.py` with regex-based detection for ads at episode boundaries that Claude missed due to LLM nondeterminism. Detects ad indicators (URLs, phone numbers, CTAs, promo codes) before show intro (pre-roll) and after sign-off (post-roll). Requires 2+ pattern matches with conservative confidence (0.80-0.95). Runs in both Pass 1 and Pass 2.
+
+### Changed
+- **Confidence slider is now the single source of truth** (Phase 11): AdValidator's `_make_decision` no longer has hardcoded 0.85/0.60 dual-thresholds that bypassed the user's min_cut_confidence slider. The ACCEPT/REVIEW boundary now uses the slider value (default 80%). Ads between REJECT_CONFIDENCE and the slider correctly get REVIEW instead of being silently auto-accepted. Removed `HIGH_CONFIDENCE` constant from config.py.
+- **Pattern learning quality gates** (Phase 10): `_learn_from_detections` now only creates patterns from ads that were actually cut (`was_cut=True`). Sponsor extraction uses 4-tier DB resolution (DB lookup on sponsor field, DB lookup on reason text, regex extraction, raw sponsor fallback) with two rejection gates: prefix check (rejects "Capital" when "Capital One" exists in DB) and short-word check for unknown sponsors. Removed space-stripping from `_extract_sponsor_from_reason` that corrupted multi-word names.
+- **Pattern learning moved from ad_detector to main.py**: `_learn_from_detections` call moved to after validation sets `was_cut`, so the `was_cut` gate works correctly.
+- **Episode duration from audio file** (Phase 14): `episode_duration` now uses `audio_processor.get_audio_duration()` instead of `segments[-1]['end']`. Fixes trailing ads not being extended when audio file is longer than last transcribed word (Whisper stops at speech end, missing trailing silence/music/jingle).
+
+### Fixed
+- **Reason fallback logic** (Phase 9): `extract_sponsor_name()` is now tried first; only falls back to Claude's raw reason field if it returns the default "Advertisement detected". Previously the raw reason was checked first but rejected valid values like "mid-roll" or "host read" that appeared in `INVALID_SPONSOR_VALUES`.
+- **Pass 2 ads displayed out of chronological order** (Phase 12): Combined ads list now sorted by start timestamp after appending pass 2 verification ads.
+- **Pass 2 status showing "Verifying" instead of substages** (Phase 13): Changed verification detection callback from `verifying:N/M` to `detecting:N/M` so the UI shows "Pass 2: Detecting ads" instead of overwriting substage labels. Removed premature `pass2:verifying` status update. Cleaned up `pass2:verifying` label from frontend status bar.
+
+## [0.1.249] - 2026-02-11
+
+### Fixed
+- **Pass 2 ads missing from UI**: `save_combined_ads` was called only with pass 1 ads. Pass 2 verification ads (`v_ads_for_ui`) were cut from audio but never appended to the stored ad markers, so they didn't appear in the UI or API response. Now re-saves combined ads after verification adds its ads.
+- **Pass 2 status stuck on "Verifying"**: Verification pass only reported status during Claude detection (via progress callback), but transcription and audio analysis stages had no status updates. Added `progress_callback` calls for transcribing and analyzing steps inside `VerificationPass.verify()`, so the UI now shows "Pass 2: Transcribing", "Pass 2: Analyzing audio", "Pass 2: Detecting ads" progression.
+
+## [0.1.248] - 2026-02-11
+
+### Changed
+- **Transition detection threshold raised from 3.5 dB to 12.0 dB**: The old threshold caught normal audio variation as DAI splices. Real DAI ad insertions produce 12+ dB jumps. Added delta-ratio symmetry filter (< 0.5 rejected) and recalibrated confidence formula.
+- **Audio enforcer converted from independent actor to prompt formatter**: The old enforcer pattern-matched transcript text independently of Claude and created phantom ads. New `AudioEnforcer.format_for_window()` formats audio signals as text context injected into Claude's per-window prompts so Claude makes all ad/not-ad decisions with full audio evidence.
+- **Audio signals now included in Claude's detection prompts**: Both pass 1 (`detect_ads`) and pass 2 (`run_verification_detection`) inject DAI transition pairs and volume anomalies into each window's prompt via the audio enforcer formatter.
+- **Verification pass returns dual timestamps**: Pass 2 now maps processed-audio timestamps back to original-audio coordinates. `ads` (original timestamps) used for UI/DB display, `ads_processed` (processed timestamps) used for FFMPEG cutting. Fixes timestamp mismatch where pass 2 ads showed wrong positions in the UI.
+- **Frontend status display shows pass 1/pass 2 stages**: Status bar labels prefixed with "Pass 1:" and "Pass 2:" for clarity. `getStageLabel()` function handles substage parsing (e.g., `pass1:detecting:2/5`). Detection stage badges renamed from "First Pass"/"Audio Enforced"/"Verification" to "Pass 1"/"Pass 2".
+
+### Removed
+- **Whisper model unload before audio analysis**: Audio analysis is CPU-only, so unloading the GPU model before it was unnecessary and wasted 10-15s on reload for the verification pass.
+- **Audio enforcer post-detection step**: The independent enforcement step in main.py that created ads from uncovered audio signals has been removed. Audio signals now flow through Claude's prompt instead.
+- **`DAI_CONFIDENCE_ONLY_THRESHOLD` config constant**: No longer needed since the enforcer no longer creates ads independently.
+
+### Fixed
+- **Verification pass `_transcribe_on_gpu` double exception handling**: The inner try/except caught all exceptions and returned `[]`, preventing the outer catch from ever setting `'transcription_failed'` status. Removed inner try/except so exceptions propagate to the caller.
+- **Anthropic SDK pinned version**: Unpinned `anthropic==0.49.0` to `anthropic>=0.49.0` to allow compatible updates.
+
+## [0.1.247] - 2026-02-10
+
+### Fixed
+- **Verification pass uses GPU instead of CPU**: Verification transcription was creating a fresh CPU model (20-30x slower) instead of reusing the GPU singleton. Now calls `WhisperModelSingleton.get_instance()` which lazy-reloads the GPU model after it was freed for audio analysis. ~30-min episodes go from 15-30 min to ~1-2 min for verification transcription.
+- **ACCEPT decisions now always cut**: Validator ACCEPT (confidence >= 0.60) and the cutting filter (MIN_CUT_CONFIDENCE = 0.80) were contradictory -- ads with 0.60-0.79 confidence were ACCEPTed then not cut. Now ACCEPT = always cut, REJECT = never cut, REVIEW = confidence gate. This prevents validated ads like sponsor reads from being silently kept in audio.
+- **AudioEnforcer false positives from confidence-only path**: DAI transition pairs with confidence >= 0.80 could create ads without any ad language in the transcript, causing false positives when strong audio transitions occurred during normal show content. Raised threshold from 0.80 to 0.95 (`DAI_CONFIDENCE_ONLY_THRESHOLD`). Ads with ad language in transcript are unaffected.
+- **Mid-roll position boost gaps**: Position windows had dead zones (0.35-0.45, 0.55-0.65) where ads received no position boost. Simplified from three narrow windows (`MID_ROLL_1/2/3`) to a single continuous range (0.15-0.85) so all mid-roll ads get the +0.05 confidence boost.
+
+## [0.1.246] - 2026-02-10
+
+### Fixed
+- **CTranslate2 cuDNN crash (SIGABRT code 134)**: The nvidia-cudnn-cu12 pip package installs `.so` files into Python's site-packages (`nvidia/cudnn/lib/`), but CTranslate2 uses `dlopen()` which only searches `LD_LIBRARY_PATH` and system paths. Added `LD_LIBRARY_PATH` to Dockerfile ENV pointing to the nvidia pip package lib directories. Removed redundant `nvidia-cudnn-cu12` from requirements.txt (already a dependency of torch).
+
+## [0.1.245] - 2026-02-10
+
+### Fixed
+- **Restore nvidia-cudnn-cu12 dependency**: CTranslate2 (faster-whisper GPU backend) requires cuDNN for CUDA inference. Removal in v0.1.242 caused worker SIGABRT crashes during transcription. Re-added `nvidia-cudnn-cu12==8.9.2.26`.
+- **Pattern backfill crash**: `extract_transcript_segment` was called in `database.py` but never imported. Replaced with already-imported `extract_text_in_range` (identical behavior).
+- **Stuck episode reset killing active jobs**: `reset_stuck_processing_episodes()` ran on every Gunicorn worker boot and reset ALL processing episodes with no time check. A worker restart during active transcription would kill the in-progress job. Added 30-minute guard so only genuinely stuck episodes are reset.
+- **Orphaned queue state blocking reprocessing**: When a worker crashes (SIGABRT), the flock is released by the OS but the state file still says "processing". `_clear_stale_state()` only checked the 60-minute timeout, so any reprocess attempt got "already_processing" for up to an hour. Now probes the flock to detect orphaned state immediately -- if no process holds the lock, the state is cleared regardless of elapsed time.
+
+## [0.1.244] - 2026-02-10
+
+### Changed
+- **Detailed verification prompt**: Replaced simplified verification pass prompt with full version including fragment detection (highest priority), missed ad patterns, "how to identify fragments" guidance, ad boundary rules, and three concrete examples (fragment, missed ad, clean episode).
+- **First pass prompt improvement**: Added "dynamically inserted ads" detection line to first pass prompt WHAT TO LOOK FOR section.
+
+### Removed
+- **Dead second pass prompt**: Removed unused `DEFAULT_SECOND_PASS_PROMPT` constant (blind second pass was replaced by verification pipeline in v0.1.242).
+- **Stale UI text**: Removed "Can be skipped per-podcast" from verification pass Settings description (no longer applicable).
+
+## [0.1.243] - 2026-02-10
+
+### Fixed
+- **Pin numpy<2.0 for CPU compatibility**: numpy 2.x requires X86_V2 CPU instructions which the target server lacks, causing a RuntimeError on startup via ctranslate2 import. Pinning numpy<2.0 resolves the crash introduced when the huggingface_hub upper pin was removed (pyannote constraint gone).
+
+## [0.1.242] - 2026-02-10
+
+### Changed
+- **Replaced two-pass architecture with verification pipeline**: The blind second pass (re-analyzing the same transcript with a different prompt) is replaced by a post-cut verification pass that re-transcribes the processed audio on CPU and runs full detection with a "what doesn't belong" prompt. If missed ads are found, the pass 1 output is re-cut directly. No timestamp mapping needed since verification operates entirely in processed-audio coordinates.
+- **Removed audio context injection from Claude's prompt**: Audio signals (volume anomalies, transitions) were previously formatted as text and injected into Claude's sliding window prompt. This indirect approach is replaced by programmatic audio enforcement (see below) that acts as a post-Claude step.
+- **Removed speaker diarization and music bed detection**: Dropped pyannote.audio and librosa dependencies entirely. Speaker analysis and music detection added GPU memory pressure, processing time, and heavy dependencies (nvidia-cudnn-cu12, HF_TOKEN auth) for marginal benefit. Audio analysis now runs volume analysis only (ffmpeg ebur128, zero extra dependencies) plus the new transition detector.
+- **Audio analysis always enabled**: Removed the global `audioAnalysisEnabled` toggle and per-feed `audioAnalysisOverride` settings. Volume analysis via ffmpeg is lightweight and always runs.
+- **Settings renamed**: `secondPassPrompt` -> `verificationPrompt`, `secondPassModel` -> `verificationModel`. Old settings are automatically migrated. `multiPassEnabled` toggle removed (verification always runs).
+- **AdMarker schema updated**: `pass` field (1, 2, "merged") replaced with `detection_stage` enum (`first_pass`, `audio_enforced`, `verification`).
+
+### Added
+- **Abrupt transition detection**: New `TransitionDetector` analyzes frame-to-frame loudness jumps in the existing volume analyzer output (zero extra cost). Pairs up/down transitions into candidate DAI (dynamically inserted ad) regions with configurable thresholds (`TRANSITION_THRESHOLD_DB`, `MIN/MAX_TRANSITION_AD_DURATION`).
+- **Audio signal enforcement**: New `AudioEnforcer` runs after Claude's first pass to programmatically check whether audio signals overlap with detected ads. Uncovered DAI transition pairs with ad language in the transcript (or high confidence >= 0.8, or sponsor match) become new ads. Volume anomalies require both ad language AND sponsor match (higher bar). Existing ads are extended up to 30s when a signal partially overlaps their boundaries.
+- **Verification pass module**: New `VerificationPass` class encapsulates the full post-cut pipeline: CPU re-transcription (using faster_whisper directly, not WhisperModelSingleton), audio analysis on processed audio, Claude detection with verification prompt/model, audio enforcement, and ad validation.
+- **Separate verification model setting**: The verification pass can use a different Claude model from the first pass, configurable in Settings as "Verification Model".
+
+### Removed
+- **Dependencies**: `librosa>=0.10.0`, `pyannote.audio>=3.1.0,<4.0.0`, `nvidia-cudnn-cu12==8.9.2.26`. Removed `huggingface_hub` upper version pin (`<1.0` was a pyannote constraint).
+- **Files**: `src/audio_analysis/speaker_analyzer.py`, `src/audio_analysis/music_detector.py`.
+- **Methods**: `detect_ads_second_pass()`, `is_multi_pass_enabled()`, `get_second_pass_prompt()`, `get_second_pass_model()`, `_format_audio_context()`, `_format_time()`, `format_for_claude()`, `is_enabled_for_podcast()` from AudioAnalyzer.
+- **Settings**: `multi_pass_enabled`, `audio_analysis_enabled`, `volume_analysis_enabled`, `music_detection_enabled`, `speaker_analysis_enabled`, `music_confidence_threshold`, `monologue_duration_threshold`.
+- **Dataclasses**: `SpeakerSegment`, `ConversationMetrics`. `SignalType.MUSIC_BED`, `MONOLOGUE`, `SPEAKER_CHANGE` enum values.
+
+---
+
 ## [0.1.241] - 2026-02-09
 
 ### Changed

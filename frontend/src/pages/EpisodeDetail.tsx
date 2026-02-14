@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getEpisode, reprocessEpisode, regenerateChapters } from '../api/feeds';
@@ -98,24 +98,66 @@ function EpisodeDetail() {
       end: marker.end,
       confidence: marker.confidence,
       reason: marker.reason || '',
-      sponsor: undefined, // Could be extracted from reason if needed
+      sponsor: marker.sponsor,
       pattern_id: undefined,
-      detection_stage: marker.pass === 1 ? 'first_pass' : marker.pass === 2 ? 'second_pass' : 'merged',
+      detection_stage: marker.detection_stage || 'first_pass',
     }));
   }, [episode?.adMarkers]);
 
-  // Generate approximate transcript segments from plain text - memoized for performance
-  // This is a placeholder - ideally we'd have timestamped segments from the API
+  // Parse VTT content into transcript segments
+  const [vttSegments, setVttSegments] = useState<{ start: number; end: number; text: string }[]>([]);
+
+  useEffect(() => {
+    if (!episode?.transcriptVttAvailable || !episode?.transcriptVttUrl) {
+      setVttSegments([]);
+      return;
+    }
+
+    const parseVttTimestamp = (ts: string): number => {
+      const parts = ts.trim().split(':');
+      if (parts.length === 3) {
+        return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+      } else if (parts.length === 2) {
+        return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+      }
+      return 0;
+    };
+
+    fetch(episode.transcriptVttUrl)
+      .then((res) => {
+        if (!res.ok) throw new Error(`VTT fetch failed: ${res.status}`);
+        return res.text();
+      })
+      .then((vttText) => {
+        const cues = vttText.split(/\n\n+/).filter((block) => block.includes('-->'));
+        const parsed = cues.map((cue) => {
+          const lines = cue.trim().split('\n');
+          const timeLine = lines.find((l) => l.includes('-->'));
+          if (!timeLine) return null;
+          const [startStr, endStr] = timeLine.split('-->');
+          const textLines = lines.slice(lines.indexOf(timeLine) + 1);
+          return {
+            start: parseVttTimestamp(startStr),
+            end: parseVttTimestamp(endStr),
+            text: textLines.join(' ').trim(),
+          };
+        }).filter((s): s is { start: number; end: number; text: string } => s !== null && s.text.length > 0);
+        setVttSegments(parsed);
+      })
+      .catch(() => setVttSegments([]));
+  }, [episode?.transcriptVttAvailable, episode?.transcriptVttUrl]);
+
+  // Use VTT segments if available, otherwise fall back to approximate timestamps
   const transcriptSegments = useMemo(() => {
+    if (vttSegments.length > 0) return vttSegments;
+
     if (!episode?.transcript || !episode.originalDuration) return [];
 
-    // Split transcript into sentences/chunks
+    // Fallback: distribute timestamps evenly across sentences (approximation)
     const text = episode.transcript;
     const sentences = text.split(/(?<=[.!?])\s+/).filter((s) => s.trim());
-
     if (sentences.length === 0) return [];
 
-    // Distribute timestamps evenly across sentences (approximation)
     const duration = episode.originalDuration;
     const segmentDuration = duration / sentences.length;
 
@@ -124,7 +166,7 @@ function EpisodeDetail() {
       end: (index + 1) * segmentDuration,
       text: sentence.trim(),
     }));
-  }, [episode?.transcript, episode?.originalDuration]);
+  }, [vttSegments, episode?.transcript, episode?.originalDuration]);
 
   const formatDuration = (seconds?: number) => {
     if (!seconds) return '';
@@ -346,15 +388,15 @@ function EpisodeDetail() {
                 </button>
               )}
             </div>
-            {/* Row 2: Pass info + time saved */}
-            {((episode.adsRemovedFirstPass !== undefined && episode.adsRemovedSecondPass !== undefined && episode.adsRemovedSecondPass > 0) || (episode.timeSaved && episode.timeSaved > 0)) && (
+            {/* Row 2: Detection stage info + time saved */}
+            {((episode.adsRemovedFirstPass !== undefined && episode.adsRemovedVerification !== undefined && episode.adsRemovedVerification > 0) || (episode.timeSaved && episode.timeSaved > 0)) && (
               <div className="mt-1 text-sm text-muted-foreground">
-                {(episode.adsRemovedFirstPass !== undefined && episode.adsRemovedSecondPass !== undefined && episode.adsRemovedSecondPass > 0) && (
-                  <span>{episode.adsRemovedFirstPass} first pass, {episode.adsRemovedSecondPass} second pass</span>
+                {(episode.adsRemovedFirstPass !== undefined && episode.adsRemovedVerification !== undefined && episode.adsRemovedVerification > 0) && (
+                  <span>{episode.adsRemovedFirstPass} pass 1, {episode.adsRemovedVerification} pass 2</span>
                 )}
                 {episode.timeSaved && episode.timeSaved > 0 && (
-                  <span className={episode.adsRemovedSecondPass && episode.adsRemovedSecondPass > 0 ? 'ml-2' : ''}>
-                    {episode.adsRemovedSecondPass && episode.adsRemovedSecondPass > 0 ? '- ' : ''}{formatDuration(episode.timeSaved)} time saved
+                  <span className={episode.adsRemovedVerification && episode.adsRemovedVerification > 0 ? 'ml-2' : ''}>
+                    {episode.adsRemovedVerification && episode.adsRemovedVerification > 0 ? '- ' : ''}{formatDuration(episode.timeSaved)} time saved
                   </span>
                 )}
               </div>
@@ -395,15 +437,13 @@ function EpisodeDetail() {
                   <span className="font-mono text-sm">
                     {formatTimestamp(segment.start)} - {formatTimestamp(segment.end)}
                   </span>
-                  {segment.pass && (
+                  {segment.detection_stage && (
                     <span className={`px-1.5 py-0.5 text-xs rounded font-medium ${
-                      segment.pass === 1
-                        ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400'
-                        : segment.pass === 2
+                      segment.detection_stage === 'verification'
                         ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400'
-                        : 'bg-green-500/20 text-green-600 dark:text-green-400'
+                        : 'bg-blue-500/20 text-blue-600 dark:text-blue-400'
                     }`}>
-                      {segment.pass === 'merged' ? 'Merged' : `Pass ${segment.pass}`}
+                      {segment.detection_stage === 'verification' ? 'Pass 2' : 'Pass 1'}
                     </span>
                   )}
                   {episode.transcript && (

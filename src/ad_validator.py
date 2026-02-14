@@ -7,10 +7,10 @@ from enum import Enum
 
 from config import (
     MIN_AD_DURATION, SHORT_AD_WARN, LONG_AD_WARN, MAX_AD_DURATION,
-    MAX_AD_DURATION_CONFIRMED, HIGH_CONFIDENCE, LOW_CONFIDENCE,
+    MAX_AD_DURATION_CONFIRMED, LOW_CONFIDENCE,
     REJECT_CONFIDENCE, HIGH_CONFIDENCE_OVERRIDE, PRE_ROLL, MID_ROLL_1,
-    MID_ROLL_2, MID_ROLL_3, POST_ROLL, MAX_AD_PERCENTAGE, MAX_ADS_PER_5MIN,
-    MERGE_GAP_THRESHOLD
+    POST_ROLL, MAX_AD_PERCENTAGE, MAX_ADS_PER_5MIN,
+    MERGE_GAP_THRESHOLD, MAX_SILENT_GAP
 )
 from utils.text import extract_text_from_segments
 
@@ -46,7 +46,7 @@ class AdValidator:
 
     # Thresholds imported from config.py:
     # MIN_AD_DURATION, SHORT_AD_WARN, LONG_AD_WARN, MAX_AD_DURATION,
-    # MAX_AD_DURATION_CONFIRMED, HIGH_CONFIDENCE, LOW_CONFIDENCE,
+    # MAX_AD_DURATION_CONFIRMED, LOW_CONFIDENCE,
     # REJECT_CONFIDENCE, HIGH_CONFIDENCE_OVERRIDE, PRE_ROLL, MID_ROLL_*,
     # POST_ROLL, MAX_AD_PERCENTAGE, MAX_ADS_PER_5MIN, MERGE_GAP_THRESHOLD
 
@@ -92,7 +92,8 @@ class AdValidator:
 
     def __init__(self, episode_duration: float, segments: List[Dict] = None,
                  episode_description: str = None,
-                 false_positive_corrections: List[Dict] = None):
+                 false_positive_corrections: List[Dict] = None,
+                 min_cut_confidence: float = 0.80):
         """Initialize validator.
 
         Args:
@@ -101,12 +102,14 @@ class AdValidator:
             episode_description: Episode description (may contain sponsor info)
             false_positive_corrections: List of dicts with 'start' and 'end' keys
                                         for user-marked false positives to auto-reject
+            min_cut_confidence: Minimum confidence to auto-accept (user's slider value)
         """
         self.episode_duration = episode_duration
         self.segments = segments or []
         self.episode_description = episode_description or ""
         self.description_sponsors = self._extract_sponsors_from_description()
         self.false_positive_corrections = false_positive_corrections or []
+        self.min_cut_confidence = min_cut_confidence
 
         if self.false_positive_corrections:
             logger.info(f"Loaded {len(self.false_positive_corrections)} false positive corrections")
@@ -372,8 +375,7 @@ class AdValidator:
         elif POST_ROLL[0] <= position <= POST_ROLL[1]:
             # Post-roll is common
             return min(1.0, confidence + 0.05)
-        elif any(start <= position <= end for start, end in
-                 [MID_ROLL_1, MID_ROLL_2, MID_ROLL_3]):
+        elif MID_ROLL_1[0] <= position <= MID_ROLL_1[1]:
             # Mid-roll positions are common
             return min(1.0, confidence + 0.05)
         return confidence
@@ -440,7 +442,7 @@ class AdValidator:
             return min(1.0, confidence + 0.05)
 
         # No signals found - only flag if not already high confidence
-        if confidence < HIGH_CONFIDENCE:
+        if confidence < 0.85:
             flags.append("WARN: No ad signals in transcript")
 
         # Verify end_text exists in transcript
@@ -482,11 +484,12 @@ class AdValidator:
                 )
                 return Decision.ACCEPT
 
+        # ERROR flags or very low confidence -> always reject
         if has_errors or confidence < REJECT_CONFIDENCE:
             return Decision.REJECT
-        elif confidence >= HIGH_CONFIDENCE and not any('WARN' in f for f in flags):
-            return Decision.ACCEPT
-        elif confidence >= 0.6 and not has_errors:
+
+        # Use user's slider threshold instead of hardcoded 0.85/0.60
+        if confidence >= self.min_cut_confidence:
             return Decision.ACCEPT
         else:
             return Decision.REVIEW
@@ -556,6 +559,19 @@ class AdValidator:
 
         return ads
 
+    def _has_speech_in_range(self, start: float, end: float) -> bool:
+        """Check if any transcript segments contain speech in the given range."""
+        if not self.segments:
+            return True  # Assume speech if no segments available
+        for seg in self.segments:
+            seg_start = seg.get('start', 0)
+            seg_end = seg.get('end', 0)
+            if seg_start < end and seg_end > start:
+                text = seg.get('text', '').strip()
+                if text and len(text) > 1:
+                    return True
+        return False
+
     def _merge_close_ads(self, ads: List[Dict],
                          result: ValidationResult) -> List[Dict]:
         """Merge ads with tiny gaps.
@@ -578,16 +594,23 @@ class AdValidator:
             gap = current['start'] - last['end']
 
             if 0 <= gap < MERGE_GAP_THRESHOLD:
-                # Merge: extend last ad to cover current
+                # Always merge small gaps (< 5s)
                 last['end'] = max(last['end'], current['end'])
                 last['validation_merged'] = True
-                # Combine reasons if different
                 if current.get('reason') and current['reason'] != last.get('reason'):
                     last['reason'] = f"{last.get('reason', '')} + {current['reason']}"
-                # Use higher confidence
                 if current.get('confidence', 0) > last.get('confidence', 0):
                     last['confidence'] = current['confidence']
                 result.corrections.append(f"Merged ads with {gap:.1f}s gap")
+            elif 0 <= gap < MAX_SILENT_GAP and not self._has_speech_in_range(last['end'], current['start']):
+                # Merge larger gaps if no speech in between
+                last['end'] = max(last['end'], current['end'])
+                last['validation_merged'] = True
+                if current.get('reason') and current['reason'] != last.get('reason'):
+                    last['reason'] = f"{last.get('reason', '')} + {current['reason']}"
+                if current.get('confidence', 0) > last.get('confidence', 0):
+                    last['confidence'] = current['confidence']
+                result.corrections.append(f"Merged ads across {gap:.1f}s silent gap")
             else:
                 merged.append(current.copy())
 

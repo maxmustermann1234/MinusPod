@@ -312,7 +312,7 @@ init_limiter(app)
 from storage import Storage
 from rss_parser import RSSParser
 from transcriber import Transcriber
-from ad_detector import AdDetector, merge_and_deduplicate, refine_ad_boundaries, snap_early_ads_to_zero, merge_same_sponsor_ads, extend_ad_boundaries_by_content
+from ad_detector import AdDetector, refine_ad_boundaries, snap_early_ads_to_zero, merge_same_sponsor_ads, extend_ad_boundaries_by_content
 from ad_validator import AdValidator
 from audio_processor import AudioProcessor
 from database import Database
@@ -695,6 +695,16 @@ def run_cleanup():
     except Exception as e:
         refresh_logger.error(f"Orphan cleanup failed: {e}")
 
+    # Periodic search index rebuild (every 6 hours)
+    try:
+        last_rebuild = getattr(run_cleanup, '_last_index_rebuild', 0)
+        if time.time() - last_rebuild > 21600:
+            count = db.rebuild_search_index()
+            run_cleanup._last_index_rebuild = time.time()
+            refresh_logger.info(f"Periodic search index rebuild: {count} items indexed")
+    except Exception as e:
+        refresh_logger.error(f"Search index rebuild failed: {e}")
+
 
 def background_rss_refresh():
     """Background task to refresh RSS feeds every 15 minutes.
@@ -811,6 +821,9 @@ def background_queue_processor():
 def reset_stuck_processing_episodes():
     """Reset any episodes stuck in 'processing' status from previous crash.
 
+    Only resets episodes that have been processing for longer than 30 minutes
+    to avoid killing actively-processing jobs when a worker restarts.
+
     Tracks retry count and marks episodes as permanently_failed after MAX_EPISODE_RETRIES
     to prevent infinite retry loops for episodes that consistently crash workers.
     """
@@ -819,7 +832,8 @@ def reset_stuck_processing_episodes():
         """SELECT e.id, e.episode_id, e.retry_count, p.slug
            FROM episodes e
            JOIN podcasts p ON e.podcast_id = p.id
-           WHERE e.status = 'processing'"""
+           WHERE e.status = 'processing'
+             AND datetime(e.updated_at) < datetime('now', '-30 minutes')"""
     )
     stuck = cursor.fetchall()
 
@@ -936,7 +950,6 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
 
     # Get podcast settings for processing behavior
     podcast_settings = db.get_podcast_by_slug(slug)
-    skip_second_pass = podcast_settings.get('skip_second_pass', 0) if podcast_settings else 0
     podcast_description = podcast_settings.get('description') if podcast_settings else None
 
     try:
@@ -1008,7 +1021,7 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             if not audio_path:
                 raise Exception("Failed to download audio")
 
-            status_service.update_job_stage("transcribing", 20)
+            status_service.update_job_stage("pass1:transcribing", 20)
             audio_logger.info(f"[{slug}:{episode_id}] Starting transcription")
             # Use chunked transcription for long episodes to prevent OOM
             # transcribe_chunked() automatically falls back to regular for short audio
@@ -1023,53 +1036,50 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             transcript_text = transcriber.segments_to_text(segments)
             storage.save_transcript(slug, episode_id, transcript_text)
 
-            # Unload Whisper model to free ~5-6GB memory for audio analysis
-            from transcriber import WhisperModelSingleton
-            WhisperModelSingleton.unload_model()
-            audio_logger.info(f"[{slug}:{episode_id}] Unloaded Whisper model before audio analysis")
-
-        # Step 1.5: Run audio analysis (if enabled for this podcast)
+        # Step 1.5: Run audio analysis (volume + transition detection, CPU-only, always runs)
         audio_analysis_result = None
-        if audio_analyzer.is_enabled_for_podcast(slug):
-            status_service.update_job_stage("analyzing", 25)
-            audio_logger.info(f"[{slug}:{episode_id}] Running audio analysis")
-            try:
-                audio_analysis_result = audio_analyzer.analyze(
-                    audio_path,
-                    transcript_segments=segments,
-                    status_callback=lambda stage, progress: status_service.update_job_stage(stage, progress)
+        status_service.update_job_stage("pass1:analyzing", 25)
+        audio_logger.info(f"[{slug}:{episode_id}] Running audio analysis")
+        try:
+            audio_analysis_result = audio_analyzer.analyze(
+                audio_path,
+                transcript_segments=segments,
+                status_callback=lambda stage, progress: status_service.update_job_stage(stage, progress)
+            )
+            if audio_analysis_result.signals:
+                audio_logger.info(
+                    f"[{slug}:{episode_id}] Audio analysis: {len(audio_analysis_result.signals)} signals "
+                    f"in {audio_analysis_result.analysis_time_seconds:.1f}s"
                 )
-                if audio_analysis_result.signals:
-                    audio_logger.info(
-                        f"[{slug}:{episode_id}] Audio analysis: {len(audio_analysis_result.signals)} signals "
-                        f"in {audio_analysis_result.analysis_time_seconds:.1f}s"
-                    )
-                if audio_analysis_result.errors:
-                    for err in audio_analysis_result.errors:
-                        audio_logger.warning(f"[{slug}:{episode_id}] Audio analysis warning: {err}")
+            if audio_analysis_result.errors:
+                for err in audio_analysis_result.errors:
+                    audio_logger.warning(f"[{slug}:{episode_id}] Audio analysis warning: {err}")
 
-                # Save audio analysis results to database
-                import json
-                db.save_episode_audio_analysis(slug, episode_id, json.dumps(audio_analysis_result.to_dict()))
-            except Exception as e:
-                audio_logger.error(f"[{slug}:{episode_id}] Audio analysis failed: {e}")
-                # Continue without audio analysis - it's optional
+            # Save audio analysis results to database
+            import json
+            db.save_episode_audio_analysis(slug, episode_id, json.dumps(audio_analysis_result.to_dict()))
+        except Exception as e:
+            audio_logger.error(f"[{slug}:{episode_id}] Audio analysis failed: {e}")
+            # Continue without audio analysis - Claude prompt will omit audio context
 
         try:
             # Define progress callback to keep UI indicator alive during long detection
+            # Prefixes stages with current_pass (pass1/pass2) for frontend display
+            current_pass = "pass1"
+
             def detection_progress_callback(stage, percent):
-                status_service.update_job_stage(stage, percent)
+                status_service.update_job_stage(f"{current_pass}:{stage}", percent)
 
             # Step 2: Detect ads (first pass)
-            status_service.update_job_stage("detecting", 50)
+            status_service.update_job_stage("pass1:detecting", 50)
             ad_result = ad_detector.process_transcript(
                 segments, podcast_name, episode_title, slug, episode_id, episode_description,
-                audio_analysis=audio_analysis_result,
                 audio_path=audio_path,
                 podcast_id=slug,  # Pass slug as podcast_id for pattern matching
                 skip_patterns=skip_patterns,  # Gap 3: 'full' mode skips pattern DB
                 podcast_description=podcast_description,  # Pass podcast-level description for context
-                progress_callback=detection_progress_callback  # Keep UI alive during detection
+                progress_callback=detection_progress_callback,  # Keep UI alive during detection
+                audio_analysis=audio_analysis_result  # Audio signals as Claude prompt context
             )
             storage.save_ads_json(slug, episode_id, ad_result, pass_number=1)
 
@@ -1093,61 +1103,13 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             else:
                 audio_logger.info(f"[{slug}:{episode_id}] First pass: No ads detected")
 
-            # Track counts per pass
+            # Track count for first pass
             first_pass_count = len(first_pass_ads)
-            second_pass_count = 0
 
             # Track all ads (will combine first and second pass)
             all_ads = first_pass_ads.copy()
 
-            # Step 3: Multi-pass detection (if enabled) - PARALLEL approach
-            # Runs second pass on SAME original transcript (not re-transcribed)
-            # Can be disabled per-podcast for shows with lots of product discussions
-            if skip_second_pass:
-                audio_logger.info(f"[{slug}:{episode_id}] Second pass skipped (podcast setting)")
-            elif ad_detector.is_multi_pass_enabled():
-                audio_logger.info(f"[{slug}:{episode_id}] Multi-pass enabled, starting blind second pass")
-
-                # Run BLIND second pass - independent analysis with different detection focus
-                # Does NOT know what first pass found - we merge/dedupe results ourselves
-                second_pass_result = ad_detector.detect_ads_second_pass(
-                    segments,  # Same transcript, blind analysis
-                    podcast_name, episode_title, slug, episode_id, episode_description,
-                    audio_analysis=audio_analysis_result,
-                    skip_patterns=skip_patterns,  # Gap 3: 'full' mode skips pattern DB
-                    podcast_description=podcast_description,  # Pass podcast-level description for context
-                    progress_callback=detection_progress_callback  # Keep UI alive during second pass
-                )
-
-                # Save second pass data to database
-                storage.save_ads_json(slug, episode_id, second_pass_result, pass_number=2)
-
-                second_pass_ads = second_pass_result.get('ads', [])
-
-                if second_pass_ads:
-                    # Merge and deduplicate ads from both passes
-                    all_ads = merge_and_deduplicate(first_pass_ads, second_pass_ads)
-
-                    # Calculate counts based on pass field in merged results
-                    # pass=1: first pass only, pass=2: second pass only, pass='merged': both found
-                    first_pass_only = sum(1 for ad in all_ads if ad.get('pass') == 1)
-                    second_pass_only = sum(1 for ad in all_ads if ad.get('pass') == 2)
-                    merged_count = sum(1 for ad in all_ads if ad.get('pass') == 'merged')
-
-                    # Update counts: first_pass_count = first_only + merged, second_pass_count = second_only + merged
-                    first_pass_count = first_pass_only + merged_count
-                    second_pass_count = second_pass_only + merged_count
-
-                    total_ad_time = sum(ad['end'] - ad['start'] for ad in all_ads)
-                    audio_logger.info(f"[{slug}:{episode_id}] After merge: {len(all_ads)} ads "
-                                     f"(first:{first_pass_only}, second:{second_pass_only}, merged:{merged_count}, {total_ad_time/60:.1f} min)")
-
-                    # Save combined ad markers
-                    storage.save_combined_ads(slug, episode_id, all_ads)
-                else:
-                    audio_logger.info(f"[{slug}:{episode_id}] Second pass: No additional ads found")
-
-            # Step 3.5: Refine ad boundaries using word timestamps and keyword detection
+            # Step 3: Refine ad boundaries using word timestamps and keyword detection
             if all_ads and segments:
                 all_ads = refine_ad_boundaries(all_ads, segments)
 
@@ -1164,10 +1126,34 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             if all_ads and segments:
                 all_ads = merge_same_sponsor_ads(all_ads, segments)
 
+            # Get episode duration from audio file (more accurate than transcript end)
+            episode_duration = audio_processor.get_audio_duration(audio_path)
+            if not episode_duration:
+                episode_duration = segments[-1]['end'] if segments else 0
+
+            # Step 3.6.1: Heuristic pre/post-roll detection
+            # Catches ads at episode boundaries that Claude missed due to LLM nondeterminism
+            if segments:
+                from roll_detector import detect_preroll, detect_postroll
+                preroll_ad = detect_preroll(segments, all_ads, podcast_name=podcast_name)
+                if preroll_ad:
+                    all_ads.append(preroll_ad)
+                    audio_logger.info(
+                        f"[{slug}:{episode_id}] Heuristic pre-roll: "
+                        f"0.0s-{preroll_ad['end']:.1f}s"
+                    )
+
+                postroll_ad = detect_postroll(segments, all_ads, episode_duration=episode_duration)
+                if postroll_ad:
+                    all_ads.append(postroll_ad)
+                    audio_logger.info(
+                        f"[{slug}:{episode_id}] Heuristic post-roll: "
+                        f"{postroll_ad['start']:.1f}s-{postroll_ad['end']:.1f}s"
+                    )
+
             # Step 3.7: Validate detected ads
             # Catches errors, flags suspicious detections, auto-corrects issues
             if all_ads:
-                episode_duration = segments[-1]['end'] if segments else 0
 
                 # Load user-marked false positives to auto-reject during validation
                 false_positive_corrections = db.get_false_positive_corrections(episode_id)
@@ -1177,9 +1163,11 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                         f"false positive corrections"
                     )
 
+                min_cut_confidence = get_min_cut_confidence()
                 validator = AdValidator(
                     episode_duration, segments, episode_description,
-                    false_positive_corrections=false_positive_corrections
+                    false_positive_corrections=false_positive_corrections,
+                    min_cut_confidence=min_cut_confidence
                 )
                 validation_result = validator.validate(all_ads)
 
@@ -1190,32 +1178,46 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                     f"{validation_result.rejected} rejected"
                 )
 
-                # Only remove ACCEPT and REVIEW ads from audio that meet confidence threshold
-                # REJECT ads and low-confidence ads stay in audio but are stored for display
+                # ACCEPT = always cut, REJECT = never cut, REVIEW = confidence gate
                 ads_to_remove = []
                 low_confidence_count = 0
-                min_cut_confidence = get_min_cut_confidence()
                 for ad in validation_result.ads:
                     validation = ad.get('validation', {})
-                    if validation.get('decision') == 'REJECT':
-                        ad['was_cut'] = False  # Rejected ads are kept in audio
+                    decision = validation.get('decision')
+                    if decision == 'REJECT':
+                        ad['was_cut'] = False
                         continue
-                    # Check confidence - use adjusted_confidence if available, else original
+                    if decision == 'ACCEPT':
+                        ad['was_cut'] = True
+                        ads_to_remove.append(ad)
+                        continue
+                    # REVIEW: apply confidence threshold
                     confidence = validation.get('adjusted_confidence', ad.get('confidence', 1.0))
                     if confidence < min_cut_confidence:
                         low_confidence_count += 1
-                        ad['was_cut'] = False  # Low-confidence ads are kept in audio
+                        ad['was_cut'] = False
                         audio_logger.info(
-                            f"[{slug}:{episode_id}] Keeping low-confidence ad in audio: "
+                            f"[{slug}:{episode_id}] Keeping REVIEW ad in audio: "
                             f"{ad['start']:.1f}s-{ad['end']:.1f}s ({confidence:.0%} < {min_cut_confidence:.0%})"
                         )
                         continue
-                    ad['was_cut'] = True  # This ad will be cut from audio
+                    ad['was_cut'] = True
                     ads_to_remove.append(ad)
 
                 # Store ALL ads (including rejected) for API/UI display with was_cut flag
                 all_ads_with_validation = validation_result.ads
                 storage.save_combined_ads(slug, episode_id, all_ads_with_validation)
+
+                # Learn patterns from high-confidence detections that were actually cut
+                cut_ads = [a for a in all_ads_with_validation if a.get('was_cut')]
+                if cut_ads and slug:
+                    patterns_learned = ad_detector._learn_from_detections(
+                        cut_ads, segments, slug, episode_id, audio_path=audio_path
+                    )
+                    if patterns_learned > 0:
+                        audio_logger.info(
+                            f"[{slug}:{episode_id}] Learned {patterns_learned} new patterns from cut ads"
+                        )
 
                 rejected_count = validation_result.rejected
                 if rejected_count > 0 or low_confidence_count > 0:
@@ -1228,7 +1230,7 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 all_ads_with_validation = []
 
             # Step 4: Process audio ONCE with validated ads (excluding rejected)
-            status_service.update_job_stage("processing", 80)
+            status_service.update_job_stage("pass1:processing", 80)
             audio_logger.info(f"[{slug}:{episode_id}] Starting FFMPEG processing ({len(ads_to_remove)} ads to remove)")
 
             # Get audio bitrate from settings (allows runtime changes)
@@ -1242,6 +1244,160 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
 
             # Get durations
             original_duration = local_audio_processor.get_audio_duration(audio_path)
+
+            # Step 4.5: Verification pass (runs full pipeline on pass 1 output)
+            verification_count = 0
+            v_ads_for_ui = []
+            current_pass = "pass2"
+            try:
+                from verification_pass import VerificationPass
+                verifier = VerificationPass(
+                    ad_detector=ad_detector,
+                    transcriber=transcriber,
+                    audio_analyzer=audio_analyzer,
+                    sponsor_service=sponsor_service,
+                    db=db,
+                )
+                verification_result = verifier.verify(
+                    processed_audio_path=processed_path,
+                    podcast_name=podcast_name,
+                    episode_title=episode_title,
+                    slug=slug, episode_id=episode_id,
+                    pass1_cuts=ads_to_remove,
+                    episode_description=episode_description,
+                    podcast_description=podcast_description,
+                    skip_patterns=skip_patterns,
+                    progress_callback=detection_progress_callback,
+                )
+                # Original-timestamp ads for UI/DB, processed-timestamp ads for cutting
+                verification_ads_original = verification_result.get('ads', [])
+                verification_ads_processed = verification_result.get('ads_processed', [])
+                verification_segments = verification_result.get('segments', [])
+                storage.save_ads_json(slug, episode_id, verification_result, pass_number=2)
+
+                # Heuristic roll detection on pass 2 output
+                if verification_segments:
+                    processed_dur = verification_segments[-1]['end'] if verification_segments else 0
+
+                    # Build timestamp map for mapping processed->original times
+                    ts_map = None
+                    if ads_to_remove:
+                        from verification_pass import _build_timestamp_map, _map_to_original
+                        ts_map = _build_timestamp_map(ads_to_remove)
+
+                    preroll_v = detect_preroll(
+                        verification_segments, verification_ads_processed,
+                        podcast_name=podcast_name
+                    )
+                    if preroll_v:
+                        verification_ads_processed.append(preroll_v)
+                        mapped = preroll_v.copy()
+                        if ts_map:
+                            mapped['start'] = _map_to_original(preroll_v['start'], ts_map)
+                            mapped['end'] = _map_to_original(preroll_v['end'], ts_map)
+                        verification_ads_original.append(mapped)
+                        audio_logger.info(
+                            f"[{slug}:{episode_id}] Pass 2 heuristic pre-roll: "
+                            f"0.0s-{preroll_v['end']:.1f}s"
+                        )
+
+                    postroll_v = detect_postroll(
+                        verification_segments, verification_ads_processed,
+                        episode_duration=processed_dur
+                    )
+                    if postroll_v:
+                        verification_ads_processed.append(postroll_v)
+                        mapped = postroll_v.copy()
+                        if ts_map:
+                            mapped['start'] = _map_to_original(postroll_v['start'], ts_map)
+                            mapped['end'] = _map_to_original(postroll_v['end'], ts_map)
+                        verification_ads_original.append(mapped)
+                        audio_logger.info(
+                            f"[{slug}:{episode_id}] Pass 2 heuristic post-roll: "
+                            f"{postroll_v['start']:.1f}s-{postroll_v['end']:.1f}s"
+                        )
+
+                if verification_ads_processed:
+                    audio_logger.info(
+                        f"[{slug}:{episode_id}] Verification found "
+                        f"{len(verification_ads_processed)} missed ads - re-cutting pass 1 output"
+                    )
+
+                    # Validate using processed-timestamp ads (matches re-transcribed audio)
+                    if verification_segments:
+                        processed_duration = verification_segments[-1]['end']
+                        v_validator = AdValidator(processed_duration, verification_segments,
+                                                 episode_description,
+                                                 min_cut_confidence=min_cut_confidence)
+                        v_validation = v_validator.validate(verification_ads_processed)
+
+                        # Build index set of non-rejected ads to filter both lists in sync
+                        keep_indices = set()
+                        for idx, ad in enumerate(v_validation.ads):
+                            if ad.get('validation', {}).get('decision') != 'REJECT':
+                                keep_indices.add(idx)
+
+                        verification_ads_processed = [
+                            ad for idx, ad in enumerate(v_validation.ads)
+                            if idx in keep_indices
+                        ]
+                        verification_ads_original = [
+                            ad for idx, ad in enumerate(verification_ads_original)
+                            if idx in keep_indices
+                        ]
+
+                    if verification_ads_processed:
+                        # Filter by confidence threshold -- keep both lists in sync
+                        v_ads_to_cut = []
+                        v_ads_for_ui = []
+                        for i, ad in enumerate(verification_ads_processed):
+                            confidence = ad.get('validation', {}).get(
+                                'adjusted_confidence', ad.get('confidence', 1.0))
+                            if confidence >= min_cut_confidence:
+                                ad['was_cut'] = True
+                                ad['detection_stage'] = 'verification'
+                                v_ads_to_cut.append(ad)
+                                # Corresponding original-timestamp ad for UI
+                                orig_ad = verification_ads_original[i]
+                                orig_ad['was_cut'] = True
+                                orig_ad['detection_stage'] = 'verification'
+                                v_ads_for_ui.append(orig_ad)
+                            else:
+                                ad['was_cut'] = False
+
+                        if v_ads_to_cut:
+                            # Re-cut the PASS 1 OUTPUT using processed-audio timestamps
+                            recut_path = local_audio_processor.process_episode(
+                                processed_path, v_ads_to_cut
+                            )
+                            if recut_path:
+                                if os.path.exists(processed_path):
+                                    os.unlink(processed_path)
+                                processed_path = recut_path
+                                verification_count = len(v_ads_to_cut)
+                                audio_logger.info(
+                                    f"[{slug}:{episode_id}] Re-cut pass 1 output, "
+                                    f"removed {len(v_ads_to_cut)} additional ads"
+                                )
+                            else:
+                                audio_logger.error(
+                                    f"[{slug}:{episode_id}] Verification re-cut failed, "
+                                    f"keeping pass 1 output"
+                                )
+                                v_ads_for_ui = []
+                else:
+                    audio_logger.info(f"[{slug}:{episode_id}] Verification: clean")
+
+            except Exception as e:
+                audio_logger.error(f"[{slug}:{episode_id}] Verification pass failed: {e}")
+                # Continue with pass 1 output
+
+            # Re-save combined ads with pass 2 verification ads appended for UI display
+            if v_ads_for_ui:
+                all_ads_with_validation = list(all_ads_with_validation) + v_ads_for_ui
+                all_ads_with_validation.sort(key=lambda x: x['start'])
+                storage.save_combined_ads(slug, episode_id, all_ads_with_validation)
+
             new_duration = local_audio_processor.get_audio_duration(processed_path)
 
             # Move processed file to final location
@@ -1249,22 +1405,30 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
             shutil.move(processed_path, final_path)
 
             # Generate Podcasting 2.0 assets (VTT transcript and chapters)
+            # Combine pass 1 + pass 2 cuts (original timestamps) for accurate VTT/chapters
+            all_cuts_for_assets = ads_to_remove + v_ads_for_ui
             try:
                 # Check settings for VTT transcripts
                 vtt_enabled = db.get_setting('vtt_transcripts_enabled')
+                transcript_gen = TranscriptGenerator()
+
                 if vtt_enabled is None or vtt_enabled.lower() == 'true':
-                    transcript_gen = TranscriptGenerator()
-                    vtt_content = transcript_gen.generate_vtt(segments, ads_to_remove)
+                    vtt_content = transcript_gen.generate_vtt(segments, all_cuts_for_assets)
                     if vtt_content and len(vtt_content) > 10:
                         storage.save_transcript_vtt(slug, episode_id, vtt_content)
                         audio_logger.info(f"[{slug}:{episode_id}] Generated VTT transcript")
+
+                # Store processed transcript text for search indexing (always, independent of VTT setting)
+                processed_text = transcript_gen.generate_text(segments, all_cuts_for_assets)
+                if processed_text:
+                    db.save_episode_details(slug, episode_id, transcript_text=processed_text)
 
                 # Check settings for chapters
                 chapters_enabled = db.get_setting('chapters_enabled')
                 if chapters_enabled is None or chapters_enabled.lower() == 'true':
                     chapters_gen = ChaptersGenerator()
                     chapters = chapters_gen.generate_chapters(
-                        segments, ads_to_remove, episode_description,
+                        segments, all_cuts_for_assets, episode_description,
                         podcast_name, episode_title
                     )
                     if chapters and chapters.get('chapters'):
@@ -1281,11 +1445,17 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
                 processed_file=f"episodes/{episode_id}.mp3",
                 original_duration=original_duration,
                 new_duration=new_duration,
-                ads_removed=len(ads_to_remove),
+                ads_removed=len(ads_to_remove) + verification_count,
                 ads_removed_firstpass=first_pass_count,
-                ads_removed_secondpass=second_pass_count,
+                ads_removed_secondpass=verification_count,
                 reprocess_mode=None,
                 reprocess_requested_at=None)
+
+            # Update search index for this episode immediately
+            try:
+                db.index_episode(episode_id, slug)
+            except Exception as idx_err:
+                audio_logger.warning(f"[{slug}:{episode_id}] Failed to update search index: {idx_err}")
 
             # Regenerate RSS cache to include new Podcasting 2.0 tags (transcript/chapters)
             try:
@@ -1435,7 +1605,7 @@ def swagger_ui():
     return '''<!DOCTYPE html>
 <html>
 <head>
-    <title>Podcast Server API</title>
+    <title>MinusPod API</title>
     <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
 </head>
 <body>
@@ -1723,7 +1893,7 @@ def _startup():
     try:
         sys.path.insert(0, str(Path(__file__).parent.parent))
         from version import __version__
-        logger.info(f"Podcast Server v{__version__} starting...")
+        logger.info(f"MinusPod v{__version__} starting...")
     except ImportError:
         logger.warning("Could not import version")
 
