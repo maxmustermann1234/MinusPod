@@ -546,7 +546,15 @@ export function TranscriptEditor({
             )}
             {selectedAd.detection_stage && (
               <span className="px-2 py-0.5 text-xs bg-muted text-muted-foreground rounded">
-                {selectedAd.detection_stage}
+                {(() => {
+                  switch (selectedAd.detection_stage) {
+                    case 'fingerprint': return 'Fingerprint';
+                    case 'text_pattern': return 'Pattern';
+                    case 'verification': return 'Pass 2';
+                    case 'language': return 'Language';
+                    default: return 'Pass 1';
+                  }
+                })()}
               </span>
             )}
             {selectedAd.reason && (

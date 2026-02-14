@@ -764,6 +764,11 @@ def deduplicate_window_ads(all_ads: List[Dict], merge_threshold: float = 5.0) ->
             last_reason = last.get('reason', '')
             if len(current_reason) > len(last_reason):
                 last['reason'] = current_reason
+            # Preserve sponsor field
+            current_sponsor = current.get('sponsor', '')
+            last_sponsor = last.get('sponsor', '')
+            if current_sponsor and not last_sponsor:
+                last['sponsor'] = current_sponsor
             # Mark as merged from windows
             last['merged_windows'] = True
         else:
@@ -1404,13 +1409,18 @@ class AdDetector:
 
                                 # Log extracted ad details for production visibility
                                 logger.info(f"[{slug}:{episode_id}] Extracted ad: {start:.1f}s-{end:.1f}s, reason='{reason}', fields={list(ad.keys())}")
-                                valid_ads.append({
+                                ad_entry = {
                                     'start': start,
                                     'end': end,
                                     'confidence': norm_conf,
                                     'reason': reason,
                                     'end_text': ad.get('end_text') or ''
-                                })
+                                }
+                                # Store sponsor name separately for UI display
+                                sponsor_name = extract_sponsor_name(ad)
+                                if sponsor_name and sponsor_name != 'Advertisement detected':
+                                    ad_entry['sponsor'] = sponsor_name
+                                valid_ads.append(ad_entry)
                         except ValueError as e:
                             logger.warning(f"[{slug}:{episode_id}] Skipping ad with invalid timestamp: {e}")
                             continue

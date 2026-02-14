@@ -98,7 +98,7 @@ function EpisodeDetail() {
       end: marker.end,
       confidence: marker.confidence,
       reason: marker.reason || '',
-      sponsor: undefined, // Could be extracted from reason if needed
+      sponsor: marker.sponsor,
       pattern_id: undefined,
       detection_stage: marker.detection_stage || 'first_pass',
     }));
