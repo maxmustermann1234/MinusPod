@@ -2548,6 +2548,11 @@ def submit_correction(slug, episode_id):
                             # Skip pattern creation - no sponsor detected
                             logger.info(f"Skipped pattern creation (no sponsor detected) for confirmed ad in {slug}/{episode_id}")
 
+        # Delete any conflicting false_positive corrections for this segment
+        deleted = db.delete_conflicting_corrections(episode_id, 'confirm', original_start, original_end)
+        if deleted:
+            logger.info(f"Deleted {deleted} conflicting false_positive correction(s) for {slug}/{episode_id}")
+
         db.create_pattern_correction(
             correction_type='confirm',
             pattern_id=pattern_id,
@@ -2578,6 +2583,11 @@ def submit_correction(slug, episode_id):
                 new_count = pattern.get('false_positive_count', 0) + 1
                 db.update_ad_pattern(pattern_id, false_positive_count=new_count)
                 logger.info(f"Incremented false_positive_count to {new_count} for pattern {pattern_id}")
+
+        # Delete any conflicting confirm corrections for this segment
+        deleted = db.delete_conflicting_corrections(episode_id, 'false_positive', original_start, original_end)
+        if deleted:
+            logger.info(f"Deleted {deleted} conflicting confirm correction(s) for {slug}/{episode_id}")
 
         db.create_pattern_correction(
             correction_type='false_positive',

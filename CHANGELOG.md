@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-02-19
+
+### Fixed
+- **Conflicting corrections not cleaned up on user action reversal**: When a user changed their mind about a correction (e.g., marked false positive then confirmed, or vice versa), both corrections persisted in the database. The false_positive check has higher priority in validation, so a confirm could never override a prior false_positive for the same segment. Now `delete_conflicting_corrections()` removes the opposite correction type (with 50% overlap match) before inserting the new one.
+- **Misleading flag prefix in ad_validator.py**: Changed "ERROR: User marked as false positive" to "INFO:" since this is an intentional user action, not an error condition.
+
 ## [1.0.4] - 2026-02-18
 
 ### Fixed

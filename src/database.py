@@ -2158,6 +2158,52 @@ class Database:
         conn.commit()
         return cursor.lastrowid
 
+    def delete_conflicting_corrections(self, episode_id: str, correction_type: str,
+                                        bounds_start: float, bounds_end: float) -> int:
+        """Delete corrections that conflict with a new correction being submitted.
+
+        When user confirms an ad, delete false_positive corrections for same bounds.
+        When user rejects an ad, delete confirm corrections for same bounds.
+
+        Returns number of deleted rows.
+        """
+        # Determine the conflicting type
+        if correction_type == 'confirm':
+            conflicting_type = 'false_positive'
+        elif correction_type == 'false_positive':
+            conflicting_type = 'confirm'
+        else:
+            return 0  # adjust doesn't conflict with either
+
+        conn = self.get_connection()
+        cursor = conn.execute(
+            """SELECT id, original_bounds FROM pattern_corrections
+               WHERE episode_id = ? AND correction_type = ?""",
+            (episode_id, conflicting_type)
+        )
+
+        deleted = 0
+        for row in cursor.fetchall():
+            if row['original_bounds']:
+                try:
+                    parsed = json.loads(row['original_bounds'])
+                    fp_start = float(parsed.get('start', 0))
+                    fp_end = float(parsed.get('end', 0))
+                    # Check overlap (same 50% threshold as validator)
+                    overlap_start = max(bounds_start, fp_start)
+                    overlap_end = min(bounds_end, fp_end)
+                    overlap = max(0, overlap_end - overlap_start)
+                    segment_duration = bounds_end - bounds_start
+                    if segment_duration > 0 and overlap / segment_duration >= 0.5:
+                        conn.execute("DELETE FROM pattern_corrections WHERE id = ?", (row['id'],))
+                        deleted += 1
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    pass
+
+        if deleted:
+            conn.commit()
+        return deleted
+
     def get_pattern_corrections(self, pattern_id: int = None, limit: int = 100) -> List[Dict]:
         """Get pattern corrections, optionally filtered by pattern_id."""
         conn = self.get_connection()

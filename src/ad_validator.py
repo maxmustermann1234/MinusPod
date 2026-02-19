@@ -306,7 +306,7 @@ class AdValidator:
 
         # Check for user-marked false positives first (highest priority)
         if self._overlaps_false_positive(ad['start'], ad['end']):
-            flags.append("ERROR: User marked as false positive")
+            flags.append("INFO: User marked as false positive")
             logger.info(
                 f"Auto-rejecting segment {ad['start']:.1f}s-{ad['end']:.1f}s: "
                 f"overlaps with user-marked false positive"
