@@ -18,11 +18,14 @@
 
 - Always make sure the app builds and starts successfully
 - Use a venv for all python testing
+- Frontend TypeScript check: `cd frontend && npx tsc --noEmit`
+- Python tests: `PYTHONPATH=src .venv/bin/python -m pytest tests/ -v`
 
 # Docker Guidelines
 
 - Build for platform="linux/amd64"
 - Docker Hub user and org are ttlequals0
+- Image name: ttlequals0/minuspod
 - Always check what the next version should be before tagging (from Docker Hub and CHANGELOG.md)
 - Tag format: latest and version matching 'version.py'
 - If testing locally, clean up afterwards
