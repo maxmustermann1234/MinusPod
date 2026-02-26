@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.15] - 2026-02-26
+
+### Fixed
+- **Processing history not saved due to SQL column mismatch**: `record_processing_history()` INSERT had 14 columns but only 13 VALUES placeholders -- the `?` for `llm_cost` was missing. All processing runs since v1.0.12 silently failed to write history rows (caught by try/except, logged as "Failed to record history: 13 values for 14 columns"). Token accumulator was working correctly but data was discarded at the DB write step.
+
 ## [1.0.14] - 2026-02-26
 
 ### Fixed

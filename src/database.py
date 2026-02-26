@@ -2862,7 +2862,7 @@ class Database:
                (podcast_id, podcast_slug, podcast_title, episode_id, episode_title,
                 processed_at, processing_duration_seconds, status, ads_detected,
                 error_message, reprocess_number, input_tokens, output_tokens, llm_cost)
-               VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?, ?, ?, ?, ?, ?, ?, ?)""",
             (podcast_id, podcast_slug, podcast_title, episode_id, episode_title,
              processing_duration_seconds, status, ads_detected, error_message,
              reprocess_number, input_tokens, output_tokens, llm_cost)
