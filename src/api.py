@@ -987,7 +987,9 @@ def regenerate_chapters(slug, episode_id):
 
     try:
         from chapters_generator import ChaptersGenerator
+        from llm_client import start_episode_token_tracking, get_episode_token_totals
 
+        start_episode_token_tracking()
         chapters_gen = ChaptersGenerator()
 
         # VTT segments are ALREADY adjusted (ads removed), so pass empty ads_removed
@@ -996,6 +998,15 @@ def regenerate_chapters(slug, episode_id):
         chapters = chapters_gen.generate_chapters_from_vtt(
             segments, episode_description, podcast_name, episode_title
         )
+
+        token_totals = get_episode_token_totals()
+        if token_totals['input_tokens'] > 0:
+            db.increment_episode_token_usage(
+                episode_id,
+                token_totals['input_tokens'],
+                token_totals['output_tokens'],
+                token_totals['cost'],
+            )
 
         if chapters and chapters.get('chapters'):
             storage.save_chapters_json(slug, episode_id, chapters)
@@ -1148,6 +1159,8 @@ def retry_ad_detection(slug, episode_id):
         return error_response('No transcript available - full reprocess required', 400)
 
     try:
+        from llm_client import start_episode_token_tracking, get_episode_token_totals
+
         # Parse transcript back into segments
         segments = []
         for line in transcript.split('\n'):
@@ -1174,13 +1187,24 @@ def retry_ad_detection(slug, episode_id):
         podcast = db.get_podcast_by_slug(slug)
         podcast_name = podcast.get('title', slug) if podcast else slug
 
-        # Retry ad detection
+        # Retry ad detection with token tracking
+        start_episode_token_tracking()
+
         from ad_detector import AdDetector
         ad_detector = AdDetector()
         ad_result = ad_detector.process_transcript(
             segments, podcast_name, episode.get('title', 'Unknown'), slug, episode_id,
             podcast_id=slug  # Pass slug as podcast_id for pattern matching
         )
+
+        token_totals = get_episode_token_totals()
+        if token_totals['input_tokens'] > 0:
+            db.increment_episode_token_usage(
+                episode_id,
+                token_totals['input_tokens'],
+                token_totals['output_tokens'],
+                token_totals['cost'],
+            )
 
         ad_detection_status = ad_result.get('status', 'failed')
 

@@ -2871,6 +2871,37 @@ class Database:
         logger.info(f"Recorded processing history: {podcast_slug}/{episode_id} - {status} (reprocess #{reprocess_number})")
         return cursor.lastrowid
 
+    def increment_episode_token_usage(self, episode_id: str,
+                                       input_tokens: int,
+                                       output_tokens: int,
+                                       llm_cost: float) -> bool:
+        """Increment token usage on the most recent completed processing_history entry.
+
+        Used by standalone API endpoints (regenerate-chapters, retry-ad-detection)
+        that make LLM calls outside the full processing pipeline.
+        Returns True if a row was updated.
+        """
+        conn = self.get_connection()
+        cursor = conn.execute(
+            """UPDATE processing_history
+               SET input_tokens = input_tokens + ?,
+                   output_tokens = output_tokens + ?,
+                   llm_cost = llm_cost + ?
+               WHERE id = (
+                   SELECT id FROM processing_history
+                   WHERE episode_id = ? AND status = 'completed'
+                   ORDER BY processed_at DESC LIMIT 1
+               )""",
+            (input_tokens, output_tokens, llm_cost, episode_id)
+        )
+        conn.commit()
+        updated = cursor.rowcount > 0
+        if updated:
+            logger.info(f"Incremented token usage for episode {episode_id}: +{input_tokens} in, +{output_tokens} out, +${llm_cost:.6f}")
+        else:
+            logger.warning(f"No completed processing_history entry found for episode {episode_id} to increment tokens")
+        return updated
+
     def backfill_processing_history(self) -> int:
         """Migrate existing processed episodes to processing_history table.
         Only backfills episodes that don't already have history entries.

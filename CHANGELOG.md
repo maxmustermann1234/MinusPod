@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.16] - 2026-02-26
+
+### Fixed
+- **Standalone API endpoints not tracking per-episode token usage**: `/regenerate-chapters` and `/retry-ad-detection` make LLM calls outside the processing pipeline without activating the per-episode token accumulator. Global `token_usage` table recorded these calls, but they were invisible in per-episode cost display. Both endpoints now activate `start_episode_token_tracking()` before LLM calls and persist totals via `increment_episode_token_usage()`.
+
+### Added
+- **`increment_episode_token_usage()` database method**: Increments `input_tokens`, `output_tokens`, and `llm_cost` on the most recent completed `processing_history` entry for an episode. Used by standalone endpoints that make LLM calls after the initial processing run.
+
 ## [1.0.15] - 2026-02-26
 
 ### Fixed
