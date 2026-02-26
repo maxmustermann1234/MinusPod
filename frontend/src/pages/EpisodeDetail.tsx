@@ -269,6 +269,11 @@ function EpisodeDetail() {
                   Chapters
                 </span>
               )}
+              {episode.inputTokens != null && episode.inputTokens > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  LLM: {episode.llmCost != null && episode.llmCost > 0 ? `$${episode.llmCost.toFixed(4)}` : ''} ({episode.inputTokens >= 1000 ? `${(episode.inputTokens / 1000).toFixed(1)}K` : episode.inputTokens} in / {episode.outputTokens != null && episode.outputTokens >= 1000 ? `${(episode.outputTokens / 1000).toFixed(1)}K` : episode.outputTokens ?? 0} out)
+                </span>
+              )}
               <div className="relative">
                 <button
                   onClick={() => setShowReprocessMenu(!showReprocessMenu)}
@@ -398,15 +403,6 @@ function EpisodeDetail() {
                 {episode.timeSaved && episode.timeSaved > 0 && (
                   <span className={episode.adsRemovedVerification && episode.adsRemovedVerification > 0 ? 'ml-2' : ''}>
                     {episode.adsRemovedVerification && episode.adsRemovedVerification > 0 ? '- ' : ''}{formatDuration(episode.timeSaved)} time saved
-                  </span>
-                )}
-                {episode.llmCost != null && episode.llmCost > 0 && (
-                  <span className="ml-2">
-                    {((episode.adsRemovedVerification && episode.adsRemovedVerification > 0) || (episode.timeSaved && episode.timeSaved > 0)) ? '- ' : ''}
-                    LLM: ${episode.llmCost.toFixed(4)}
-                    {episode.inputTokens != null && episode.outputTokens != null && (
-                      <> ({episode.inputTokens >= 1000 ? `${(episode.inputTokens / 1000).toFixed(1)}K` : episode.inputTokens} in / {episode.outputTokens >= 1000 ? `${(episode.outputTokens / 1000).toFixed(1)}K` : episode.outputTokens} out)</>
-                    )}
                   </span>
                 )}
               </div>

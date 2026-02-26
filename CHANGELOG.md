@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.13] - 2026-02-26
+
+### Fixed
+- **Episode detail LLM cost placement**: Moved LLM cost/token display from inside the "Detected Ads" card (hidden when 0 ads found) to the episode metadata bar alongside date, duration, and status badges. Now visible on any processed episode regardless of ad count.
+- **Episode token display suppressed when cost is zero**: `_get_episode_token_fields` was checking `llm_cost == 0.0` to hide the display, but models without pricing entries have $0 cost with non-zero tokens. Now checks for zero tokens instead.
+- **Missing pricing for `claude-sonnet-4-6`**: Added to `DEFAULT_MODEL_PRICING` ($3/$15 per MTok). Previously all calls to this model recorded $0 cost.
+
 ## [1.0.12] - 2026-02-26
 
 ### Added
