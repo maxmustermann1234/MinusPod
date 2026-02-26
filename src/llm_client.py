@@ -18,6 +18,7 @@ Configuration via environment variables:
 
 import logging
 import os
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Any
@@ -71,6 +72,21 @@ FALLBACK_MODELS = [
 class LLMClient(ABC):
     """Abstract base class for LLM clients."""
 
+    def __init__(self):
+        self._usage_callback = None
+
+    def set_usage_callback(self, callback):
+        """Set a callback to be invoked with (model, usage_dict) after each LLM call."""
+        self._usage_callback = callback
+
+    def _notify_usage(self, response: 'LLMResponse'):
+        """Notify the usage callback if set. Errors are logged but never propagated."""
+        if self._usage_callback and response.usage:
+            try:
+                self._usage_callback(response.model, response.usage)
+            except Exception as e:
+                logger.warning(f"Token usage recording failed: {e}")
+
     @abstractmethod
     def messages_create(
         self,
@@ -118,6 +134,7 @@ class AnthropicClient(LLMClient):
     """Native Anthropic API client."""
 
     def __init__(self, api_key: Optional[str] = None):
+        super().__init__()
         self.api_key = api_key or os.environ.get('ANTHROPIC_API_KEY')
         self._client = None
 
@@ -170,7 +187,7 @@ class AnthropicClient(LLMClient):
 
         content = response.content[0].text if response.content else ""
 
-        return LLMResponse(
+        llm_response = LLMResponse(
             content=content,
             model=response.model,
             usage={
@@ -179,6 +196,8 @@ class AnthropicClient(LLMClient):
             } if response.usage else None,
             raw_response=response
         )
+        self._notify_usage(llm_response)
+        return llm_response
 
     def list_models(self) -> List[LLMModel]:
         self._ensure_client()
@@ -221,6 +240,7 @@ class OpenAICompatibleClient(LLMClient):
         api_key: Optional[str] = None,
         default_model: Optional[str] = None
     ):
+        super().__init__()
         self.base_url = base_url or os.environ.get('OPENAI_BASE_URL', 'http://localhost:8000/v1')
         self.api_key = api_key or os.environ.get('OPENAI_API_KEY', 'not-needed')
         self.default_model = default_model or os.environ.get('OPENAI_MODEL', 'claude-sonnet-4-5-20250929')
@@ -268,7 +288,7 @@ class OpenAICompatibleClient(LLMClient):
 
         content = response.choices[0].message.content if response.choices else ""
 
-        return LLMResponse(
+        llm_response = LLMResponse(
             content=content,
             model=response.model,
             usage={
@@ -277,6 +297,8 @@ class OpenAICompatibleClient(LLMClient):
             } if response.usage else None,
             raw_response=response
         )
+        self._notify_usage(llm_response)
+        return llm_response
 
     def list_models(self) -> List[LLMModel]:
         """List models from the OpenAI-compatible API."""
@@ -337,6 +359,72 @@ class OpenAICompatibleClient(LLMClient):
 
 _cached_client: Optional[LLMClient] = None
 
+# Per-episode token accumulator using thread-local storage.
+# Each thread (background processor, HTTP handler) gets its own
+# independent accumulator so concurrent callers cannot corrupt each other.
+_episode_accumulator = threading.local()
+
+
+def _get_accumulator_active() -> bool:
+    """Return whether the current thread's accumulator is active."""
+    return getattr(_episode_accumulator, 'active', False)
+
+
+def start_episode_token_tracking():
+    """Reset and activate the per-episode token accumulator for the current thread."""
+    _episode_accumulator.active = True
+    _episode_accumulator.input_tokens = 0
+    _episode_accumulator.output_tokens = 0
+    _episode_accumulator.cost = 0.0
+    logger.info(f"Episode token tracking: ACTIVATED (thread={threading.current_thread().name})")
+
+
+def get_episode_token_totals() -> Dict:
+    """Return accumulated totals, deactivate, and reset the accumulator for the current thread."""
+    totals = {
+        'input_tokens': getattr(_episode_accumulator, 'input_tokens', 0),
+        'output_tokens': getattr(_episode_accumulator, 'output_tokens', 0),
+        'cost': getattr(_episode_accumulator, 'cost', 0.0),
+    }
+    logger.info(
+        f"Episode token totals: in={totals['input_tokens']} out={totals['output_tokens']}"
+        f" cost=${totals['cost']:.6f} (thread={threading.current_thread().name})"
+    )
+    _episode_accumulator.active = False
+    _episode_accumulator.input_tokens = 0
+    _episode_accumulator.output_tokens = 0
+    _episode_accumulator.cost = 0.0
+    return totals
+
+
+def _record_token_usage(model: str, usage: Dict):
+    """Module-level callback for recording token usage to the database."""
+    input_tokens = usage.get('input_tokens', 0)
+    output_tokens = usage.get('output_tokens', 0)
+    cost = 0.0
+
+    try:
+        from database import Database
+        db = Database()
+        cost = db.record_token_usage(
+            model_id=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to record token usage to DB: {e}")
+
+    accum_active = _get_accumulator_active()
+    logger.info(
+        f"Token callback: model={model} in={input_tokens} out={output_tokens}"
+        f" cost=${cost:.6f} accum_active={accum_active}"
+        f" (thread={threading.current_thread().name})"
+    )
+    if accum_active:
+        _episode_accumulator.input_tokens += input_tokens
+        _episode_accumulator.output_tokens += output_tokens
+        _episode_accumulator.cost += cost
+
 
 def get_llm_client(force_new: bool = False) -> LLMClient:
     """
@@ -373,6 +461,7 @@ def get_llm_client(force_new: bool = False) -> LLMClient:
         logger.warning(f"Unknown LLM_PROVIDER '{provider}', defaulting to anthropic")
         _cached_client = AnthropicClient()
 
+    _cached_client.set_usage_callback(_record_token_usage)
     logger.info(f"LLM client initialized: {_cached_client.get_provider_name()}")
     return _cached_client
 

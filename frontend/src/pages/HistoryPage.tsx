@@ -13,7 +13,7 @@ import { ProcessingHistoryEntry } from '../api/types';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 type StatusFilter = 'all' | 'completed' | 'failed';
-type SortField = 'processedAt' | 'processingDurationSeconds' | 'adsDetected' | 'reprocessNumber';
+type SortField = 'processedAt' | 'processingDurationSeconds' | 'adsDetected' | 'reprocessNumber' | 'llmCost';
 
 function HistoryPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -30,6 +30,8 @@ function HistoryPage() {
     limit,
     sortBy: sortField === 'processedAt' ? 'processed_at' :
             sortField === 'processingDurationSeconds' ? 'processing_duration_seconds' :
+            sortField === 'reprocessNumber' ? 'reprocess_number' :
+            sortField === 'llmCost' ? 'llm_cost' :
             'ads_detected',
     sortDir: sortDirection,
   };
@@ -166,7 +168,7 @@ function HistoryPage() {
 
       {/* Stats Summary */}
       {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
           <div className="bg-card border border-border rounded-lg p-4">
             <div className="text-2xl font-bold text-foreground">{stats.totalProcessed}</div>
             <div className="text-sm text-muted-foreground">Total Processed</div>
@@ -182,6 +184,12 @@ function HistoryPage() {
           <div className="bg-card border border-border rounded-lg p-4">
             <div className="text-2xl font-bold text-foreground">{stats.totalAdsDetected}</div>
             <div className="text-sm text-muted-foreground">Total Ads Detected</div>
+          </div>
+          <div className="bg-card border border-border rounded-lg p-4">
+            <div className="text-2xl font-bold text-foreground">
+              {stats.totalLlmCost != null ? `$${stats.totalLlmCost.toFixed(2)}` : '-'}
+            </div>
+            <div className="text-sm text-muted-foreground">Total LLM Cost</div>
           </div>
         </div>
       )}
@@ -265,6 +273,7 @@ function HistoryPage() {
                 <span>{formatDate(entry.processedAt)}</span>
                 <span>{formatDuration(entry.processingDurationSeconds)}</span>
                 <span>Ads: {entry.adsDetected}</span>
+                {entry.llmCost != null && entry.llmCost > 0 && <span>${entry.llmCost.toFixed(2)}</span>}
                 {entry.reprocessNumber > 1 && <span>#{entry.reprocessNumber}</span>}
               </div>
             </div>
@@ -287,6 +296,7 @@ function HistoryPage() {
                 <SortHeader field="processedAt" label="Processed" />
                 <SortHeader field="processingDurationSeconds" label="Duration" className="hidden md:table-cell" />
                 <SortHeader field="adsDetected" label="Ads" />
+                <SortHeader field="llmCost" label="Cost" className="hidden md:table-cell" />
                 <SortHeader field="reprocessNumber" label="Reprocess #" className="hidden md:table-cell" />
                 <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                   Status
@@ -296,7 +306,7 @@ function HistoryPage() {
             <tbody className="divide-y divide-border">
               {history.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
                     No processing history found
                   </td>
                 </tr>
@@ -329,6 +339,9 @@ function HistoryPage() {
                     </td>
                     <td className="px-4 py-3 text-sm text-foreground">
                       {entry.adsDetected}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground hidden md:table-cell">
+                      {entry.llmCost != null && entry.llmCost > 0 ? `$${entry.llmCost.toFixed(2)}` : '-'}
                     </td>
                     <td className="px-4 py-3 text-sm text-muted-foreground hidden md:table-cell">
                       {entry.reprocessNumber > 1 ? `#${entry.reprocessNumber}` : '-'}

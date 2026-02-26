@@ -4,6 +4,18 @@ import { getSettings, updateSettings, resetSettings, resetPrompts, getModels, ge
 import { setPassword, removePassword } from '../api/auth';
 import { useAuth } from '../context/AuthContext';
 import LoadingSpinner from '../components/LoadingSpinner';
+import type { ClaudeModel } from '../api/types';
+
+function formatModelLabel(model: ClaudeModel): string {
+  if (model.inputCostPerMtok != null && model.outputCostPerMtok != null) {
+    const fmtIn = model.inputCostPerMtok % 1 === 0
+      ? model.inputCostPerMtok.toFixed(0) : model.inputCostPerMtok.toFixed(2);
+    const fmtOut = model.outputCostPerMtok % 1 === 0
+      ? model.outputCostPerMtok.toFixed(0) : model.outputCostPerMtok.toFixed(2);
+    return `${model.name} ($${fmtIn} / $${fmtOut} per MTok)`;
+  }
+  return model.name;
+}
 
 function Settings() {
   const queryClient = useQueryClient();
@@ -209,6 +221,16 @@ function Settings() {
     return `${minutes}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const formatTokenCount = (tokens: number): string => {
+    if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+    if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`;
+    return String(tokens);
+  };
+
+  const formatCost = (cost: number): string => {
+    return `$${cost.toFixed(2)}`;
+  };
+
   if (settingsLoading) {
     return <LoadingSpinner className="py-12" />;
   }
@@ -271,6 +293,16 @@ function Settings() {
             <div>
               <p className="text-sm text-muted-foreground">Time Saved</p>
               <p className="font-medium text-foreground">{formatDuration(status.stats?.totalTimeSaved ?? 0)}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">LLM Tokens</p>
+              <p className="font-medium text-foreground">
+                {formatTokenCount(status.stats?.totalInputTokens ?? 0)} in / {formatTokenCount(status.stats?.totalOutputTokens ?? 0)} out
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">LLM Cost</p>
+              <p className="font-medium text-foreground">{formatCost(status.stats?.totalLlmCost ?? 0)}</p>
             </div>
           </div>
         ) : null}
@@ -551,7 +583,7 @@ function Settings() {
           >
             {models?.map((model) => (
               <option key={model.id} value={model.id}>
-                {model.name}
+                {formatModelLabel(model)}
               </option>
             ))}
           </select>
@@ -578,7 +610,7 @@ function Settings() {
           >
             {models?.map((model) => (
               <option key={model.id} value={model.id}>
-                {model.name}
+                {formatModelLabel(model)}
               </option>
             ))}
           </select>

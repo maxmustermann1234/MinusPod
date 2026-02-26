@@ -269,6 +269,11 @@ function EpisodeDetail() {
                   Chapters
                 </span>
               )}
+              {episode.llmCost != null && (
+                <span className="text-xs text-muted-foreground">
+                  LLM: ${episode.llmCost.toFixed(2)} ({episode.inputTokens != null && episode.inputTokens >= 1000 ? `${(episode.inputTokens / 1000).toFixed(1)}K` : episode.inputTokens ?? 0} in / {episode.outputTokens != null && episode.outputTokens >= 1000 ? `${(episode.outputTokens / 1000).toFixed(1)}K` : episode.outputTokens ?? 0} out)
+                </span>
+              )}
               <div className="relative">
                 <button
                   onClick={() => setShowReprocessMenu(!showReprocessMenu)}

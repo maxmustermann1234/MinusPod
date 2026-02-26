@@ -757,6 +757,18 @@ def list_episodes(slug):
     })
 
 
+def _get_episode_token_fields(db, episode_id: str) -> dict:
+    """Look up per-episode token usage and return API fields (or empty dict)."""
+    usage = db.get_episode_token_usage(episode_id)
+    if not usage:
+        return {}
+    return {
+        'inputTokens': usage['input_tokens'],
+        'outputTokens': usage['output_tokens'],
+        'llmCost': round(usage['llm_cost'], 6),
+    }
+
+
 @api.route('/feeds/<slug>/episodes/<episode_id>', methods=['GET'])
 @log_request
 def get_episode(slug, episode_id):
@@ -846,7 +858,8 @@ def get_episode(slug, episode_id):
         'firstPassResponse': episode.get('first_pass_response'),
         'verificationPrompt': episode.get('second_pass_prompt'),
         'verificationResponse': episode.get('second_pass_response'),
-        'artworkUrl': episode.get('artwork_url')
+        'artworkUrl': episode.get('artwork_url'),
+        **_get_episode_token_fields(db, episode_id),
     })
 
 
@@ -974,15 +987,27 @@ def regenerate_chapters(slug, episode_id):
 
     try:
         from chapters_generator import ChaptersGenerator
+        from llm_client import start_episode_token_tracking, get_episode_token_totals
 
+        start_episode_token_tracking()
         chapters_gen = ChaptersGenerator()
 
-        # VTT segments are ALREADY adjusted (ads removed), so pass empty ads_removed
-        # This prevents double-adjustment of timestamps
-        # The AI topic detection will find natural chapter points in the content
-        chapters = chapters_gen.generate_chapters_from_vtt(
-            segments, episode_description, podcast_name, episode_title
-        )
+        try:
+            # VTT segments are ALREADY adjusted (ads removed), so pass empty ads_removed
+            # This prevents double-adjustment of timestamps
+            # The AI topic detection will find natural chapter points in the content
+            chapters = chapters_gen.generate_chapters_from_vtt(
+                segments, episode_description, podcast_name, episode_title
+            )
+        finally:
+            token_totals = get_episode_token_totals()
+            if token_totals['input_tokens'] > 0:
+                db.increment_episode_token_usage(
+                    episode_id,
+                    token_totals['input_tokens'],
+                    token_totals['output_tokens'],
+                    token_totals['cost'],
+                )
 
         if chapters and chapters.get('chapters'):
             storage.save_chapters_json(slug, episode_id, chapters)
@@ -1135,6 +1160,8 @@ def retry_ad_detection(slug, episode_id):
         return error_response('No transcript available - full reprocess required', 400)
 
     try:
+        from llm_client import start_episode_token_tracking, get_episode_token_totals
+
         # Parse transcript back into segments
         segments = []
         for line in transcript.split('\n'):
@@ -1161,13 +1188,25 @@ def retry_ad_detection(slug, episode_id):
         podcast = db.get_podcast_by_slug(slug)
         podcast_name = podcast.get('title', slug) if podcast else slug
 
-        # Retry ad detection
+        # Retry ad detection with token tracking
+        start_episode_token_tracking()
+
         from ad_detector import AdDetector
         ad_detector = AdDetector()
-        ad_result = ad_detector.process_transcript(
-            segments, podcast_name, episode.get('title', 'Unknown'), slug, episode_id,
-            podcast_id=slug  # Pass slug as podcast_id for pattern matching
-        )
+        try:
+            ad_result = ad_detector.process_transcript(
+                segments, podcast_name, episode.get('title', 'Unknown'), slug, episode_id,
+                podcast_id=slug  # Pass slug as podcast_id for pattern matching
+            )
+        finally:
+            token_totals = get_episode_token_totals()
+            if token_totals['input_tokens'] > 0:
+                db.increment_episode_token_usage(
+                    episode_id,
+                    token_totals['input_tokens'],
+                    token_totals['output_tokens'],
+                    token_totals['cost'],
+                )
 
         ad_detection_status = ad_result.get('status', 'failed')
 
@@ -1311,7 +1350,10 @@ def get_processing_history():
             'status': entry['status'],
             'adsDetected': entry['ads_detected'],
             'errorMessage': entry['error_message'],
-            'reprocessNumber': entry['reprocess_number']
+            'reprocessNumber': entry['reprocess_number'],
+            'inputTokens': entry.get('input_tokens', 0) or 0,
+            'outputTokens': entry.get('output_tokens', 0) or 0,
+            'llmCost': round(entry.get('llm_cost', 0.0) or 0.0, 6),
         })
 
     return json_response({
@@ -1337,7 +1379,10 @@ def get_processing_history_stats():
         'avgProcessingTimeSeconds': stats['avg_processing_time_seconds'],
         'totalAdsDetected': stats['total_ads_detected'],
         'reprocessCount': stats['reprocess_count'],
-        'uniqueEpisodes': stats['unique_episodes']
+        'uniqueEpisodes': stats['unique_episodes'],
+        'totalInputTokens': stats.get('total_input_tokens', 0),
+        'totalOutputTokens': stats.get('total_output_tokens', 0),
+        'totalLlmCost': stats.get('total_llm_cost', 0.0),
     })
 
 
@@ -1366,7 +1411,8 @@ def export_processing_history():
         if entries:
             fieldnames = ['id', 'podcast_slug', 'podcast_title', 'episode_id',
                          'episode_title', 'processed_at', 'processing_duration_seconds',
-                         'status', 'ads_detected', 'error_message', 'reprocess_number']
+                         'status', 'ads_detected', 'error_message', 'reprocess_number',
+                         'input_tokens', 'output_tokens', 'llm_cost']
             writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
             writer.writeheader()
             for entry in entries:
@@ -1393,7 +1439,10 @@ def export_processing_history():
                 'status': entry['status'],
                 'adsDetected': entry['ads_detected'],
                 'errorMessage': entry['error_message'],
-                'reprocessNumber': entry['reprocess_number']
+                'reprocessNumber': entry['reprocess_number'],
+                'inputTokens': entry.get('input_tokens', 0) or 0,
+                'outputTokens': entry.get('output_tokens', 0) or 0,
+                'llmCost': round(entry.get('llm_cost', 0.0) or 0.0, 6),
             })
 
         response = Response(
@@ -1601,6 +1650,22 @@ def get_available_models():
     ad_detector = AdDetector()
     models = ad_detector.get_available_models()
 
+    # Refresh model pricing with any newly discovered models
+    try:
+        db = get_database()
+        db.refresh_model_pricing(models)
+
+        # Enrich models with pricing info
+        pricing_rows = db.get_model_pricing()
+        pricing_lookup = {p['modelId']: p for p in pricing_rows}
+        for model in models:
+            pricing = pricing_lookup.get(model['id'])
+            if pricing:
+                model['inputCostPerMtok'] = pricing['inputCostPerMtok']
+                model['outputCostPerMtok'] = pricing['outputCostPerMtok']
+    except Exception as e:
+        logger.warning(f"Failed to refresh model pricing: {e}")
+
     return json_response({'models': models})
 
 
@@ -1750,9 +1815,28 @@ def get_system_status():
             'baseUrl': os.environ.get('BASE_URL', 'http://localhost:8000')
         },
         'stats': {
-            'totalTimeSaved': db.get_total_time_saved()
+            'totalTimeSaved': db.get_total_time_saved(),
+            'totalInputTokens': int(db.get_stat('total_input_tokens')),
+            'totalOutputTokens': int(db.get_stat('total_output_tokens')),
+            'totalLlmCost': round(db.get_stat('total_llm_cost'), 2),
         }
     })
+
+
+@api.route('/system/token-usage', methods=['GET'])
+@log_request
+def get_token_usage():
+    """Get LLM token usage summary with per-model breakdown."""
+    db = get_database()
+    return json_response(db.get_token_usage_summary())
+
+
+@api.route('/system/model-pricing', methods=['GET'])
+@log_request
+def get_model_pricing():
+    """Get all known model pricing rates."""
+    db = get_database()
+    return json_response({'models': db.get_model_pricing()})
 
 
 @api.route('/system/cleanup', methods=['POST'])

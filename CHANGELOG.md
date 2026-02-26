@@ -6,6 +6,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.17] - 2026-02-26
+
+### Fixed
+- **Thread safety for per-episode token accumulator**: Replaced shared module-level dict with `threading.local()` so each thread (background processor, HTTP handler) gets an independent accumulator. Prevents concurrent requests from corrupting each other's token counts under Gunicorn's `--threads 8`.
+- **Missing try/finally for token tracking in standalone API endpoints**: `/regenerate-chapters` and `/retry-ad-detection` now wrap LLM calls in `try/finally` so `get_episode_token_totals()` and DB persistence always run even if the LLM call raises.
+
+## [1.0.16] - 2026-02-26
+
+### Fixed
+- **Standalone API endpoints not tracking per-episode token usage**: `/regenerate-chapters` and `/retry-ad-detection` make LLM calls outside the processing pipeline without activating the per-episode token accumulator. Global `token_usage` table recorded these calls, but they were invisible in per-episode cost display. Both endpoints now activate `start_episode_token_tracking()` before LLM calls and persist totals via `increment_episode_token_usage()`.
+
+### Added
+- **`increment_episode_token_usage()` database method**: Increments `input_tokens`, `output_tokens`, and `llm_cost` on the most recent completed `processing_history` entry for an episode. Used by standalone endpoints that make LLM calls after the initial processing run.
+
+## [1.0.15] - 2026-02-26
+
+### Fixed
+- **Processing history not saved due to SQL column mismatch**: `record_processing_history()` INSERT had 14 columns but only 13 VALUES placeholders -- the `?` for `llm_cost` was missing. All processing runs since v1.0.12 silently failed to write history rows (caught by try/except, logged as "Failed to record history: 13 values for 14 columns"). Token accumulator was working correctly but data was discarded at the DB write step.
+
+## [1.0.14] - 2026-02-26
+
+### Fixed
+- **Always show LLM cost on episode detail page**: Previously hidden when tokens were zero (all pre-feature episodes). Now displays `LLM: $0.00 (0 in / 0 out)` for any completed episode with a processing_history entry.
+- **2-digit cost precision in UI**: Changed LLM cost display from 4 decimal places to 2 in both episode detail and history pages for cleaner presentation.
+
+### Added
+- **Diagnostic logging for token accumulator lifecycle**: Added logging at accumulator activation, each token callback, and totals retrieval in `llm_client.py`. Added token totals logging before DB write in `main.py` for both success and failure paths. Enables verification via Loki after next processing run.
+
+## [1.0.13] - 2026-02-26
+
+### Fixed
+- **Episode detail LLM cost placement**: Moved LLM cost/token display from inside the "Detected Ads" card (hidden when 0 ads found) to the episode metadata bar alongside date, duration, and status badges. Now visible on any processed episode regardless of ad count.
+- **Episode token display suppressed when cost is zero**: `_get_episode_token_fields` was checking `llm_cost == 0.0` to hide the display, but models without pricing entries have $0 cost with non-zero tokens. Now checks for zero tokens instead.
+- **Missing pricing for `claude-sonnet-4-6`**: Added to `DEFAULT_MODEL_PRICING` ($3/$15 per MTok). Previously all calls to this model recorded $0 cost.
+
+## [1.0.12] - 2026-02-26
+
+### Added
+- **Per-episode LLM token usage and cost tracking**: Every processing run now records input/output token counts and estimated cost directly in `processing_history`. Module-level accumulator in `llm_client.py` aggregates all LLM calls during a single episode's processing pipeline (ad detection, verification, chapters) and passes totals to `record_processing_history()` on completion or failure.
+- **Episode detail LLM cost display**: Episode detail page shows LLM cost and token breakdown (e.g. "LLM: $0.0034 (12.3K in / 1.5K out)") when cost data is available.
+- **History page cost column**: New sortable "Cost" column in the processing history table shows per-episode LLM cost. Stats summary includes a "Total LLM Cost" tile.
+- **Token data in API responses**: `GET /api/v1/feeds/{slug}/episodes/{id}` includes `inputTokens`, `outputTokens`, `llmCost`. History list, stats, and export endpoints include the same fields.
+- **Database migration**: Adds `input_tokens`, `output_tokens`, `llm_cost` columns to `processing_history` table with zero defaults for backward compatibility.
+
+## [1.0.11] - 2026-02-26
+
+### Added
+- **LLM token usage tracking with cost calculation**: Every LLM API call (ad detection, verification, chapters) now records input/output token counts and estimated cost. Tracks per-model breakdown in `token_usage` table with pricing from `model_pricing` table seeded with current Anthropic rates. Usage callback wired into `LLMClient` base class so all call sites are tracked automatically with zero code changes.
+- **New API endpoint `GET /api/v1/system/token-usage`**: Returns global totals (input/output tokens, total cost) and per-model breakdown with pricing info.
+- **LLM Tokens and LLM Cost tiles in System Status**: Settings page now shows cumulative token usage (formatted as "1.2M in / 456K out") and total USD cost alongside existing stats.
+- **Model pricing refresh on `GET /settings/models`**: Newly discovered models are automatically priced from built-in defaults when the model list is fetched.
+- **New API endpoint `GET /api/v1/system/model-pricing`**: Returns all known model pricing rates from the `model_pricing` table for API consumers.
+- **Pricing enrichment on `GET /settings/models`**: Model list response now includes `inputCostPerMtok` and `outputCostPerMtok` fields when pricing is known.
+- **Cost display in model dropdowns**: Settings page model selectors show per-token pricing inline (e.g. "Claude Haiku 4.5 ($1 / $5 per MTok)").
+
 ## [1.0.10] - 2026-02-24
 
 ### Fixed

@@ -48,6 +48,9 @@ export interface EpisodeDetail extends Episode {
   firstPassResponse?: string;
   verificationPrompt?: string;
   verificationResponse?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  llmCost?: number;
 }
 
 export interface AdValidation {
@@ -132,6 +135,8 @@ export interface UpdateSettingsPayload {
 export interface ClaudeModel {
   id: string;
   name: string;
+  inputCostPerMtok?: number;
+  outputCostPerMtok?: number;
 }
 
 export interface WhisperModel {
@@ -165,7 +170,28 @@ export interface SystemStatus {
   };
   stats: {
     totalTimeSaved: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalLlmCost: number;
   };
+}
+
+export interface TokenUsageModel {
+  modelId: string;
+  displayName: string;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCost: number;
+  callCount: number;
+  inputCostPerMtok: number | null;
+  outputCostPerMtok: number | null;
+}
+
+export interface TokenUsageSummary {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCost: number;
+  models: TokenUsageModel[];
 }
 
 export interface Sponsor {
@@ -200,6 +226,9 @@ export interface ProcessingHistoryEntry {
   adsDetected: number;
   errorMessage?: string;
   reprocessNumber: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  llmCost?: number;
 }
 
 export interface ProcessingHistoryResponse {
@@ -217,4 +246,7 @@ export interface ProcessingHistoryStats {
   totalAdsDetected: number;
   avgProcessingTime: number;
   totalProcessingTime: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  totalLlmCost?: number;
 }
