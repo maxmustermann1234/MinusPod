@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.12] - 2026-02-26
+
+### Added
+- **Per-episode LLM token usage and cost tracking**: Every processing run now records input/output token counts and estimated cost directly in `processing_history`. Module-level accumulator in `llm_client.py` aggregates all LLM calls during a single episode's processing pipeline (ad detection, verification, chapters) and passes totals to `record_processing_history()` on completion or failure.
+- **Episode detail LLM cost display**: Episode detail page shows LLM cost and token breakdown (e.g. "LLM: $0.0034 (12.3K in / 1.5K out)") when cost data is available.
+- **History page cost column**: New sortable "Cost" column in the processing history table shows per-episode LLM cost. Stats summary includes a "Total LLM Cost" tile.
+- **Token data in API responses**: `GET /api/v1/feeds/{slug}/episodes/{id}` includes `inputTokens`, `outputTokens`, `llmCost`. History list, stats, and export endpoints include the same fields.
+- **Database migration**: Adds `input_tokens`, `output_tokens`, `llm_cost` columns to `processing_history` table with zero defaults for backward compatibility.
+
 ## [1.0.11] - 2026-02-26
 
 ### Added

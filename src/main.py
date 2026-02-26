@@ -150,7 +150,7 @@ def log_request_detailed(f):
 MAX_EPISODE_RETRIES = 3
 
 import requests.exceptions
-from llm_client import is_retryable_error, is_llm_api_error
+from llm_client import is_retryable_error, is_llm_api_error, start_episode_token_tracking, get_episode_token_totals
 
 
 def is_transient_error(error: Exception) -> bool:
@@ -1327,6 +1327,8 @@ def _finalize_episode(slug, episode_id, episode_title, podcast_name,
     else:
         audio_logger.info(f"[{slug}:{episode_id}] Complete: {len(ads_to_remove)} ads removed, {processing_time:.1f}s")
 
+    token_totals = get_episode_token_totals()
+
     try:
         podcast_data = db.get_podcast_by_slug(slug)
         if podcast_data:
@@ -1335,7 +1337,10 @@ def _finalize_episode(slug, episode_id, episode_title, podcast_name,
                 podcast_title=podcast_data.get('title') or podcast_name,
                 episode_id=episode_id, episode_title=episode_title,
                 status='completed', processing_duration_seconds=processing_time,
-                ads_detected=len(ads_to_remove)
+                ads_detected=len(ads_to_remove),
+                input_tokens=token_totals['input_tokens'],
+                output_tokens=token_totals['output_tokens'],
+                llm_cost=token_totals['cost'],
             )
     except Exception as hist_err:
         audio_logger.warning(f"[{slug}:{episode_id}] Failed to record history: {hist_err}")
@@ -1377,6 +1382,8 @@ def _handle_processing_failure(slug, episode_id, episode_title, podcast_name,
     db.upsert_episode(slug, episode_id, status=new_status,
         retry_count=new_retry_count, error_message=str(error))
 
+    token_totals = get_episode_token_totals()
+
     try:
         podcast_data = db.get_podcast_by_slug(slug)
         if podcast_data:
@@ -1385,7 +1392,10 @@ def _handle_processing_failure(slug, episode_id, episode_title, podcast_name,
                 podcast_title=podcast_data.get('title') or podcast_name,
                 episode_id=episode_id, episode_title=episode_title,
                 status='failed', processing_duration_seconds=processing_time,
-                ads_detected=0, error_message=str(error)
+                ads_detected=0, error_message=str(error),
+                input_tokens=token_totals['input_tokens'],
+                output_tokens=token_totals['output_tokens'],
+                llm_cost=token_totals['cost'],
             )
     except Exception as hist_err:
         audio_logger.warning(f"[{slug}:{episode_id}] Failed to record history: {hist_err}")
@@ -1408,6 +1418,7 @@ def process_episode(slug: str, episode_id: str, episode_url: str,
     8. Finalize (update DB, record history, refresh RSS)
     """
     start_time = time.time()
+    start_episode_token_tracking()
 
     episode_data = db.get_episode(slug, episode_id)
     reprocess_mode = episode_data.get('reprocess_mode') if episode_data else None

@@ -48,6 +48,9 @@ export interface EpisodeDetail extends Episode {
   firstPassResponse?: string;
   verificationPrompt?: string;
   verificationResponse?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  llmCost?: number;
 }
 
 export interface AdValidation {
@@ -223,6 +226,9 @@ export interface ProcessingHistoryEntry {
   adsDetected: number;
   errorMessage?: string;
   reprocessNumber: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  llmCost?: number;
 }
 
 export interface ProcessingHistoryResponse {
@@ -240,4 +246,7 @@ export interface ProcessingHistoryStats {
   totalAdsDetected: number;
   avgProcessingTime: number;
   totalProcessingTime: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  totalLlmCost?: number;
 }

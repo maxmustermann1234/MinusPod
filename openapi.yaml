@@ -1884,6 +1884,20 @@ paths:
             type: integer
             minimum: 0
             default: 0
+        - name: sort_by
+          in: query
+          description: Column to sort by
+          schema:
+            type: string
+            enum: [processed_at, podcast_title, episode_title, processing_duration_seconds, ads_detected, reprocess_number, status, llm_cost]
+            default: processed_at
+        - name: sort_dir
+          in: query
+          description: Sort direction
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
       responses:
         '200':
           description: Processing history
@@ -1935,6 +1949,15 @@ paths:
                       - number
                       - 'null'
                     description: Average processing time in seconds
+                  totalInputTokens:
+                    type: integer
+                    description: Total LLM input tokens across all completed processing runs
+                  totalOutputTokens:
+                    type: integer
+                    description: Total LLM output tokens across all completed processing runs
+                  totalLlmCost:
+                    type: number
+                    description: Total estimated LLM cost in USD across all completed processing runs
                   podcasts:
                     type: array
                     items:
@@ -2516,6 +2539,15 @@ components:
             adsRemovedVerification:
               type: integer
               description: Number of ads detected by verification pass
+            inputTokens:
+              type: integer
+              description: Total LLM input tokens used to process this episode
+            outputTokens:
+              type: integer
+              description: Total LLM output tokens used to process this episode
+            llmCost:
+              type: number
+              description: Estimated LLM cost in USD for processing this episode
 
     AdMarker:
       type: object
@@ -2940,6 +2972,15 @@ components:
             - integer
             - 'null'
           description: Reprocess number (null for first processing)
+        inputTokens:
+          type: integer
+          description: LLM input tokens used for this processing run
+        outputTokens:
+          type: integer
+          description: LLM output tokens used for this processing run
+        llmCost:
+          type: number
+          description: Estimated LLM cost in USD for this processing run
 
     Sponsor:
       type: object

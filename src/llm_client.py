@@ -358,17 +358,53 @@ class OpenAICompatibleClient(LLMClient):
 
 _cached_client: Optional[LLMClient] = None
 
+# Per-episode token accumulator (safe because processing is single-episode-at-a-time)
+_episode_accumulator = {
+    'active': False,
+    'input_tokens': 0,
+    'output_tokens': 0,
+    'cost': 0.0,
+}
+
+
+def start_episode_token_tracking():
+    """Reset and activate the per-episode token accumulator."""
+    _episode_accumulator['active'] = True
+    _episode_accumulator['input_tokens'] = 0
+    _episode_accumulator['output_tokens'] = 0
+    _episode_accumulator['cost'] = 0.0
+
+
+def get_episode_token_totals() -> Dict:
+    """Return accumulated totals, deactivate, and reset the accumulator."""
+    totals = {
+        'input_tokens': _episode_accumulator['input_tokens'],
+        'output_tokens': _episode_accumulator['output_tokens'],
+        'cost': _episode_accumulator['cost'],
+    }
+    _episode_accumulator['active'] = False
+    _episode_accumulator['input_tokens'] = 0
+    _episode_accumulator['output_tokens'] = 0
+    _episode_accumulator['cost'] = 0.0
+    return totals
+
 
 def _record_token_usage(model: str, usage: Dict):
     """Module-level callback for recording token usage to the database."""
     try:
         from database import Database
         db = Database()
-        db.record_token_usage(
+        input_tokens = usage.get('input_tokens', 0)
+        output_tokens = usage.get('output_tokens', 0)
+        cost = db.record_token_usage(
             model_id=model,
-            input_tokens=usage.get('input_tokens', 0),
-            output_tokens=usage.get('output_tokens', 0),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )
+        if _episode_accumulator['active']:
+            _episode_accumulator['input_tokens'] += input_tokens
+            _episode_accumulator['output_tokens'] += output_tokens
+            _episode_accumulator['cost'] += cost
     except Exception as e:
         logger.warning(f"Failed to record token usage: {e}")
 

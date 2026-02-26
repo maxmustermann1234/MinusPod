@@ -395,6 +395,9 @@ CREATE TABLE IF NOT EXISTS processing_history (
     ads_detected INTEGER DEFAULT 0,
     error_message TEXT,
     reprocess_number INTEGER DEFAULT 1,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    llm_cost REAL DEFAULT 0.0,
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     FOREIGN KEY (podcast_id) REFERENCES podcasts(id) ON DELETE CASCADE
 );
@@ -682,6 +685,9 @@ class Database:
                 ads_detected INTEGER DEFAULT 0,
                 error_message TEXT,
                 reprocess_number INTEGER DEFAULT 1,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                llm_cost REAL DEFAULT 0.0,
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                 FOREIGN KEY (podcast_id) REFERENCES podcasts(id) ON DELETE CASCADE
             )
@@ -1097,6 +1103,15 @@ class Database:
             logger.info("Migration: Created token usage tables and seeded model pricing")
         except Exception as e:
             logger.warning(f"Migration failed for token usage tables: {e}")
+
+        # Migration: Add token tracking columns to processing_history
+        hist_cols = self._get_table_columns(conn, 'processing_history')
+        for col, definition in [
+            ('input_tokens', 'INTEGER DEFAULT 0'),
+            ('output_tokens', 'INTEGER DEFAULT 0'),
+            ('llm_cost', 'REAL DEFAULT 0.0'),
+        ]:
+            self._add_column_if_missing(conn, 'processing_history', col, definition, hist_cols)
 
     def _cleanup_contaminated_patterns(self):
         """Delete patterns with text_template > 3500 chars (contaminated).
@@ -2081,10 +2096,11 @@ class Database:
         output_cost = (output_tokens / 1_000_000) * row['output_cost_per_mtok']
         return input_cost + output_cost
 
-    def record_token_usage(self, model_id: str, input_tokens: int, output_tokens: int):
-        """Record token usage for an LLM call. Atomic upsert to per-model and global stats."""
+    def record_token_usage(self, model_id: str, input_tokens: int, output_tokens: int) -> float:
+        """Record token usage for an LLM call. Atomic upsert to per-model and global stats.
+        Returns the calculated cost for this call."""
         if not model_id or (input_tokens <= 0 and output_tokens <= 0):
-            return
+            return 0.0
 
         conn = self.get_connection()
         cost = self._calculate_token_cost(conn, model_id, input_tokens, output_tokens)
@@ -2119,6 +2135,7 @@ class Database:
         logger.debug(
             f"Token usage: model={model_id} in={input_tokens} out={output_tokens} cost=${cost:.6f}"
         )
+        return cost
 
     def get_token_usage_summary(self) -> Dict:
         """Get global totals and per-model breakdown of token usage."""
@@ -2823,7 +2840,10 @@ class Database:
                                    episode_title: str, status: str,
                                    processing_duration_seconds: float = None,
                                    ads_detected: int = 0,
-                                   error_message: str = None) -> int:
+                                   error_message: str = None,
+                                   input_tokens: int = 0,
+                                   output_tokens: int = 0,
+                                   llm_cost: float = 0.0) -> int:
         """Record a processing attempt in history. Returns history entry ID."""
         conn = self.get_connection()
 
@@ -2840,11 +2860,11 @@ class Database:
             """INSERT INTO processing_history
                (podcast_id, podcast_slug, podcast_title, episode_id, episode_title,
                 processed_at, processing_duration_seconds, status, ads_detected,
-                error_message, reprocess_number)
-               VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?, ?, ?, ?, ?)""",
+                error_message, reprocess_number, input_tokens, output_tokens, llm_cost)
+               VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?, ?, ?, ?, ?, ?, ?)""",
             (podcast_id, podcast_slug, podcast_title, episode_id, episode_title,
              processing_duration_seconds, status, ads_detected, error_message,
-             reprocess_number)
+             reprocess_number, input_tokens, output_tokens, llm_cost)
         )
         conn.commit()
         logger.info(f"Recorded processing history: {podcast_slug}/{episode_id} - {status} (reprocess #{reprocess_number})")
@@ -3137,7 +3157,7 @@ class Database:
         # Validate sort column
         valid_sort_cols = ['processed_at', 'podcast_title', 'episode_title',
                           'processing_duration_seconds', 'ads_detected',
-                          'reprocess_number', 'status']
+                          'reprocess_number', 'status', 'llm_cost']
         if sort_by not in valid_sort_cols:
             sort_by = 'processed_at'
         sort_dir = 'DESC' if sort_dir.lower() == 'desc' else 'ASC'
@@ -3198,6 +3218,18 @@ class Database:
         cursor = conn.execute("SELECT COUNT(DISTINCT podcast_slug || '/' || episode_id) FROM processing_history")
         unique_episodes = cursor.fetchone()[0]
 
+        # LLM token/cost totals from completed entries
+        cursor = conn.execute(
+            """SELECT COALESCE(SUM(input_tokens), 0),
+                      COALESCE(SUM(output_tokens), 0),
+                      COALESCE(SUM(llm_cost), 0.0)
+               FROM processing_history WHERE status = 'completed'"""
+        )
+        row = cursor.fetchone()
+        total_input_tokens = row[0]
+        total_output_tokens = row[1]
+        total_llm_cost = row[2]
+
         return {
             'total_processed': total_processed,
             'completed_count': completed_count,
@@ -3205,7 +3237,10 @@ class Database:
             'avg_processing_time_seconds': round(avg_time, 2),
             'total_ads_detected': total_ads,
             'reprocess_count': reprocess_count,
-            'unique_episodes': unique_episodes
+            'unique_episodes': unique_episodes,
+            'total_input_tokens': total_input_tokens,
+            'total_output_tokens': total_output_tokens,
+            'total_llm_cost': round(total_llm_cost, 6),
         }
 
     def get_episode_reprocess_count(self, podcast_id: int, episode_id: str) -> int:
@@ -3217,6 +3252,26 @@ class Database:
             (podcast_id, episode_id)
         )
         return cursor.fetchone()[0]
+
+    def get_episode_token_usage(self, episode_id: str) -> Optional[Dict]:
+        """Get token usage for the most recent completed processing of an episode.
+        Returns {input_tokens, output_tokens, llm_cost} or None."""
+        conn = self.get_connection()
+        cursor = conn.execute(
+            """SELECT input_tokens, output_tokens, llm_cost
+               FROM processing_history
+               WHERE episode_id = ? AND status = 'completed'
+               ORDER BY processed_at DESC LIMIT 1""",
+            (episode_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            'input_tokens': row['input_tokens'] or 0,
+            'output_tokens': row['output_tokens'] or 0,
+            'llm_cost': row['llm_cost'] or 0.0,
+        }
 
     def export_processing_history(self, status_filter: str = None,
                                    podcast_slug: str = None) -> List[Dict]:

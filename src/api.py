@@ -757,6 +757,18 @@ def list_episodes(slug):
     })
 
 
+def _get_episode_token_fields(db, episode_id: str) -> dict:
+    """Look up per-episode token usage and return API fields (or empty dict)."""
+    usage = db.get_episode_token_usage(episode_id)
+    if not usage or usage['llm_cost'] == 0.0:
+        return {}
+    return {
+        'inputTokens': usage['input_tokens'],
+        'outputTokens': usage['output_tokens'],
+        'llmCost': round(usage['llm_cost'], 6),
+    }
+
+
 @api.route('/feeds/<slug>/episodes/<episode_id>', methods=['GET'])
 @log_request
 def get_episode(slug, episode_id):
@@ -846,7 +858,8 @@ def get_episode(slug, episode_id):
         'firstPassResponse': episode.get('first_pass_response'),
         'verificationPrompt': episode.get('second_pass_prompt'),
         'verificationResponse': episode.get('second_pass_response'),
-        'artworkUrl': episode.get('artwork_url')
+        'artworkUrl': episode.get('artwork_url'),
+        **_get_episode_token_fields(db, episode_id),
     })
 
 
@@ -1311,7 +1324,10 @@ def get_processing_history():
             'status': entry['status'],
             'adsDetected': entry['ads_detected'],
             'errorMessage': entry['error_message'],
-            'reprocessNumber': entry['reprocess_number']
+            'reprocessNumber': entry['reprocess_number'],
+            'inputTokens': entry.get('input_tokens', 0) or 0,
+            'outputTokens': entry.get('output_tokens', 0) or 0,
+            'llmCost': round(entry.get('llm_cost', 0.0) or 0.0, 6),
         })
 
     return json_response({
@@ -1337,7 +1353,10 @@ def get_processing_history_stats():
         'avgProcessingTimeSeconds': stats['avg_processing_time_seconds'],
         'totalAdsDetected': stats['total_ads_detected'],
         'reprocessCount': stats['reprocess_count'],
-        'uniqueEpisodes': stats['unique_episodes']
+        'uniqueEpisodes': stats['unique_episodes'],
+        'totalInputTokens': stats.get('total_input_tokens', 0),
+        'totalOutputTokens': stats.get('total_output_tokens', 0),
+        'totalLlmCost': stats.get('total_llm_cost', 0.0),
     })
 
 
@@ -1366,7 +1385,8 @@ def export_processing_history():
         if entries:
             fieldnames = ['id', 'podcast_slug', 'podcast_title', 'episode_id',
                          'episode_title', 'processed_at', 'processing_duration_seconds',
-                         'status', 'ads_detected', 'error_message', 'reprocess_number']
+                         'status', 'ads_detected', 'error_message', 'reprocess_number',
+                         'input_tokens', 'output_tokens', 'llm_cost']
             writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
             writer.writeheader()
             for entry in entries:
@@ -1393,7 +1413,10 @@ def export_processing_history():
                 'status': entry['status'],
                 'adsDetected': entry['ads_detected'],
                 'errorMessage': entry['error_message'],
-                'reprocessNumber': entry['reprocess_number']
+                'reprocessNumber': entry['reprocess_number'],
+                'inputTokens': entry.get('input_tokens', 0) or 0,
+                'outputTokens': entry.get('output_tokens', 0) or 0,
+                'llmCost': round(entry.get('llm_cost', 0.0) or 0.0, 6),
             })
 
         response = Response(
