@@ -481,9 +481,27 @@ def refresh_rss_feed(slug: str, feed_url: str, force: bool = False):
 
         # Handle 304 Not Modified - feed hasn't changed
         if feed_content is None and (new_etag or new_last_modified):
-            refresh_logger.info(f"[{slug}] Feed unchanged (304), skipping refresh")
-            status_service.complete_feed_refresh(slug, 0)
-            return True
+            # Recovery path: older versions could skip episode DB sync on initial import.
+            # If episodes table is still empty, force one full fetch to backfill episodes.
+            _, episode_total = db.get_episodes(slug, limit=1, offset=0)
+            if episode_total == 0:
+                refresh_logger.info(
+                    f"[{slug}] Feed returned 304 but episode DB is empty, forcing full fetch for backfill"
+                )
+                feed_content, new_etag, new_last_modified = rss_parser.fetch_feed_conditional(
+                    feed_url,
+                    etag=None,
+                    last_modified=None
+                )
+
+                if not feed_content:
+                    refresh_logger.error(f"[{slug}] Forced fetch after 304 failed")
+                    status_service.complete_feed_refresh(slug, 0)
+                    return False
+            else:
+                refresh_logger.info(f"[{slug}] Feed unchanged (304), skipping refresh")
+                status_service.complete_feed_refresh(slug, 0)
+                return True
 
         if not feed_content:
             refresh_logger.error(f"[{slug}] Failed to fetch RSS feed")
