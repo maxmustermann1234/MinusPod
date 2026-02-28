@@ -38,10 +38,10 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 WORKDIR /app
 
 # Pre-install PyTorch 2.3.0 with CUDA 12.1 (includes bundled cuDNN)
-RUN pip install --no-cache-dir \
-    torch==2.3.0+cu121 \
-    torchaudio==2.3.0+cu121 \
-    --extra-index-url https://download.pytorch.org/whl/cu121
+#RUN pip install --no-cache-dir \
+#    torch==2.3.0+cu121 \
+#    torchaudio==2.3.0+cu121 \
+#    --extra-index-url https://download.pytorch.org/whl/cu121
 
 # Copy requirements and install remaining Python dependencies
 COPY requirements.txt .
