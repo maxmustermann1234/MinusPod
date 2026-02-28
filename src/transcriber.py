@@ -39,8 +39,8 @@ os.environ.setdefault('HF_HOME', cache_dir)
 os.environ.setdefault('HUGGINGFACE_HUB_CACHE', os.path.join(cache_dir, 'hub'))
 os.environ.setdefault('XDG_CACHE_HOME', cache_dir)
 
-import ctranslate2
-from faster_whisper import WhisperModel, BatchedInferencePipeline
+# import ctranslate2
+# from faster_whisper import WhisperModel, BatchedInferencePipeline
 
 logger = logging.getLogger(__name__)
 
