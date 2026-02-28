@@ -645,48 +645,48 @@ class Transcriber:
             # Keep partial file for resume on next attempt
             return None
 
-        def transcribe(self, audio_path: str, podcast_name: str = None) -> List[Dict]:
-            """Transcribe using OpenAI Whisper API (simple & cheap)."""
-            if WHISPER_PROVIDER != "openai":
-                logger.warning("WHISPER_PROVIDER ist nicht 'openai' – nutze lokales Whisper (nicht aktiv)")
-                return None
+    def transcribe(self, audio_path: str, podcast_name: str = None) -> List[Dict]:
+        """Transcribe using OpenAI Whisper API (simple & cheap)."""
+        if WHISPER_PROVIDER != "openai":
+            logger.warning("WHISPER_PROVIDER ist nicht 'openai' – nutze lokales Whisper (nicht aktiv)")
+            return None
 
-            if not OPENAI_API_KEY:
-                logger.error("❌ OPENAI_API_KEY fehlt! Bitte im Portainer Stack als Environment Variable hinzufügen.")
-                return None
+        if not OPENAI_API_KEY:
+            logger.error("❌ OPENAI_API_KEY fehlt! Bitte im Portainer Stack als Environment Variable hinzufügen.")
+            return None
 
-            client = OpenAI(api_key=OPENAI_API_KEY)
+        client = OpenAI(api_key=OPENAI_API_KEY)
 
-            try:
-                logger.info(f"🚀 Transkribiere mit OpenAI Whisper API: {os.path.basename(audio_path)}")
+        try:
+            logger.info(f"🚀 Transkribiere mit OpenAI Whisper API: {os.path.basename(audio_path)}")
 
-                with open(audio_path, "rb") as audio_file:
-                    transcript = client.audio.transcriptions.create(
-                        model="whisper-1",
-                        file=audio_file,
-                        response_format="verbose_json",
-                        timestamp_granularities=["segment"],
-                        language=None,
-                        prompt=self.get_initial_prompt(podcast_name) if hasattr(self, "get_initial_prompt") else None
-                    )
+            with open(audio_path, "rb") as audio_file:
+                transcript = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    response_format="verbose_json",
+                    timestamp_granularities=["segment"],
+                    language=None,
+                    prompt=self.get_initial_prompt(podcast_name) if hasattr(self, "get_initial_prompt") else None
+                )
 
-                segments = []
-                for segment in transcript.segments:
-                    segments.append({
-                        "start": segment.start,
-                        "end": segment.end,
-                        "text": segment.text.strip()
-                    })
+            segments = []
+            for segment in transcript.segments:
+                segments.append({
+                    "start": segment.start,
+                    "end": segment.end,
+                    "text": segment.text.strip()
+                })
 
-                logger.info(f"✅ OpenAI fertig: {len(segments)} Segmente")
-                return segments
+            logger.info(f"✅ OpenAI fertig: {len(segments)} Segmente")
+            return segments
 
-            except Exception as e:
-                if "file is too large" in str(e).lower():
-                    logger.error("❌ Datei zu groß für OpenAI (max. 25 MB).")
-                else:
-                    logger.error(f"OpenAI Whisper Fehler: {e}")
-                return None
+        except Exception as e:
+            if "file is too large" in str(e).lower():
+                logger.error("❌ Datei zu groß für OpenAI (max. 25 MB).")
+            else:
+                logger.error(f"OpenAI Whisper Fehler: {e}")
+            return None
 
     def transcribe_chunked(self, audio_path: str, podcast_name: str = None) -> List[Dict]:
         """Transcribe audio files with dynamic chunking to prevent OOM errors.
