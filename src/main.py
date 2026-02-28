@@ -536,38 +536,68 @@ def refresh_rss_feed(slug: str, feed_url: str, force: bool = False):
             if artwork_url:
                 storage.download_artwork(slug, artwork_url)
 
+        episodes = rss_parser.extract_episodes(feed_content)
+
+        def _parse_published_to_utc_iso(published_str: str):
+            """Parse RSS publish date to UTC ISO format."""
+            if not published_str:
+                return None
+            try:
+                parsed_pub = parsedate_to_datetime(published_str)
+                if parsed_pub.tzinfo is None:
+                    parsed_pub = parsed_pub.replace(tzinfo=timezone.utc)
+                else:
+                    parsed_pub = parsed_pub.astimezone(timezone.utc)
+                return parsed_pub.strftime('%Y-%m-%dT%H:%M:%SZ')
+            except (ValueError, TypeError):
+                return None
+
+        # Synchronize feed episodes into database so API lists full feed immediately.
+        # Keep historical statuses and only update metadata for existing entries.
+        newly_synced_episode_ids = set()
+        for ep in episodes:
+            episode_id = ep['id']
+            published_str = ep.get('published', '')
+            iso_published = _parse_published_to_utc_iso(published_str)
+
+            existing = db.get_episode(slug, episode_id)
+            if existing is None and iso_published and ep.get('title'):
+                # Deduplicate feeds where GUID changes for same title/date.
+                existing_by_title = db.get_episode_by_title_and_date(
+                    slug, ep.get('title'), iso_published
+                )
+                if existing_by_title:
+                    refresh_logger.warning(
+                        f"[{slug}] Episode ID changed: {existing_by_title['episode_id']} -> {episode_id}, "
+                        f"title: {ep.get('title')}"
+                    )
+                    continue
+
+            upsert_kwargs = {
+                'original_url': ep['url'],
+                'title': ep.get('title'),
+                'description': ep.get('description'),
+                'published_at': iso_published,
+                'artwork_url': ep.get('artwork_url'),
+            }
+            if existing is None:
+                upsert_kwargs['status'] = 'pending'
+                newly_synced_episode_ids.add(episode_id)
+            elif not existing.get('status'):
+                upsert_kwargs['status'] = 'pending'
+
+            db.upsert_episode(slug, episode_id, **upsert_kwargs)
+
         # Queue new episodes for auto-processing if enabled
         # Only queue episodes published within the last 48 hours to avoid processing entire backlog
         if db.is_auto_process_enabled_for_podcast(slug):
-            episodes = rss_parser.extract_episodes(feed_content)
             queued_count = 0
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=48)
 
             for ep in episodes:
-                # Check if episode already exists in database
-                existing = db.get_episode(slug, ep['id'])
-                if existing is None:
-                    # Also check by title+pubDate to catch ID changes (Megaphone feeds, etc.)
-                    # This prevents duplicate processing when RSS GUID changes
+                if ep['id'] in newly_synced_episode_ids:
                     published_str = ep.get('published', '')
-                    iso_published = None
-                    if published_str:
-                        try:
-                            parsed_pub = parsedate_to_datetime(published_str)
-                            iso_published = parsed_pub.strftime('%Y-%m-%dT%H:%M:%SZ')
-                        except (ValueError, TypeError):
-                            pass
-
-                    if iso_published and ep.get('title'):
-                        existing_by_title = db.get_episode_by_title_and_date(
-                            slug, ep.get('title'), iso_published
-                        )
-                        if existing_by_title:
-                            refresh_logger.warning(
-                                f"[{slug}] Episode ID changed: {existing_by_title['episode_id']} -> {ep['id']}, "
-                                f"title: {ep.get('title')}"
-                            )
-                            continue  # Skip - episode already exists with different ID
+                    iso_published = _parse_published_to_utc_iso(published_str)
 
                     # Parse publish date to check if recent
                     is_recent = False
