@@ -23,6 +23,11 @@ from config import (
     WHISPER_DEFAULT_PROFILE,
     BROWSER_USER_AGENT, APP_USER_AGENT,
 )
+import os
+from openai import OpenAI
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+WHISPER_PROVIDER = os.getenv("WHISPER_PROVIDER", "local").lower()
 
 # Suppress ONNX Runtime warnings before importing faster_whisper
 os.environ.setdefault('ORT_LOG_LEVEL', 'ERROR')
@@ -781,179 +786,49 @@ class Transcriber:
             # Keep partial file for resume on next attempt
             return None
 
-    def transcribe(self, audio_path: str, podcast_name: str = None) -> List[Dict]:
-        """Transcribe audio file using Faster Whisper with batched pipeline.
+        def transcribe(self, audio_path: str, podcast_name: str = None) -> List[Dict]:
+        """Transcribe using OpenAI Whisper API (simple & cheap)."""
+        if WHISPER_PROVIDER != "openai":
+            logger.warning("WHISPER_PROVIDER ist nicht 'openai' – nutze lokales Whisper (nicht aktiv)")
+            return None
 
-        Uses adaptive batch sizing based on audio duration to prevent CUDA OOM errors.
-        Automatically retries with smaller batch size on OOM.
-        """
-        preprocessed_path = None
+        if not OPENAI_API_KEY:
+            logger.error("❌ OPENAI_API_KEY fehlt! Bitte im Portainer Stack als Environment Variable hinzufügen.")
+            return None
+
+        client = OpenAI(api_key=OPENAI_API_KEY)
+
         try:
-            # Get audio duration for adaptive batch sizing
-            audio_duration = self.get_audio_duration(audio_path)
+            logger.info(f"🚀 Transkribiere mit OpenAI Whisper API: {os.path.basename(audio_path)}")
 
-            # Get the batched pipeline for efficient transcription
-            model = WhisperModelSingleton.get_batched_pipeline()
-            current_model = WhisperModelSingleton.get_current_model_name()
+            with open(audio_path, "rb") as audio_file:
+                transcript = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    response_format="verbose_json",
+                    timestamp_granularities=["segment"],
+                    language=None,  # Auto-Detect (gut für Werbung)
+                    prompt=self.get_initial_prompt(podcast_name) if hasattr(self, "get_initial_prompt") else None
+                )
 
-            logger.info(f"Starting transcription of: {audio_path} (model: {current_model})")
+            # OpenAI-Format umwandeln in MinusPod-Format
+            segments = []
+            for segment in transcript.segments:
+                segments.append({
+                    "start": segment.start,
+                    "end": segment.end,
+                    "text": segment.text.strip()
+                })
 
-            # Preprocess audio for consistent quality
-            preprocessed_path = self.preprocess_audio(audio_path)
-            transcribe_path = preprocessed_path if preprocessed_path else audio_path
-
-            # Create podcast-aware prompt with sponsor vocabulary
-            initial_prompt = self.get_initial_prompt(podcast_name)
-
-            # Adjust batch size based on device and audio duration
-            device = os.getenv("WHISPER_DEVICE", "cpu")
-            if device == "cuda":
-                # Use adaptive batch size based on duration to prevent OOM
-                batch_size = self.get_batch_size_for_duration(audio_duration)
-                duration_str = f"{audio_duration/60:.1f} min" if audio_duration else "unknown"
-                logger.info(f"Using adaptive batch size: {batch_size} (duration: {duration_str})")
-            else:
-                batch_size = 8  # Smaller batch for CPU
-
-            # Retry logic for CUDA OOM errors
-            max_retries = 3
-            retry_count = 0
-
-            while retry_count < max_retries:
-                try:
-                    # Clear CUDA cache before each attempt
-                    if device == "cuda":
-                        self.clear_cuda_cache()
-
-                    # Use the batched pipeline for transcription
-                    # word_timestamps=True enables precise boundary refinement later
-                    # language=None enables auto-detection to catch non-English DAI ads
-                    segments_generator, info = model.transcribe(
-                        transcribe_path,
-                        language=None,  # Auto-detect to catch non-English ads (Spanish, etc.)
-                        initial_prompt=initial_prompt,
-                        beam_size=5,
-                        batch_size=batch_size,
-                        word_timestamps=True,  # Enable word-level timestamps for boundary refinement
-                        vad_filter=True,  # Enable VAD filter to skip silent parts
-                        vad_parameters=dict(
-                            min_silence_duration_ms=1000,  # Increased from 500 - less aggressive skipping
-                            speech_pad_ms=600,  # Increased from 400 - more padding for ad segments
-                            threshold=0.3  # Lower threshold = more sensitive to speech in ads
-                        )
-                    )
-
-                    # Log detected language
-                    detected_lang = info.language if hasattr(info, 'language') else 'unknown'
-                    lang_prob = info.language_probability if hasattr(info, 'language_probability') else 0
-                    logger.info(f"Detected primary language: {detected_lang} (probability: {lang_prob:.2f})")
-
-                    # Collect segments with real-time progress logging
-                    result = []
-                    segment_count = 0
-                    last_log_time = 0
-
-                    non_english_count = 0
-                    for segment in segments_generator:
-                        segment_count += 1
-                        # Store word-level timestamps for boundary refinement
-                        words = []
-                        if segment.words:
-                            for w in segment.words:
-                                words.append({
-                                    "word": w.word,
-                                    "start": w.start,
-                                    "end": w.end
-                                })
-
-                        # Detect non-English segments (potential DAI ads)
-                        # Whisper segments don't have per-segment language, but we can
-                        # detect non-English by checking for non-ASCII characters or
-                        # using the overall detected language with segment analysis
-                        segment_text = segment.text.strip()
-                        is_foreign = self._detect_non_english_segment(segment_text, detected_lang)
-
-                        segment_dict = {
-                            "start": segment.start,
-                            "end": segment.end,
-                            "text": segment_text,
-                            "words": words  # Word timestamps for boundary refinement
-                        }
-
-                        # Flag non-English segments for ad detection
-                        if is_foreign:
-                            segment_dict["is_foreign_language"] = True
-                            segment_dict["detected_language"] = "non-english"
-                            non_english_count += 1
-
-                        result.append(segment_dict)
-
-                        # Log progress every 10 segments
-                        if segment_count % 10 == 0:
-                            progress_min = segment.end / 60
-                            logger.info(f"Transcription progress: {segment_count} segments, {progress_min:.1f} minutes processed")
-
-                        # Log every 30 seconds of audio processed
-                        if segment.end - last_log_time > 30:
-                            last_log_time = segment.end
-                            # Log the last segment's text (truncated)
-                            text_preview = segment.text.strip()[:100] + "..." if len(segment.text.strip()) > 100 else segment.text.strip()
-                            logger.info(f"[{self.format_timestamp(segment.start)}] {text_preview}")
-
-                    # Filter out hallucinations
-                    original_count = len(result)
-                    result = self.filter_hallucinations(result)
-                    if len(result) < original_count:
-                        logger.info(f"Filtered {original_count - len(result)} hallucination segments")
-
-                    # Log non-English segments (potential DAI ads)
-                    if non_english_count > 0:
-                        logger.info(f"Flagged {non_english_count} non-English segments as potential ads")
-
-                    duration_min = result[-1]['end'] / 60 if result else 0
-                    logger.info(f"Transcription completed: {len(result)} segments, {duration_min:.1f} minutes")
-
-                    return result
-
-                except Exception as inner_e:
-                    error_str = str(inner_e).lower()
-                    is_oom = 'out of memory' in error_str or 'cuda' in error_str
-
-                    if is_oom and retry_count < max_retries - 1:
-                        retry_count += 1
-                        # Reduce batch size for retry
-                        old_batch_size = batch_size
-                        batch_size = max(1, batch_size // 2)
-                        logger.warning(
-                            f"CUDA OOM detected (attempt {retry_count}/{max_retries}). "
-                            f"Reducing batch size: {old_batch_size} -> {batch_size}"
-                        )
-                        # Clear cache and retry
-                        self.clear_cuda_cache()
-                        continue
-                    else:
-                        # Non-OOM error or max retries reached
-                        raise
+            logger.info(f"✅ OpenAI fertig: {len(segments)} Segmente")
+            return segments
 
         except Exception as e:
-            logger.error(f"Transcription failed: {e}")
-            # Clean up GPU memory on ANY failure to prevent memory leaks
-            # This is critical for OOM recovery - free memory before retry
-            try:
-                clear_gpu_memory()
-                WhisperModelSingleton.unload_model()
-                logger.info("Cleaned up GPU memory after transcription failure")
-            except Exception as cleanup_err:
-                logger.warning(f"Failed to clean up GPU memory: {cleanup_err}")
+            if "file is too large" in str(e).lower():
+                logger.error("❌ Datei zu groß für OpenAI (max. 25 MB).")
+            else:
+                logger.error(f"OpenAI Whisper Fehler: {e}")
             return None
-        finally:
-            # Clean up preprocessed file
-            if preprocessed_path and os.path.exists(preprocessed_path):
-                try:
-                    os.unlink(preprocessed_path)
-                    logger.debug(f"Cleaned up preprocessed file: {preprocessed_path}")
-                except OSError:
-                    pass
 
     def transcribe_chunked(self, audio_path: str, podcast_name: str = None) -> List[Dict]:
         """Transcribe audio files with dynamic chunking to prevent OOM errors.
