@@ -27,6 +27,8 @@ import os
 from openai import OpenAI
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
+OPENAI_TRANSCRIPTION_MODEL = os.getenv("OPENAI_TRANSCRIPTION_MODEL", "whisper-1")
 WHISPER_PROVIDER = os.getenv("WHISPER_PROVIDER", "local").lower()
 
 # Suppress ONNX Runtime warnings before importing faster_whisper
@@ -648,21 +650,24 @@ class Transcriber:
     def transcribe(self, audio_path: str, podcast_name: str = None) -> List[Dict]:
         """Transcribe using OpenAI Whisper API (simple & cheap)."""
         if WHISPER_PROVIDER != "openai":
-            logger.warning("WHISPER_PROVIDER ist nicht 'openai' – nutze lokales Whisper (nicht aktiv)")
+            logger.warning("WHISPER_PROVIDER is not set to 'openai'; local Whisper is disabled in this build")
             return None
 
         if not OPENAI_API_KEY:
             logger.error("❌ OPENAI_API_KEY fehlt! Bitte im Portainer Stack als Environment Variable hinzufügen.")
             return None
 
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        if OPENAI_BASE_URL:
+            client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL)
+        else:
+            client = OpenAI(api_key=OPENAI_API_KEY)
 
         try:
-            logger.info(f"🚀 Transkribiere mit OpenAI Whisper API: {os.path.basename(audio_path)}")
+            logger.info(f"Starting OpenAI transcription: {os.path.basename(audio_path)}")
 
             with open(audio_path, "rb") as audio_file:
                 transcript = client.audio.transcriptions.create(
-                    model="whisper-1",
+                    model=OPENAI_TRANSCRIPTION_MODEL,
                     file=audio_file,
                     response_format="verbose_json",
                     timestamp_granularities=["segment"],
@@ -678,14 +683,14 @@ class Transcriber:
                     "text": segment.text.strip()
                 })
 
-            logger.info(f"✅ OpenAI fertig: {len(segments)} Segmente")
+            logger.info(f"OpenAI transcription completed: {len(segments)} segments")
             return segments
 
         except Exception as e:
             if "file is too large" in str(e).lower():
-                logger.error("❌ Datei zu groß für OpenAI (max. 25 MB).")
+                logger.error("File too large for OpenAI transcription endpoint (max ~25MB per request)")
             else:
-                logger.error(f"OpenAI Whisper Fehler: {e}")
+                logger.error(f"OpenAI Whisper error: {e}")
             return None
 
     def transcribe_chunked(self, audio_path: str, podcast_name: str = None) -> List[Dict]:
@@ -704,6 +709,65 @@ class Transcriber:
         Returns:
             List of transcript segments with timestamps, or None on failure
         """
+        # OpenAI mode: chunk audio defensively to stay below request size limits.
+        # 10-minute WAV chunks at 16kHz mono are typically below 25MB.
+        if WHISPER_PROVIDER == "openai":
+            duration = self.get_audio_duration(audio_path)
+            if duration is None:
+                logger.error("Cannot determine audio duration for chunked OpenAI transcription")
+                return None
+
+            chunk_duration = 10 * 60
+            overlap = CHUNK_OVERLAP_SECONDS
+            all_segments = []
+            chunk_start = 0.0
+            chunk_num = 0
+
+            logger.info(
+                f"Starting OpenAI chunked transcription: {duration/60:.1f} min "
+                f"(chunk_size={chunk_duration/60:.0f}min, overlap={overlap}s)"
+            )
+
+            while chunk_start < duration:
+                chunk_end = min(chunk_start + chunk_duration, duration)
+                chunk_num += 1
+                chunk_path = extract_audio_chunk(audio_path, chunk_start, chunk_end)
+                if not chunk_path:
+                    logger.error(f"Failed to create chunk {chunk_num}")
+                    return None
+
+                try:
+                    chunk_segments = self.transcribe(chunk_path, podcast_name)
+                    if chunk_segments is None:
+                        logger.error(f"OpenAI transcription failed for chunk {chunk_num}")
+                        return None
+
+                    for segment in chunk_segments:
+                        adjusted_start = segment['start'] + chunk_start
+                        adjusted_end = segment['end'] + chunk_start
+
+                        # Skip overlap duplicates from previous chunk
+                        if all_segments and adjusted_start <= all_segments[-1]['start']:
+                            continue
+
+                        all_segments.append({
+                            'start': adjusted_start,
+                            'end': adjusted_end,
+                            'text': segment['text']
+                        })
+                finally:
+                    try:
+                        os.unlink(chunk_path)
+                    except Exception:
+                        pass
+
+                if chunk_end >= duration:
+                    break
+                chunk_start = chunk_end - overlap
+
+            logger.info(f"OpenAI chunked transcription complete: {len(all_segments)} segments")
+            return all_segments
+
         # Get audio duration
         duration = self.get_audio_duration(audio_path)
         if duration is None:
